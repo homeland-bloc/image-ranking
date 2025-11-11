@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌸 Peony - Image Contest App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes tickAppear {
+            0% { transform: scale(0) rotate(-45deg); opacity: 0; }
+            50% { transform: scale(1.2) rotate(0deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .tick-animation {
+            animation: tickAppear 0.6s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-out;
+        }
+        @keyframes modalFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .modal-overlay {
+            animation: modalFadeIn 0.2s ease-out;
+            background: rgba(0, 0, 0, 0.7);
+        }
+        @keyframes modalSlideIn {
+            from { transform: scale(0.9) translateY(-20px); opacity: 0; }
+            to { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        .modal-content {
+            animation: modalSlideIn 0.3s ease-out;
+        }
+        .results-bg {
+            background: linear-gradient(to bottom, 
+                rgba(252, 231, 243, 0.3),
+                rgba(220, 252, 231, 0.3)
+            );
+        }
+        body {
+            background: linear-gradient(to bottom, 
+                rgba(252, 231, 243, 0.5),
+                rgba(255, 255, 255, 1) 30%,
+                rgba(220, 252, 231, 0.5)
+            );
+        }
+        body.modal-open {
+            overflow: hidden;
+        }
+        .image-loading {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+        }
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        /* Custom range slider styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+        }
+        input[type="range"]::-webkit-slider-track {
+            height: 8px;
+            border-radius: 4px;
+            background: linear-gradient(to right, rgb(236, 72, 153) 0%, rgb(34, 197, 94) 100%);
+        }
+        input[type="range"]::-moz-range-track {
+            height: 8px;
+            border-radius: 4px;
+            background: linear-gradient(to right, rgb(236, 72, 153) 0%, rgb(34, 197, 94) 100%);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            border: 3px solid rgb(236, 72, 153);
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            border: 3px solid rgb(236, 72, 153);
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="app"></div>
+
+    <script>
+        // Mock data
+        const mockUser = {
+            id: 'demo-user-123',
+            username: 'DemoUser',
+            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo'
+        };
+
+        const mockContests = [
+            {
+                id: 'contest-1',
+                title: 'Spring Garden Photography',
+                description: 'Share your best garden photos!',
+                isLocked: false,
+                resultsPublic: true,
+                createdBy: 'demo-user-123',
+                images: [
+                    { id: 1, url: 'https://images.unsplash.com/photo-1490750967868-88aa4486c946?w=800', author: null },
+                    { id: 2, url: 'https://images.unsplash.com/photo-1464297162577-f5295c892194?w=800', author: null },
+                    { id: 3, url: 'https://images.unsplash.com/photo-1466781783364-36c955e42a7f?w=800', author: null },
+                    { id: 4, url: 'https://images.unsplash.com/photo-1455659817273-f96807779a8a?w=800', author: null },
+                    { id: 5, url: 'https://images.unsplash.com/photo-1517424988-5cc992c39db3?w=800', author: null }
+                ]
+            },
+            {
+                id: 'contest-2',
+                title: 'Urban Architecture Challenge',
+                description: 'Capture the beauty of city buildings',
+                isLocked: true,
+                resultsPublic: false,
+                createdBy: 'demo-user-123',
+                images: [
+                    { id: 6, url: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800', author: null },
+                    { id: 7, url: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?w=800', author: null },
+                    { id: 8, url: 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800', author: null }
+                ]
+            },
+            {
+                id: 'contest-3',
+                title: 'Wildlife Photography Contest',
+                description: 'Amazing moments with animals',
+                isLocked: false,
+                resultsPublic: true,
+                createdBy: 'other-user',
+                images: [
+                    { id: 9, url: 'https://images.unsplash.com/photo-1564349683136-77e08dba1ef7?w=800', author: null },
+                    { id: 10, url: 'https://images.unsplash.com/photo-1437622368342-7a3d73a34c8f?w=800', author: null },
+                    { id: 11, url: 'https://images.unsplash.com/photo-1441057206919-63d19fac2369?w=800', author: null },
+                    { id: 12, url: 'https://images.unsplash.com/photo-1456926631375-92c8ce872def?w=800', author: null }
+                ]
+            }
+        ];
+
+        // App State
+        let state = {
+            isLoggedIn: false,
+            user: null,
+            view: 'home',
+            contests: mockContests,
+            currentContest: null,
+            currentImageIndex: 0,
+            votes: {},
+            hasSubmitted: false,
+            showBreakdownModal: null,
+            showTickAnimation: false,
+            isAnimating: false,
+            modal: null,
+            imageScale: 100,
+            mockResults: null, // Store results once generated
+            isProcessingModal: false // Prevent rapid modal clicks
+        };
+
+        // Utility Functions
+        function getScoreColor(score) {
+            const colors = {
+                1: 'rgb(220, 38, 38)',
+                2: 'rgb(249, 115, 22)',
+                3: 'rgb(234, 179, 8)',
+                4: 'rgb(132, 204, 22)',
+                5: 'rgb(34, 197, 94)'
+            };
+            return colors[score] || 'rgb(156, 163, 175)';
+        }
+
+        function getScoreLabel(score) {
+            if (score >= 4.5) return { color: 'text-green-700', bg: 'bg-green-100' };
+            if (score >= 3.5) return { color: 'text-lime-700', bg: 'bg-lime-100' };
+            if (score >= 2.5) return { color: 'text-yellow-700', bg: 'bg-yellow-100' };
+            if (score >= 1.5) return { color: 'text-orange-700', bg: 'bg-orange-100' };
+            return { color: 'text-red-700', bg: 'bg-red-100' };
+        }
+
+        function generateRandomVotes(count) {
+            const names = ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve', 'Frank', 'Grace', 'Henry', 'Ivy', 'Jack'];
+            const votes = [];
+            for (let i = 0; i < count; i++) {
+                votes.push({
+                    username: names[i % names.length] + (i >= names.length ? i : ''),
+                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${i}`,
+                    score: Math.floor(Math.random() * 5) + 1,
+                    isCurrentUser: false
+                });
+            }
+            return votes;
+        }
+
+        function generateMockResults(contest, userVotes) {
+            return contest.images.map(img => {
+                const totalVotes = Math.floor(Math.random() * 15) + 5;
+                const breakdown = [
+                    { 
+                        username: state.user.username, 
+                        avatar: state.user.avatar, 
+                        score: userVotes[img.id], 
+                        isCurrentUser: true 
+                    },
+                    ...generateRandomVotes(totalVotes - 1)
+                ];
+                
+                // Calculate actual average from breakdown
+                const sum = breakdown.reduce((acc, vote) => acc + vote.score, 0);
+                const averageScore = parseFloat((sum / breakdown.length).toFixed(2));
+                
+                return {
+                    ...img,
+                    averageScore,
+                    totalVotes: breakdown.length,
+                    breakdown
+                };
+            }).sort((a, b) => b.averageScore - a.averageScore);
+        }
+
+        function groupByScore(results) {
+            const grouped = {};
+            results.forEach(result => {
+                const score = result.averageScore.toFixed(1);
+                if (!grouped[score]) grouped[score] = [];
+                grouped[score].push(result);
+            });
+            return grouped;
+        }
+
+        // Custom Modal Functions
+        function showModal(config) {
+            if (state.isProcessingModal) return;
+            state.modal = config;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeModal() {
+            if (state.isProcessingModal) return;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function showAlert(message, icon = '⚠️') {
+            showModal({
+                type: 'alert',
+                icon,
+                message,
+                buttons: [{ text: 'OK', action: 'closeModal', primary: true }]
+            });
+        }
+
+        function showConfirm(message, onConfirmName, icon = '⚠️') {
+            showModal({
+                type: 'confirm',
+                icon,
+                message,
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Confirm', action: onConfirmName, primary: true }
+                ]
+            });
+        }
+
+        // Modal action handlers
+        function confirmSubmitVotes() {
+            state.isProcessingModal = true;
+            closeModal();
+            state.hasSubmitted = true;
+            state.view = 'results';
+            // Generate results once
+            state.mockResults = generateMockResults(state.currentContest, state.votes);
+            state.isProcessingModal = false;
+            render();
+        }
+
+        function confirmCancelVoting() {
+            state.isProcessingModal = true;
+            closeModal();
+            state.view = 'home';
+            state.currentContest = null;
+            state.isProcessingModal = false;
+            render();
+        }
+
+        // Actions
+        function login() {
+            state.isLoggedIn = true;
+            state.user = mockUser;
+            render();
+        }
+
+        function logout() {
+            state.isLoggedIn = false;
+            state.user = null;
+            state.view = 'home';
+            render();
+        }
+
+        function createContest() {
+            const userContests = state.contests.filter(c => c.createdBy === state.user.id).length;
+            if (userContests >= 50) {
+                showAlert('You have reached the maximum of 50 contests per user.', '❌');
+                return;
+            }
+
+            const title = prompt('Contest Title:');
+            if (!title || title.trim().length === 0) {
+                if (title !== null) showAlert('Contest title cannot be empty.', '❌');
+                return;
+            }
+            if (title.length > 100) {
+                showAlert('Contest title is too long (max 100 characters).', '❌');
+                return;
+            }
+            
+            const description = prompt('Contest Description:');
+            if (!description || description.trim().length === 0) {
+                if (description !== null) showAlert('Contest description cannot be empty.', '❌');
+                return;
+            }
+            if (description.length > 500) {
+                showAlert('Contest description is too long (max 500 characters).', '❌');
+                return;
+            }
+
+            const numImages = parseInt(prompt('How many test images? (1-150):', '5'));
+            if (isNaN(numImages) || numImages < 1 || numImages > 150) {
+                showAlert('Invalid number of images. Must be between 1 and 150.', '❌');
+                return;
+            }
+
+            const images = [];
+            const testUrls = [
+                'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800',
+                'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=800',
+                'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=800',
+                'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800',
+                'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=800'
+            ];
+
+            for (let i = 0; i < numImages; i++) {
+                images.push({
+                    id: Date.now() + i,
+                    url: testUrls[i % testUrls.length],
+                    author: null
+                });
+            }
+
+            const newContest = {
+                id: 'contest-' + Date.now(),
+                title: title.trim(),
+                description: description.trim(),
+                isLocked: false,
+                resultsPublic: true,
+                createdBy: state.user.id,
+                images
+            };
+
+            state.contests.unshift(newContest);
+            showAlert('Contest created successfully!', '✅');
+        }
+
+        function startVoting(contest) {
+            state.currentContest = contest;
+            state.votes = {};
+            state.currentImageIndex = 0;
+            state.hasSubmitted = false;
+            state.mockResults = null; // Clear previous results
+            state.view = 'vote';
+            render();
+        }
+
+        function handleVote(score) {
+            if (state.isAnimating) return; // Prevent rapid clicks
+            
+            state.isAnimating = true;
+            const currentImage = state.currentContest.images[state.currentImageIndex];
+            state.votes[currentImage.id] = score;
+            state.showTickAnimation = true;
+            
+            render();
+
+            // Wait 1 second to show the tick, then advance
+            setTimeout(() => {
+                state.showTickAnimation = false;
+                state.isAnimating = false;
+                if (state.currentImageIndex < state.currentContest.images.length - 1) {
+                    state.currentImageIndex++;
+                }
+                render();
+            }, 1000);
+        }
+
+        function navigateImage(direction) {
+            if (state.isAnimating) return; // Prevent navigation during animation
+            
+            const currentImage = state.currentContest.images[state.currentImageIndex];
+            
+            if (direction === 'next') {
+                // Check if current image is voted
+                if (!state.votes[currentImage.id]) {
+                    showAlert('Please vote on this image before proceeding to the next one.', '⚠️');
+                    return;
+                }
+                if (state.currentImageIndex < state.currentContest.images.length - 1) {
+                    state.currentImageIndex++;
+                }
+            } else if (direction === 'prev' && state.currentImageIndex > 0) {
+                state.currentImageIndex--;
+            }
+            render();
+        }
+
+        function cancelVoting() {
+            if (state.isProcessingModal) return;
+            showConfirm(
+                'Are you sure you want to cancel? Your votes will not be saved.',
+                'confirmCancelVoting',
+                '⚠️'
+            );
+        }
+
+        function submitVotes() {
+            if (state.isProcessingModal) return;
+            const allVoted = state.currentContest.images.every(img => state.votes[img.id]);
+            if (!allVoted) {
+                showAlert('Please vote on all images before submitting!', '❌');
+                return;
+            }
+            showConfirm(
+                'Your votes cannot be changed after submission. Are you sure?',
+                'confirmSubmitVotes',
+                '⚠️'
+            );
+        }
+
+        function showBreakdown(imageId) {
+            state.showBreakdownModal = imageId;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeBreakdown() {
+            state.showBreakdownModal = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function backToHome() {
+            state.view = 'home';
+            state.currentContest = null;
+            state.showBreakdownModal = null;
+            state.mockResults = null;
+            render();
+        }
+
+        function updateScale(value) {
+            state.imageScale = parseInt(value);
+            render();
+        }
+
+        // Handle ESC key to close modals
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (state.showBreakdownModal) {
+                    closeBreakdown();
+                } else if (state.modal) {
+                    closeModal();
+                }
+            }
+        });
+
+        // Render Functions
+        function renderModal() {
+            if (!state.modal) return '';
+            
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="closeModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 modal-content" onclick="event.stopPropagation()">
+                        <div class="text-center mb-6">
+                            <div class="text-6xl mb-4">${state.modal.icon}</div>
+                            <p class="text-lg text-gray-700">${state.modal.message}</p>
+                        </div>
+                        <div class="flex gap-3 justify-center">
+                            ${state.modal.buttons.map(btn => `
+                                <button 
+                                    onclick="${btn.action}()"
+                                    class="px-6 py-3 rounded-lg font-semibold transition ${
+                                        btn.primary 
+                                            ? 'bg-gradient-to-r from-pink-500 to-rose-600 text-white hover:from-pink-600 hover:to-rose-700' 
+                                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }"
+                                >
+                                    ${btn.text}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderHeader() {
+            return `
+                <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg">
+                    <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center flex-wrap gap-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center">
+                                <span class="text-2xl">🌸</span>
+                            </div>
+                            <h1 class="text-2xl font-bold">Peony</h1>
+                        </div>
+                        
+                        ${!state.isLoggedIn ? `
+                            <button onclick="login()" class="bg-white text-pink-600 px-6 py-2 rounded-lg font-semibold hover:bg-pink-50 transition">
+                                Login with Discord
+                            </button>
+                        ` : `
+                            <div class="flex items-center gap-4">
+                                <div class="flex items-center gap-2">
+                                    <img src="${state.user.avatar}" alt="Avatar" class="w-8 h-8 rounded-full" />
+                                    <span class="font-medium">${state.user.username}</span>
+                                </div>
+                                <button onclick="logout()" class="bg-white text-pink-600 px-4 py-2 rounded-lg font-semibold hover:bg-pink-50 transition">
+                                    Logout
+                                </button>
+                            </div>
+                        `}
+                    </div>
+                </header>
+            `;
+        }
+
+        function renderLoginScreen() {
+            return `
+                <div class="max-w-md mx-auto mt-20 p-8 bg-white rounded-2xl shadow-xl fade-in">
+                    <div class="text-center mb-6">
+                        <div class="w-20 h-20 bg-gradient-to-br from-pink-500 to-rose-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span class="text-4xl">🌸</span>
+                        </div>
+                        <h2 class="text-3xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
+                        <p class="text-gray-600">Create and vote on image contests</p>
+                    </div>
+                    
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                        <p class="text-sm text-blue-800">
+                            <strong>Privacy Notice:</strong> This app only accesses your Discord username and avatar. Contact me if you have any questions.
+                        </p>
+                    </div>
+                    
+                    <button onclick="login()" class="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-indigo-800 transition flex items-center justify-center gap-2">
+                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                        </svg>
+                        Login with Discord
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderHome() {
+            return `
+                <div class="max-w-7xl mx-auto px-4 py-8">
+                    <div class="flex justify-between items-center mb-8 flex-wrap gap-4">
+                        <h2 class="text-3xl font-bold text-gray-800">All Contests</h2>
+                        <button onclick="createContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
+                            + Create Contest
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        ${state.contests.map(contest => `
+                            <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in">
+                                <div class="h-48 bg-gradient-to-br from-pink-400 to-green-500 flex items-center justify-center relative">
+                                    <span class="text-6xl">🌸</span>
+                                    ${contest.isLocked ? `
+                                        <div class="absolute top-3 right-3 bg-gray-800 text-white px-3 py-1 rounded-full text-sm flex items-center gap-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                            </svg>
+                                            Locked
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">${contest.title}</h3>
+                                    <p class="text-gray-600 mb-4">${contest.description}</p>
+                                    <p class="text-sm text-gray-500 mb-4">${contest.images.length} images</p>
+                                    <button 
+                                        onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                        ${contest.isLocked ? 'disabled' : ''}
+                                        class="w-full bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        ${contest.isLocked ? 'Contest Locked' : 'Start Voting'}
+                                    </button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderVoting() {
+            const currentImage = state.currentContest.images[state.currentImageIndex];
+            const currentVote = state.votes[currentImage.id];
+            const progress = (Object.keys(state.votes).length / state.currentContest.images.length) * 100;
+            const allVoted = state.currentContest.images.every(img => state.votes[img.id]);
+
+            return `
+                <div class="max-w-4xl mx-auto px-4 py-8">
+                    <div class="bg-white rounded-2xl shadow-xl overflow-hidden fade-in">
+                        <div class="bg-gray-200 h-2">
+                            <div class="bg-gradient-to-r from-pink-500 to-green-500 h-2 transition-all duration-300" style="width: ${progress}%"></div>
+                        </div>
+
+                        <div class="p-6 md:p-8">
+                            <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                                <div class="flex items-center gap-4">
+                                    <button onclick="cancelVoting()" class="text-gray-600 hover:text-gray-800 flex items-center gap-2 font-medium">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                                        </svg>
+                                        Back
+                                    </button>
+                                    <h2 class="text-2xl font-bold text-gray-800">${state.currentContest.title}</h2>
+                                </div>
+                                <span class="text-gray-600 font-medium">${state.currentImageIndex + 1} / ${state.currentContest.images.length}</span>
+                            </div>
+
+                            <div class="relative mb-8 bg-gray-100 rounded-xl overflow-hidden image-loading" style="height: 60vh">
+                                <img 
+                                    src="${currentImage.url}" 
+                                    alt="Image ${state.currentImageIndex + 1}" 
+                                    class="w-full h-full object-contain" 
+                                    onload="this.parentElement.classList.remove('image-loading')"
+                                />
+                                ${currentVote ? `
+                                    <div class="absolute top-4 right-4 bg-white rounded-full px-4 py-2 shadow-lg flex items-center gap-2">
+                                        <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                        </svg>
+                                        <span class="font-semibold">Voted: ${currentVote}</span>
+                                    </div>
+                                ` : ''}
+                            </div>
+
+                            <div class="flex justify-center gap-3 mb-8 flex-wrap">
+                                ${[1, 2, 3, 4, 5].map(score => `
+                                    <button 
+                                        data-score="${score}"
+                                        onclick="handleVote(${score})" 
+                                        ${state.isAnimating ? 'disabled' : ''}
+                                        class="w-16 h-16 md:w-20 md:h-20 rounded-full font-bold text-white text-xl shadow-lg hover:scale-110 transition-transform relative ${currentVote === score ? 'ring-4 ring-offset-2' : ''} ${state.isAnimating ? 'opacity-70 cursor-not-allowed' : ''}"
+                                        style="background-color: ${getScoreColor(score)}; transform: ${currentVote === score ? 'scale(1.15)' : 'scale(1)'}; ring-color: ${getScoreColor(score)};"
+                                    >
+                                        ${score}
+                                        ${currentVote === score && state.showTickAnimation ? `
+                                            <svg class="absolute -top-1 -right-1 w-7 h-7 text-white bg-green-600 rounded-full p-1 tick-animation" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                        ` : currentVote === score ? `
+                                            <svg class="absolute -top-1 -right-1 w-7 h-7 text-white bg-green-600 rounded-full p-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                        ` : ''}
+                                    </button>
+                                `).join('')}
+                            </div>
+
+                            <div class="flex justify-between items-center flex-wrap gap-4">
+                                <button 
+                                    onclick="navigateImage('prev')" 
+                                    ${state.currentImageIndex === 0 || state.isAnimating ? 'disabled' : ''}
+                                    class="flex items-center gap-2 bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    ← Previous
+                                </button>
+
+                                ${allVoted ? `
+                                    <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-8 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
+                                        Submit Final Votes
+                                    </button>
+                                ` : '<div></div>'}
+
+                                <button 
+                                    onclick="navigateImage('next')" 
+                                    ${state.isAnimating ? 'disabled' : ''}
+                                    class="flex items-center gap-2 bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Next →
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderResults() {
+            // Generate results only once
+            if (!state.mockResults) {
+                state.mockResults = generateMockResults(state.currentContest, state.votes);
+            }
+            
+            const grouped = groupByScore(state.mockResults);
+            const scores = Object.keys(grouped).sort((a, b) => b - a);
+            
+            // Calculate image size based on scale, clamp between 120px and 600px
+            const baseSize = 240;
+            const imageSize = Math.max(120, Math.min(600, Math.floor(baseSize * (state.imageScale / 100))));
+
+            return `
+                <div class="max-w-7xl mx-auto px-4 py-8">
+                    <div class="bg-white rounded-2xl shadow-xl p-6 md:p-8 fade-in results-bg">
+                        <div class="text-center mb-8">
+                            <div class="w-16 h-16 mx-auto mb-4">
+                                <svg class="w-full h-full text-yellow-500" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+                                </svg>
+                            </div>
+                            <h2 class="text-3xl font-bold text-gray-800 mb-2">Final Ranking</h2>
+                            <p class="text-gray-600 mb-2">Average votes from all participants</p>
+                            <p class="text-sm text-gray-500">Click on any image to see the vote breakdown</p>
+                        </div>
+
+                        <!-- Scale Slider -->
+                        <div class="mb-8 max-w-md mx-auto">
+                            <div class="flex items-center gap-4">
+                                <label class="text-sm font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                <input 
+                                    type="range" 
+                                    min="50" 
+                                    max="200" 
+                                    value="${state.imageScale}"
+                                    oninput="updateScale(this.value)"
+                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                />
+                                <span class="text-sm font-medium text-gray-700 w-12">${state.imageScale}%</span>
+                            </div>
+                        </div>
+
+                        ${scores.map(score => {
+                            const items = grouped[score];
+                            const scoreLabel = getScoreLabel(parseFloat(score));
+                            return `
+                                <div class="mb-8">
+                                    <h3 class="text-lg font-bold mb-4 px-4 py-2 rounded-lg inline-block ${scoreLabel.color} ${scoreLabel.bg}">
+                                        Average Score: ${score}
+                                    </h3>
+                                    <div class="grid gap-4 mt-4" style="grid-template-columns: repeat(auto-fill, minmax(${imageSize}px, 1fr));">
+                                        ${items.map(item => `
+                                            <div 
+                                                onclick="showBreakdown(${item.id})"
+                                                class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg image-loading"
+                                            >
+                                                <img 
+                                                    src="${item.url}" 
+                                                    alt="Image" 
+                                                    class="w-full h-auto object-cover" 
+                                                    style="aspect-ratio: 1/1;"
+                                                    onload="this.parentElement.classList.remove('image-loading')"
+                                                />
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+
+                        <button onclick="backToHome()" class="w-full mt-8 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition">
+                            Back to Contests
+                        </button>
+                    </div>
+
+                    ${state.showBreakdownModal ? renderBreakdownModal() : ''}
+                </div>
+            `;
+        }
+
+        function renderBreakdownModal() {
+            const item = state.mockResults.find(r => r.id === state.showBreakdownModal);
+            if (!item) return '';
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                        <div class="p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-2xl font-bold text-gray-800">Vote Breakdown</h3>
+                                <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="mb-4 rounded-lg overflow-hidden image-loading" style="max-height: 300px;">
+                                <img 
+                                    src="${item.url}" 
+                                    alt="Image" 
+                                    class="w-full h-full object-cover"
+                                    onload="this.parentElement.classList.remove('image-loading')"
+                                />
+                            </div>
+
+                            <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                                <div class="text-center">
+                                    <div class="text-3xl font-bold text-gray-800">${item.averageScore}</div>
+                                    <div class="text-sm text-gray-600">Average Score</div>
+                                    <div class="text-sm text-gray-500 mt-1">${item.totalVotes} total votes</div>
+                                </div>
+                            </div>
+
+                            <h4 class="font-semibold text-gray-800 mb-3">Individual Votes</h4>
+                            <div class="space-y-2">
+                                ${item.breakdown.map(vote => `
+                                    <div class="flex items-center gap-3 p-2 rounded-lg ${vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : ''}">
+                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-10 h-10 rounded-full" />
+                                        <span class="text-gray-700 font-medium">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
+                                        <div class="ml-auto flex items-center gap-2">
+                                            <span class="font-bold text-lg" style="color: ${getScoreColor(vote.score)}">
+                                                ${vote.score}
+                                            </span>
+                                            <div class="w-3 h-3 rounded-full" style="background-color: ${getScoreColor(vote.score)}"></div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function render() {
+            const app = document.getElementById('app');
+            
+            if (!state.isLoggedIn) {
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal();
+                return;
+            }
+
+            let content = '';
+            switch(state.view) {
+                case 'home':
+                    content = renderHome();
+                    break;
+                case 'vote':
+                    content = renderVoting();
+                    break;
+                case 'results':
+                    content = renderResults();
+                    break;
+                default:
+                    content = renderHome();
+            }
+
+            app.innerHTML = renderHeader() + content + renderModal();
+        }
+
+        // Make functions globally available
+        window.login = login;
+        window.logout = logout;
+        window.createContest = createContest;
+        window.startVoting = startVoting;
+        window.handleVote = handleVote;
+        window.navigateImage = navigateImage;
+        window.cancelVoting = cancelVoting;
+        window.submitVotes = submitVotes;
+        window.showBreakdown = showBreakdown;
+        window.closeBreakdown = closeBreakdown;
+        window.backToHome = backToHome;
+        window.closeModal = closeModal;
+        window.updateScale = updateScale;
+        window.confirmSubmitVotes = confirmSubmitVotes;
+        window.confirmCancelVoting = confirmCancelVoting;
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>
