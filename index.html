@@ -778,8 +778,443 @@
             `;
         }
 
-        // Remaining render functions and window bindings continue...
-        // (The rest of the code follows the same pattern as shown in the code artifact)
+        function renderHome() {
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="flex justify-between items-center mb-4 gap-2">
+                        <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
+                        <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                            + Create Contest
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        ${state.contests.map(contest => `
+                            <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in">
+                                <div class="h-32 bg-gradient-to-br from-pink-400 to-green-500 flex items-center justify-center relative">
+                                    <span class="text-4xl">🌸</span>
+                                    ${contest.isLocked ? `
+                                        <div class="absolute top-2 right-2 bg-gray-800 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                            </svg>
+                                            Locked
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                <div class="p-4">
+                                    <h3 class="text-lg font-bold text-gray-800 mb-1">${contest.title}</h3>
+                                    ${contest.description ? `<p class="text-gray-600 mb-2 text-sm">${contest.description}</p>` : ''}
+                                    <p class="text-xs text-gray-500 mb-3">${contest.images.length} images</p>
+                                    ${contest.isLocked ? `
+                                        <button 
+                                            onclick='viewLockedResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                            class="w-full bg-gradient-to-r from-gray-500 to-gray-600 text-white py-2 rounded-lg font-semibold hover:from-gray-600 hover:to-gray-700 transition shadow-md text-sm"
+                                        >
+                                            View Results
+                                        </button>
+                                    ` : `
+                                        <button 
+                                            onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                            class="w-full bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition shadow-md text-sm"
+                                        >
+                                            Start Voting
+                                        </button>
+                                    `}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCreateContest() {
+            return `
+                <div class="max-w-5xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                        <div class="flex justify-between items-center mb-4">
+                            <div>
+                                <h2 class="text-2xl font-bold text-gray-800">${state.newContest.title}</h2>
+                                ${state.newContest.description ? `<p class="text-sm text-gray-600">${state.newContest.description}</p>` : ''}
+                            </div>
+                            <button onclick="cancelCreateContest()" class="text-gray-600 hover:text-gray-800 flex items-center gap-1 text-sm">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                                Cancel
+                            </button>
+                        </div>
+
+                        <div class="upload-area rounded-xl p-4 mb-4 text-center cursor-pointer" onclick="addImageFromFile()">
+                            <div class="text-3xl mb-2">🖼️</div>
+                            <h3 class="font-bold text-gray-800 mb-1 text-sm">Click to Upload Images</h3>
+                            <p class="text-xs text-gray-600">or use the options below</p>
+                        </div>
+
+                        <div class="mb-4">
+                            <input type="url" id="contestUrlInput" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-sm mb-2" placeholder="Paste Discord image URL or any image URL...">
+                            <div class="flex gap-2">
+                                <button onclick="addImageFromUrl('contestUrlInput')" class="flex-1 bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition text-sm">
+                                    Add URL
+                                </button>
+                                <button onclick="addRandomTestImage()" class="flex-1 bg-gradient-to-r from-green-500 to-green-700 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition text-sm">
+                                    Random Image
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-pink-600 text-white px-3 py-2 rounded-lg mb-3 text-center font-semibold text-sm">
+                            ${state.newContest.images.length} / 150 images added
+                        </div>
+
+                        <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 mb-4 min-h-[100px]">
+                            ${state.newContest.images.length === 0 ? `
+                                <div class="col-span-full text-center text-gray-400 py-8 text-sm italic">
+                                    No images added yet
+                                </div>
+                            ` : state.newContest.images.map((img, index) => `
+                                <div class="relative group">
+                                    <img src="${img.url}" class="w-full h-24 object-cover rounded-lg" />
+                                    <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition">
+                                        ×
+                                    </button>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <button 
+                            onclick="finishCreateContest()" 
+                            ${state.newContest.images.length === 0 ? 'disabled' : ''}
+                            class="w-full bg-gradient-to-r from-green-500 to-green-700 text-white py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                        >
+                            Create Contest (${state.newContest.images.length} images)
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderVoting() {
+            const currentImage = state.currentContest.images[state.currentImageIndex];
+            const currentVote = state.votes[currentImage.id];
+            const progress = (Object.keys(state.votes).length / state.currentContest.images.length) * 100;
+            const allVoted = state.currentContest.images.every(img => state.votes[img.id]);
+
+            return `
+                <div class="max-w-4xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
+                        <div class="bg-gray-200 h-2">
+                            <div class="bg-gradient-to-r from-pink-500 to-green-500 h-2 transition-all duration-300" style="width: ${progress}%"></div>
+                        </div>
+
+                        <div class="p-3">
+                            <div class="flex justify-between items-center mb-3 gap-2">
+                                <div class="flex items-center gap-2">
+                                    <button onclick="cancelVoting()" class="text-gray-600 hover:text-gray-800 flex items-center gap-1 text-sm">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                                        </svg>
+                                        Back
+                                    </button>
+                                    <h2 class="text-lg font-bold text-gray-800">${state.currentContest.title}</h2>
+                                </div>
+                                <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.currentContest.images.length}</span>
+                            </div>
+
+                            <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="max-height: 60vh;">
+                                <img 
+                                    src="${currentImage.url}" 
+                                    alt="Image ${state.currentImageIndex + 1}" 
+                                    class="max-w-full max-h-[60vh] object-contain" 
+                                    onload="this.parentElement.classList.remove('image-loading')"
+                                />
+                                ${currentVote ? `
+                                    <div class="absolute top-2 right-2 bg-white rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
+                                        <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                        </svg>
+                                        <span class="font-semibold">Voted: ${currentVote}</span>
+                                    </div>
+                                ` : ''}
+                            </div>
+
+                            <div class="flex justify-center gap-2 mb-3">
+                                ${[1, 2, 3, 4, 5].map(score => `
+                                    <button 
+                                        data-score="${score}"
+                                        onclick="handleVote(${score})" 
+                                        ${state.isAnimating ? 'disabled' : ''}
+                                        class="w-12 h-12 sm:w-14 sm:h-14 rounded-full font-bold text-white text-base shadow-lg hover:scale-110 transition-transform relative ${currentVote === score ? 'ring-4 ring-offset-2' : ''} ${state.isAnimating ? 'opacity-70 cursor-not-allowed' : ''}"
+                                        style="background-color: ${getScoreColor(score)}; transform: ${currentVote === score ? 'scale(1.15)' : 'scale(1)'}; ring-color: ${getScoreColor(score)};"
+                                    >
+                                        ${score}
+                                        ${currentVote === score && state.showTickAnimation ? `
+                                            <svg class="absolute -top-1 -right-1 w-6 h-6 text-white bg-green-600 rounded-full p-1 tick-animation" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                        ` : currentVote === score ? `
+                                            <svg class="absolute -top-1 -right-1 w-6 h-6 text-white bg-green-600 rounded-full p-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                        ` : ''}
+                                    </button>
+                                `).join('')}
+                            </div>
+
+                            <div class="flex justify-between items-center gap-2">
+                                <button 
+                                    onclick="navigateImage('prev')" 
+                                    ${state.currentImageIndex === 0 || state.isAnimating ? 'disabled' : ''}
+                                    class="flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                >
+                                    ← Prev
+                                </button>
+
+                                ${allVoted ? `
+                                    <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-1 shadow-lg text-sm">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
+                                        Submit
+                                    </button>
+                                ` : '<div></div>'}
+
+                                <button 
+                                    onclick="navigateImage('next')" 
+                                    ${state.isAnimating ? 'disabled' : ''}
+                                    class="flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                >
+                                    Next →
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderResults() {
+            if (!state.mockResults) {
+                state.mockResults = generateMockResults(state.currentContest, state.votes);
+            }
+            
+            const grouped = groupByScoreRange(state.mockResults);
+            const sortedKeys = Object.keys(grouped).sort((a, b) => {
+                const aMin = grouped[a].min;
+                const bMin = grouped[b].min;
+                return bMin - aMin;
+            });
+            
+            const baseSize = 150;
+            const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in results-bg">
+                        <div class="text-center mb-4">
+                            <div class="flex items-center justify-center gap-2 mb-2">
+                                <span class="text-4xl">🎆</span>
+                                <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
+                            </div>
+                            <p class="text-gray-600 text-sm mb-1">Average votes from all participants</p>
+                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
+                        </div>
+
+                        <div class="mb-4 max-w-md mx-auto">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Scale:</label>
+                                <button onclick="adjustScale(-10)" class="bg-gray-300 text-gray-700 rounded px-2 py-1 text-sm font-bold hover:bg-gray-400">−</button>
+                                <input 
+                                    type="range" 
+                                    id="scaleSlider"
+                                    min="5" 
+                                    max="250" 
+                                    value="${state.imageScale}"
+                                    oninput="updateScalePending(this.value); updateScale(this.value)"
+                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                />
+                                <button onclick="adjustScale(10)" class="bg-gray-300 text-gray-700 rounded px-2 py-1 text-sm font-bold hover:bg-gray-400">+</button>
+                                <span id="scaleValue" class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            </div>
+                        </div>
+
+                        ${sortedKeys.map(key => {
+                            const group = grouped[key];
+                            const colorStyle = getCategoryColor(group.min);
+                            return `
+                                <div class="mb-3">
+                                    <h3 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block ${colorStyle.color} ${colorStyle.bg}">
+                                        ${getCategoryLabel(group.min, group.max)}
+                                    </h3>
+                                    <div class="grid gap-1 mt-2" style="grid-template-columns: repeat(auto-fill, minmax(${imageSize}px, 1fr));">
+                                        ${group.items.map(item => `
+                                            <div 
+                                                onclick="showBreakdown(${item.id})"
+                                                class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                                            >
+                                                <img 
+                                                    src="${item.url}" 
+                                                    alt="Image" 
+                                                    class="w-full object-contain" 
+                                                    style="height: ${imageSize}px;"
+                                                    onload="this.parentElement.classList.remove('image-loading')"
+                                                />
+                                                <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-center py-1 text-xs font-bold">
+                                                    ${item.averageScore}
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+
+                        <button onclick="backToHome()" class="w-full mt-4 bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-300 transition text-sm">
+                            Back to Contests
+                        </button>
+                    </div>
+
+                    ${state.showBreakdownModal ? renderBreakdownModal() : ''}
+                </div>
+            `;
+        }
+
+        function renderBreakdownModal() {
+            const item = state.mockResults.find(r => r.id === state.showBreakdownModal);
+            if (!item) return '';
+
+            const votesByScore = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+            item.breakdown.forEach(vote => {
+                votesByScore[vote.score].push(vote);
+            });
+
+            Object.keys(votesByScore).forEach(score => {
+                votesByScore[score].sort((a, b) => a.username.localeCompare(b.username));
+            });
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                        <div class="p-4">
+                            <div class="flex justify-between items-center mb-3">
+                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown</h3>
+                                <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="mb-3 rounded-lg overflow-hidden" style="max-height: 250px;">
+                                <img 
+                                    src="${item.url}" 
+                                    alt="Image" 
+                                    class="w-full h-full object-contain"
+                                    onload="this.parentElement.classList.remove('image-loading')"
+                                />
+                            </div>
+
+                            <div class="bg-gray-50 rounded-lg p-3 mb-3">
+                                <div class="text-center">
+                                    <div class="text-2xl font-bold text-gray-800">${item.averageScore}</div>
+                                    <div class="text-xs text-gray-600">Average Score</div>
+                                    <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
+                                </div>
+                            </div>
+
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-xs">
+                                    <thead>
+                                        <tr class="border-b-2 border-gray-300">
+                                            ${[1, 2, 3, 4, 5].map(score => `
+                                                <th class="p-2 font-bold" style="color: ${getScoreColor(score)}">
+                                                    ${score} (${votesByScore[score].length})
+                                                </th>
+                                            `).join('')}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="align-top">
+                                            ${[1, 2, 3, 4, 5].map(score => `
+                                                <td class="p-2 border-r border-gray-200 last:border-r-0">
+                                                    <div class="space-y-2">
+                                                        ${votesByScore[score].map(vote => `
+                                                            <div class="flex items-center gap-1 ${vote.isCurrentUser ? 'bg-blue-50 border border-blue-200 rounded p-1' : ''}">
+                                                                <img src="${vote.avatar}" alt="${vote.username}" class="w-6 h-6 rounded-full flex-shrink-0" />
+                                                                <span class="text-gray-700 truncate">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
+                                                            </div>
+                                                        `).join('')}
+                                                        ${votesByScore[score].length === 0 ? '<div class="text-gray-400 italic text-center py-2">None</div>' : ''}
+                                                    </div>
+                                                </td>
+                                            `).join('')}
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function render() {
+            const app = document.getElementById('app');
+            
+            if (!state.isLoggedIn) {
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal();
+                return;
+            }
+
+            let content = '';
+            switch(state.view) {
+                case 'home':
+                    content = renderHome();
+                    break;
+                case 'createContest':
+                    content = renderCreateContest();
+                    break;
+                case 'vote':
+                    content = renderVoting();
+                    break;
+                case 'results':
+                    content = renderResults();
+                    break;
+                default:
+                    content = renderHome();
+            }
+
+            app.innerHTML = renderHeader() + content + renderModal();
+        }
+
+        window.login = login;
+        window.logout = logout;
+        window.startCreateContest = startCreateContest;
+        window.handleContestTitle = handleContestTitle;
+        window.handleContestDescription = handleContestDescription;
+        window.cancelCreateContest = cancelCreateContest;
+        window.confirmCancelCreate = confirmCancelCreate;
+        window.addImageFromUrl = addImageFromUrl;
+        window.addImageFromFile = addImageFromFile;
+        window.addRandomTestImage = addRandomTestImage;
+        window.removeContestImage = removeContestImage;
+        window.finishCreateContest = finishCreateContest;
+        window.startVoting = startVoting;
+        window.viewLockedResults = viewLockedResults;
+        window.handleVote = handleVote;
+        window.navigateImage = navigateImage;
+        window.cancelVoting = cancelVoting;
+        window.submitVotes = submitVotes;
+        window.showBreakdown = showBreakdown;
+        window.closeBreakdown = closeBreakdown;
+        window.backToHome = backToHome;
+        window.closeModal = closeModal;
+        window.updateScale = updateScale;
+        window.updateScalePending = updateScalePending;
+        window.adjustScale = adjustScale;
+        window.confirmSubmitVotes = confirmSubmitVotes;
+        window.confirmCancelVoting = confirmCancelVoting;
 
         render();
     </script>
