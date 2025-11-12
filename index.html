@@ -6,6 +6,8 @@
     <title>🌸 Peony - Image Contest App</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Lilita+One&display=swap');
+        
         @keyframes tickAppear {
             0% { transform: scale(0) rotate(-45deg); opacity: 0; }
             50% { transform: scale(1.2) rotate(0deg); opacity: 1; }
@@ -109,6 +111,10 @@
             background: rgba(34, 197, 94, 0.1);
             transform: scale(1.02);
         }
+        .score-text {
+            font-family: 'Lilita One', cursive;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8), -1px -1px 2px rgba(0,0,0,0.8), 1px -1px 2px rgba(0,0,0,0.8), -1px 1px 2px rgba(0,0,0,0.8);
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -134,7 +140,7 @@
                     { id: 2, url: 'https://images.unsplash.com/photo-1464297162577-f5295c892194?w=800', author: null },
                     { id: 3, url: 'https://images.unsplash.com/photo-1466781783364-36c955e42a7f?w=800', author: null },
                     { id: 4, url: 'https://images.unsplash.com/photo-1455659817273-f96807779a8a?w=800', author: null },
-                    { id: 5, url: 'https://images.unsplash.com/photo-1517424988-5cc992c39db3?w=800', author: null }
+                    { id: 5, url: 'https://images.unsplash.com/photo-1463852247062-1bbca38f7805?w=800', author: null }
                 ]
             },
             {
@@ -344,21 +350,23 @@
         }
 
         function confirmSubmitVotes() {
-            if (state.modalProcessing) return;
             state.modalProcessing = true;
-            closeModal();
+            state.modal = null;
+            document.body.classList.remove('modal-open');
             state.hasSubmitted = true;
             state.view = 'results';
             state.mockResults = generateMockResults(state.currentContest, state.votes);
+            state.modalProcessing = false;
             render();
         }
 
         function confirmCancelVoting() {
-            if (state.modalProcessing) return;
             state.modalProcessing = true;
-            closeModal();
+            state.modal = null;
+            document.body.classList.remove('modal-open');
             state.view = 'home';
             state.currentContest = null;
+            state.modalProcessing = false;
             render();
         }
 
@@ -387,7 +395,9 @@
             
             state.modalProcessing = true;
             state.newContest.title = title;
-            closeModal();
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            state.modalProcessing = false;
             showInputModal('Contest Description (Optional)', 'Enter contest description...', 'handleContestDescription', true);
         }
 
@@ -404,8 +414,10 @@
             state.modalProcessing = true;
             state.newContest.description = description;
             state.newContest.images = [];
-            closeModal();
+            state.modal = null;
+            document.body.classList.remove('modal-open');
             state.view = 'createContest';
+            state.modalProcessing = false;
             render();
         }
 
@@ -418,11 +430,12 @@
         }
 
         function confirmCancelCreate() {
-            if (state.modalProcessing) return;
             state.modalProcessing = true;
-            closeModal();
+            state.modal = null;
+            document.body.classList.remove('modal-open');
             state.view = 'home';
             state.newContest = { title: '', description: '', images: [] };
+            state.modalProcessing = false;
             render();
         }
 
@@ -725,7 +738,7 @@
                 <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
-                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-pink-400 to-green-500">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-pink-400 to-pink-600">
                                 <span class="text-xl">🌸</span>
                             </div>
                             <h1 class="text-xl font-bold">Peony</h1>
@@ -755,7 +768,7 @@
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
                     <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-gradient-to-br from-pink-500 to-rose-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <div class="w-16 h-16 bg-gradient-to-br from-pink-500 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌸</span>
                         </div>
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
@@ -1060,7 +1073,7 @@
                                                     style="height: ${imageSize}px;"
                                                     onload="this.parentElement.classList.remove('image-loading')"
                                                 />
-                                                <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-center py-1 text-xs font-bold">
+                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 text-xs font-bold score-text">
                                                     ${item.averageScore}
                                                 </div>
                                             </div>
@@ -1123,35 +1136,26 @@
                                 </div>
                             </div>
 
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-xs">
-                                    <thead>
-                                        <tr class="border-b-2 border-gray-300">
-                                            ${[1, 2, 3, 4, 5].map(score => `
-                                                <th class="p-2 font-bold" style="color: ${getScoreColor(score)}">
-                                                    ${score} (${votesByScore[score].length})
-                                                </th>
-                                            `).join('')}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr class="align-top">
-                                            ${[1, 2, 3, 4, 5].map(score => `
-                                                <td class="p-2 border-r border-gray-200 last:border-r-0">
-                                                    <div class="space-y-2">
-                                                        ${votesByScore[score].map(vote => `
-                                                            <div class="flex items-center gap-1 ${vote.isCurrentUser ? 'bg-blue-50 border border-blue-200 rounded p-1' : ''}">
-                                                                <img src="${vote.avatar}" alt="${vote.username}" class="w-6 h-6 rounded-full flex-shrink-0" />
-                                                                <span class="text-gray-700 truncate">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
-                                                            </div>
-                                                        `).join('')}
-                                                        ${votesByScore[score].length === 0 ? '<div class="text-gray-400 italic text-center py-2">None</div>' : ''}
+                            <div class="space-y-3">
+                                ${[5, 4, 3, 2, 1].map(score => `
+                                    <div>
+                                        <h4 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block" style="color: ${getScoreColor(score)}; background-color: ${getScoreColor(score)}20;">
+                                            Score ${score} (${votesByScore[score].length} ${votesByScore[score].length === 1 ? 'vote' : 'votes'})
+                                        </h4>
+                                        ${votesByScore[score].length > 0 ? `
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 mt-2">
+                                                ${votesByScore[score].map(vote => `
+                                                    <div class="flex items-center gap-2 p-2 rounded-lg ${vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <span class="text-sm text-gray-700 truncate">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
                                                     </div>
-                                                </td>
-                                            `).join('')}
-                                        </tr>
-                                    </tbody>
-                                </table>
+                                                `).join('')}
+                                            </div>
+                                        ` : `
+                                            <div class="text-gray-400 italic text-sm mt-2 ml-3">No votes</div>
+                                        `}
+                                    </div>
+                                `).join('')}
                             </div>
                         </div>
                     </div>
