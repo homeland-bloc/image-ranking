@@ -721,13 +721,7 @@
         }
 
         function navigateImage(direction) {
-            const currentImage = state.shuffledImages[state.currentImageIndex];
-            
             if (direction === 'next') {
-                if (!state.votes[currentImage.id]) {
-                    showAlert('Please vote on this image before proceeding to the next one.', '🚨');
-                    return;
-                }
                 if (state.currentImageIndex < state.shuffledImages.length - 1) {
                     state.currentImageIndex++;
                 }
@@ -856,7 +850,7 @@
         }
 
         function renderHeader() {
-            const showBackButton = state.view === 'results';
+            const showBackButton = state.view === 'results' || state.view === 'vote';
             
             return `
                 <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg">
@@ -900,7 +894,7 @@
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
                     <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-gradient-to-br from-pink-500 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <div class="w-16 h-16 bg-gradient-to-br from-pink-400 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌸</span>
                         </div>
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
@@ -1092,17 +1086,7 @@
 
                         <div class="p-3">
                             <div class="flex justify-between items-center mb-3 gap-2">
-                                <div class="flex items-center gap-2">
-                                    <button onclick="cancelVoting()" class="text-gray-600 hover:text-gray-800 flex items-center gap-1 text-sm">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                                        </svg>
-                                        Back
-                                    </button>
-                                    <h2 class="text-lg font-bold text-gray-800">${state.currentContest.title}</h2>
-                                </div>
-                                <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
-                            </div>
+                                <h2 class="text-lg font-bold text-gray-800">${state.currentContest.title}</h2>
 
                             <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="height: 60vh;">
                                 <img 
