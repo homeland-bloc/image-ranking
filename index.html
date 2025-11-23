@@ -174,6 +174,7 @@
                 createdBy: 'demo-user-123',
                 creatorName: 'DemoUser',
                 creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo',
+                createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000, // 7 days ago
                 images: [
                     { id: 1, url: 'https://images.unsplash.com/photo-1490750967868-88aa4486c946?w=800', author: null, isFileUpload: false },
                     { id: 2, url: 'https://images.unsplash.com/photo-1464297162577-f5295c892194?w=800', author: null, isFileUpload: false },
@@ -190,6 +191,7 @@
                 createdBy: 'demo-user-123',
                 creatorName: 'DemoUser',
                 creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo',
+                createdAt: Date.now() - 3 * 24 * 60 * 60 * 1000, // 3 days ago
                 images: [
                     { id: 6, url: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800', author: null, isFileUpload: false },
                     { id: 7, url: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?w=800', author: null, isFileUpload: false },
@@ -204,6 +206,7 @@
                 createdBy: 'other-user',
                 creatorName: 'NatureLover',
                 creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nature',
+                createdAt: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1 day ago
                 images: [
                     { id: 9, url: 'https://images.unsplash.com/photo-1564349683136-77e08dba1ef7?w=800', author: null, isFileUpload: false },
                     { id: 10, url: 'https://images.unsplash.com/photo-1437622368342-7a3d73a34c8f?w=800', author: null, isFileUpload: false },
@@ -231,9 +234,17 @@
             imageScale: 100,
             mockResults: null,
             scaleUpdateTimeout: null,
-            newContest: { title: '', images: [] },
+            newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,
-            shuffledImages: []
+            shuffledImages: [],
+            nextContestId: 4, // Start at 4 since we have 3 mock contests
+            bannedUsers: [], // Array of user IDs who are banned from app
+            blockedVotes: {}, // Format: { contestId: { imageId: [userId1, userId2] } }
+            userContestLimits: {}, // Format: { userId: maxContests }
+            globalContestLimit: 20,
+            sortBy: 'dateDesc', // Options: dateDesc, dateAsc, titleAsc, titleDesc, votersDesc, imagesDesc
+            filterCreator: null, // userId or null for all
+            showVoterBreakdown: false
         };
 
         const testImageUrls = [
@@ -272,16 +283,26 @@
         }
 
         function getCategoryColor(min) {
-            if (min >= 4.5) return { color: 'text-green-700', bg: 'bg-green-100', textColor: 'rgb(21, 128, 61)', bgColor: 'rgb(220, 252, 231)' };
+            // Bright green with cyan/blue undertone for top scores
+            if (min >= 4.5) return { color: 'text-emerald-700', bg: 'bg-emerald-100', textColor: 'rgb(16, 185, 129)', bgColor: 'rgb(209, 250, 229)' };
+            // Lime green
             if (min >= 4.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
-            if (min >= 3.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(161, 98, 7)', bgColor: 'rgb(254, 249, 195)' };
-            if (min >= 3.0) return { color: 'text-yellow-700', bg: 'bg-yellow-100', textColor: 'rgb(133, 77, 14)', bgColor: 'rgb(254, 240, 138)' };
-            if (min >= 2.5) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
-            if (min >= 2.0) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
-            if (min >= 1.5) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 226, 226)' };
-            if (min >= 1.0) return { color: 'text-red-700', bg: 'bg-red-100', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(254, 202, 202)' };
-            if (min >= 0.5) return { color: 'text-red-800', bg: 'bg-red-200', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(254, 178, 178)' };
-            return { color: 'text-red-900', bg: 'bg-red-300', textColor: 'rgb(127, 29, 29)', bgColor: 'rgb(252, 165, 165)' };
+            // Yellow-green blend
+            if (min >= 3.5) return { color: 'text-lime-500', bg: 'bg-lime-100', textColor: 'rgb(163, 230, 53)', bgColor: 'rgb(220, 252, 231)' };
+            // Yellow
+            if (min >= 3.0) return { color: 'text-yellow-600', bg: 'bg-yellow-100', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 240, 138)' };
+            // Orange-yellow blend
+            if (min >= 2.5) return { color: 'text-orange-500', bg: 'bg-orange-200', textColor: 'rgb(251, 146, 60)', bgColor: 'rgb(254, 215, 170)' };
+            // Orange
+            if (min >= 2.0) return { color: 'text-orange-600', bg: 'bg-orange-100', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 237, 213)' };
+            // Red-orange blend
+            if (min >= 1.5) return { color: 'text-red-500', bg: 'bg-red-100', textColor: 'rgb(239, 68, 68)', bgColor: 'rgb(254, 226, 226)' };
+            // Red
+            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
+            // Dark red
+            if (min >= 0.5) return { color: 'text-red-700', bg: 'bg-red-300', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(252, 165, 165)' };
+            // Darkest red
+            return { color: 'text-red-800', bg: 'bg-red-400', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(248, 113, 113)' };
         }
 
         function generateRandomVotes(count) {
@@ -292,7 +313,8 @@
                     username: names[i % names.length] + (i >= names.length ? i : ''),
                     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${i}`,
                     score: Math.floor(Math.random() * 5) + 1,
-                    isCurrentUser: false
+                    isCurrentUser: false,
+                    userId: `user-${i}`
                 });
             }
             return votes;
@@ -301,25 +323,35 @@
         function generateMockResults(contest, userVotes) {
             const hasVoted = Object.keys(userVotes).length > 0;
             const totalVoters = Math.floor(Math.random() * 15) + 5;
-            
+
             return contest.images.map(img => {
-                const breakdown = hasVoted ? [
-                    { 
-                        username: state.user.username, 
-                        avatar: state.user.avatar, 
-                        score: userVotes[img.id] || 3, 
-                        isCurrentUser: true 
+                let breakdown = hasVoted ? [
+                    {
+                        username: state.user.username,
+                        avatar: state.user.avatar,
+                        score: userVotes[img.id] || 3,
+                        isCurrentUser: true,
+                        userId: state.user.id
                     },
                     ...generateRandomVotes(totalVoters - 1)
                 ] : generateRandomVotes(totalVoters);
-                
-                const sum = breakdown.reduce((acc, vote) => acc + vote.score, 0);
-                const averageScore = parseFloat((sum / breakdown.length).toFixed(2));
-                
+
+                // Mark banned users and blocked votes
+                breakdown = breakdown.map(vote => {
+                    const isBanned = state.bannedUsers.includes(vote.userId);
+                    const isBlocked = state.blockedVotes[contest.id]?.[img.id]?.includes(vote.userId) || false;
+                    return { ...vote, isBanned, isBlocked };
+                });
+
+                // Calculate average excluding banned and blocked votes
+                const validVotes = breakdown.filter(vote => !vote.isBanned && !vote.isBlocked);
+                const sum = validVotes.reduce((acc, vote) => acc + vote.score, 0);
+                const averageScore = validVotes.length > 0 ? parseFloat((sum / validVotes.length).toFixed(2)) : 0;
+
                 return {
                     ...img,
                     averageScore,
-                    totalVotes: breakdown.length,
+                    totalVotes: validVotes.length,
                     breakdown
                 };
             }).sort((a, b) => b.averageScore - a.averageScore);
@@ -476,11 +508,22 @@
         }
 
         function startCreateContest() {
-            const userContests = state.contests.filter(c => c.createdBy === state.user.id).length;
-            if (userContests >= 50) {
-                showAlert('You have reached the maximum of 50 contests per user.', '❌');
+            const USER_CONTEST_LIMIT = 3;
+
+            // Check global limit
+            if (state.contests.length >= state.globalContestLimit) {
+                showAlert(`Global contest limit reached (${state.globalContestLimit} contests). Contact the admin for more slots.`, '❌');
                 return;
             }
+
+            // Check user limit
+            const userContests = state.contests.filter(c => c.createdBy === state.user.id).length;
+            const userLimit = state.userContestLimits[state.user.id] || USER_CONTEST_LIMIT;
+            if (userContests >= userLimit) {
+                showAlert(`You have reached your contest limit (${userLimit} contests). Contact the admin for more slots.`, '❌');
+                return;
+            }
+
             showInputModal('Contest Title', 'Enter contest title...', 'handleContestTitle', false);
         }
 
@@ -488,7 +531,7 @@
             if (state.modalProcessing) return;
             const input = document.querySelector('.modal-input');
             const title = input ? input.value.trim() : '';
-            
+
             if (!title || title.length === 0) {
                 showAlert('Contest title cannot be empty.', '❌');
                 return;
@@ -497,12 +540,38 @@
                 showAlert('Contest title is too long (max 100 characters).', '❌');
                 return;
             }
-            
+
+            // Check for duplicate title
+            const existingContest = state.contests.find(c => c.title.toLowerCase() === title.toLowerCase());
+            if (existingContest) {
+                showConfirm(
+                    'A contest with this title already exists. Create anyway?',
+                    'confirmCreateWithDuplicateTitle',
+                    '⚠️'
+                );
+                // Store the title temporarily for the confirmation
+                state.tempContestTitle = title;
+                return;
+            }
+
             state.modalProcessing = true;
             state.newContest.title = title;
             state.newContest.images = [];
             state.modal = null;
             document.body.classList.remove('modal-open');
+            state.view = 'createContest';
+            state.modalProcessing = false;
+            render();
+        }
+
+        function confirmCreateWithDuplicateTitle() {
+            state.modalProcessing = true;
+            const title = state.tempContestTitle;
+            state.tempContestTitle = null;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            state.newContest.title = title;
+            state.newContest.images = [];
             state.view = 'createContest';
             state.modalProcessing = false;
             render();
@@ -535,18 +604,20 @@
                 return;
             }
             
-            if (state.newContest.images.length >= 150) {
-                showAlert('Maximum 150 images per contest!', '❌');
+            if (state.newContest.images.length >= 50) {
+                showAlert('Maximum 50 images per contest!', '❌');
                 return;
             }
             
             try {
                 const img = await loadImageFromUrl(url);
+                const imageCount = state.newContest.images.length + 1;
                 state.newContest.images.push({
                     id: Date.now() + Math.random(),
                     url,
                     author: null,
-                    isFileUpload: false
+                    isFileUpload: false,
+                    label: `URL Image ${imageCount}`
                 });
                 input.value = '';
                 render();
@@ -563,18 +634,22 @@
             input.onchange = async (e) => {
                 const files = Array.from(e.target.files);
                 for (const file of files) {
-                    if (state.newContest.images.length >= 150) {
-                        showAlert('Maximum 150 images reached!', '🚨');
+                    if (state.newContest.images.length >= 50) {
+                        showAlert('Maximum 50 images reached!', '🚨');
                         break;
                     }
                     try {
                         const url = URL.createObjectURL(file);
                         await loadImageFromUrl(url);
+                        // Generate label from filename
+                        const filename = file.name.replace(/\.[^/.]+$/, ''); // Remove extension
+                        const label = filename.replace(/[-_]/g, ' '); // Replace dashes/underscores with spaces
                         state.newContest.images.push({
                             id: Date.now() + Math.random(),
                             url,
                             author: null,
-                            isFileUpload: true
+                            isFileUpload: true,
+                            label: label
                         });
                     } catch (error) {
                         console.error('Failed to load file:', error);
@@ -586,19 +661,21 @@
         }
 
         async function addRandomTestImage() {
-            if (state.newContest.images.length >= 150) {
-                showAlert('Maximum 150 images per contest!', '❌');
+            if (state.newContest.images.length >= 50) {
+                showAlert('Maximum 50 images per contest!', '❌');
                 return;
             }
             
             const randomUrl = testImageUrls[Math.floor(Math.random() * testImageUrls.length)];
             try {
                 await loadImageFromUrl(randomUrl);
+                const imageCount = state.newContest.images.length + 1;
                 state.newContest.images.push({
                     id: Date.now() + Math.random(),
                     url: randomUrl,
                     author: null,
-                    isFileUpload: false
+                    isFileUpload: false,
+                    label: `Test Image ${imageCount}`
                 });
                 render();
             } catch (error) {
@@ -620,7 +697,18 @@
             document.body.classList.remove('modal-open');
             state.newContest.images.splice(index, 1);
             state.modalProcessing = false;
+            showAlert('Image removed successfully!', '✅');
+        }
+
+        function toggleImageLabels() {
+            state.newContest.labelsEnabled = !state.newContest.labelsEnabled;
             render();
+        }
+
+        function updateImageLabel(index, label) {
+            if (state.newContest.images[index]) {
+                state.newContest.images[index].label = label;
+            }
         }
 
         function finishCreateContest() {
@@ -630,18 +718,21 @@
             }
             
             const newContest = {
-                id: 'contest-' + Date.now(),
+                id: 'contest-' + state.nextContestId,
                 title: state.newContest.title,
                 isLocked: false,
                 resultsPublic: true,
                 createdBy: state.user.id,
                 creatorName: state.user.username,
                 creatorAvatar: state.user.avatar,
+                createdAt: Date.now(),
+                labelsEnabled: state.newContest.labelsEnabled,
                 images: state.newContest.images
             };
-            
+
             state.contests.unshift(newContest);
-            state.newContest = { title: '', images: [] };
+            state.nextContestId++;
+            state.newContest = { title: '', images: [], labelsEnabled: false };
             state.view = 'home';
             showAlert('Contest created successfully!', '✅');
         }
@@ -937,7 +1028,49 @@
             `;
         }
 
+        function setSortBy(sortBy) {
+            state.sortBy = sortBy;
+            render();
+        }
+
+        function setFilterCreator(creatorId) {
+            state.filterCreator = creatorId === 'all' ? null : creatorId;
+            render();
+        }
+
         function renderHome() {
+            // Get unique creators
+            const creators = [...new Set(state.contests.map(c => ({ id: c.createdBy, name: c.creatorName })))];
+            const uniqueCreators = Array.from(new Map(creators.map(c => [c.id, c])).values());
+
+            // Filter contests
+            let filteredContests = state.filterCreator
+                ? state.contests.filter(c => c.createdBy === state.filterCreator)
+                : state.contests;
+
+            // Sort contests
+            filteredContests = [...filteredContests].sort((a, b) => {
+                const voterCountA = Math.floor(Math.random() * 50) + 10;
+                const voterCountB = Math.floor(Math.random() * 50) + 10;
+
+                switch (state.sortBy) {
+                    case 'dateDesc':
+                        return (b.createdAt || 0) - (a.createdAt || 0);
+                    case 'dateAsc':
+                        return (a.createdAt || 0) - (b.createdAt || 0);
+                    case 'titleAsc':
+                        return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+                    case 'titleDesc':
+                        return b.title.toLowerCase().localeCompare(a.title.toLowerCase());
+                    case 'votersDesc':
+                        return voterCountB - voterCountA;
+                    case 'imagesDesc':
+                        return b.images.length - a.images.length;
+                    default:
+                        return 0;
+                }
+            });
+
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
                     <div class="flex justify-between items-center mb-4 gap-2">
@@ -947,22 +1080,51 @@
                         </button>
                     </div>
 
+                    <div class="bg-white rounded-lg shadow-md p-3 mb-4 flex gap-3 flex-wrap">
+                        <div class="flex-1 min-w-[200px]">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
+                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
+                                <option value="dateDesc" ${state.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
+                                <option value="dateAsc" ${state.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
+                                <option value="titleAsc" ${state.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
+                                <option value="titleDesc" ${state.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
+                                <option value="votersDesc" ${state.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
+                                <option value="imagesDesc" ${state.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
+                            </select>
+                        </div>
+                        <div class="flex-1 min-w-[200px]">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
+                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
+                                <option value="all" ${state.filterCreator === null ? 'selected' : ''}>All Creators</option>
+                                ${uniqueCreators.map(creator => `
+                                    <option value="${creator.id}" ${state.filterCreator === creator.id ? 'selected' : ''}>${creator.name}</option>
+                                `).join('')}
+                            </select>
+                        </div>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        ${state.contests.map(contest => {
+                        ${filteredContests.map(contest => {
                             const hasVoted = state.userVotedContests[contest.id];
                             const voterCount = Math.floor(Math.random() * 50) + 10;
                             const canDelete = canDeleteContest(contest);
                             
+                            const createdDate = contest.createdAt ? new Date(contest.createdAt).toLocaleString() : '';
+
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4">
-                                    <div class="flex items-center gap-2 mb-3">
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full" />
-                                        <div class="flex-1">
-                                            <h3 class="text-base font-bold text-gray-800">${contest.title}</h3>
-                                            <p class="text-xs text-gray-500">by ${contest.creatorName}</p>
+                                    <div class="flex items-start gap-2 mb-2">
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <div class="flex-1 min-w-0">
+                                            <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
+                                            <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
+                                                <span class="truncate">by ${contest.creatorName}</span>
+                                                ${createdDate ? `<span class="whitespace-nowrap">📅 ${createdDate}</span>` : ''}
+                                                <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
+                                            </div>
                                         </div>
                                         ${contest.isLocked ? `
-                                            <div class="bg-gray-800 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1">
+                                            <div class="bg-gray-800 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1 flex-shrink-0">
                                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                                 </svg>
@@ -970,12 +1132,7 @@
                                             </div>
                                         ` : ''}
                                     </div>
-                                    
-                                    <div class="flex gap-3 mb-3 text-xs text-gray-600">
-                                        <span>👥 ${voterCount} voters</span>
-                                        <span>🖼️ ${contest.images.length} images</span>
-                                    </div>
-                                    
+
                                     <div class="flex gap-2">
                                         ${contest.isLocked ? `
                                             <button 
@@ -1051,21 +1208,39 @@
                             </div>
                         </div>
 
-                        <div class="bg-pink-600 text-white px-3 py-2 rounded-lg mb-3 text-center font-semibold text-sm">
-                            ${state.newContest.images.length} / 150 images added
+                        <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
+                            <div class="text-sm font-semibold text-gray-800">
+                                ${state.newContest.images.length} / 50 images added
+                            </div>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" ${state.newContest.labelsEnabled ? 'checked' : ''} onchange="toggleImageLabels()" class="w-4 h-4 text-pink-600 rounded focus:ring-pink-500">
+                                <span class="text-sm font-medium text-gray-700">Enable Image Labels</span>
+                            </label>
                         </div>
 
-                        <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 mb-4 min-h-[100px]">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4 min-h-[100px]">
                             ${state.newContest.images.length === 0 ? `
                                 <div class="col-span-full text-center text-gray-400 py-8 text-sm italic">
                                     No images added yet
                                 </div>
                             ` : state.newContest.images.map((img, index) => `
-                                <div class="relative group">
-                                    <img src="${img.url}" class="w-full h-24 object-cover rounded-lg" />
-                                    <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition">
+                                <div class="relative group bg-gray-100 rounded-lg overflow-hidden">
+                                    <img src="${img.url}" class="w-full h-32 object-cover" />
+                                    <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-lg">
                                         ×
                                     </button>
+                                    ${state.newContest.labelsEnabled ? `
+                                        <div class="p-2 bg-white">
+                                            <input
+                                                type="text"
+                                                value="${img.label || ''}"
+                                                onchange="updateImageLabel(${index}, this.value)"
+                                                maxlength="50"
+                                                placeholder="Image label..."
+                                                class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-pink-500 focus:outline-none"
+                                            />
+                                        </div>
+                                    ` : ''}
                                 </div>
                             `).join('')}
                         </div>
@@ -1087,18 +1262,32 @@
             const currentVote = state.votes[currentImage.id];
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
 
+            // Adaptive progress bar logic
+            const imageCount = state.shuffledImages.length;
+            const segmentCount = Math.min(imageCount, 20);
+            const imagesPerSegment = Math.ceil(imageCount / segmentCount);
+
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <div class="bg-gray-200 h-3 flex gap-1 p-1">
-                            ${state.shuffledImages.map((img, idx) => {
-                                const hasVote = state.votes[img.id];
-                                const isCurrent = idx === state.currentImageIndex;
+                            ${Array.from({ length: segmentCount }).map((_, segmentIdx) => {
+                                const startIdx = segmentIdx * imagesPerSegment;
+                                const endIdx = Math.min(startIdx + imagesPerSegment, imageCount);
+                                const segmentImages = state.shuffledImages.slice(startIdx, endIdx);
+
+                                const allVotedInSegment = segmentImages.every(img => state.votes[img.id]);
+                                const hasCurrentImage = state.currentImageIndex >= startIdx && state.currentImageIndex < endIdx;
+
+                                const imageRange = startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`;
+                                const votedCount = segmentImages.filter(img => state.votes[img.id]).length;
+                                const tooltip = `${imageRange} (${votedCount}/${segmentImages.length} voted)`;
+
                                 return `
-                                    <div 
-                                        onclick="jumpToImage(${idx})"
-                                        class="progress-segment flex-1 ${hasVote ? 'bg-green-500' : isCurrent ? 'bg-pink-500' : 'bg-gray-300'}"
-                                        title="Image ${idx + 1}${hasVote ? ' ✓' : ''}"
+                                    <div
+                                        onclick="jumpToImage(${startIdx})"
+                                        class="progress-segment flex-1 ${allVotedInSegment ? 'bg-green-500' : hasCurrentImage ? 'bg-pink-500' : 'bg-gray-300'}"
+                                        title="${tooltip}"
                                     ></div>
                                 `;
                             }).join('')}
@@ -1110,13 +1299,20 @@
                                 <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
                             </div>
 
-                            <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="height: 60vh;">
-                                <img 
-                                    src="${currentImage.url}" 
-                                    alt="Image ${state.currentImageIndex + 1}" 
-                                    class="h-full w-auto object-contain" 
-                                    onload="this.parentElement.classList.remove('image-loading')"
-                                />
+                            <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex flex-col items-center justify-center" style="min-height: 60vh;">
+                                ${state.currentContest.labelsEnabled && currentImage.label ? `
+                                    <div class="w-full bg-white px-4 py-2 text-center border-b border-gray-200">
+                                        <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
+                                    </div>
+                                ` : ''}
+                                <div class="flex-1 flex items-center justify-center p-4">
+                                    <img
+                                        src="${currentImage.url}"
+                                        alt="Image ${state.currentImageIndex + 1}"
+                                        class="max-h-full max-w-full object-contain"
+                                        onload="this.parentElement.classList.remove('image-loading')"
+                                    />
+                                </div>
                                 ${currentVote ? `
                                     <div class="absolute top-2 right-2 bg-white rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
                                         <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1427,6 +1623,7 @@
         window.logout = logout;
         window.startCreateContest = startCreateContest;
         window.handleContestTitle = handleContestTitle;
+        window.confirmCreateWithDuplicateTitle = confirmCreateWithDuplicateTitle;
         window.cancelCreateContest = cancelCreateContest;
         window.confirmCancelCreate = confirmCancelCreate;
         window.addImageFromUrl = addImageFromUrl;
@@ -1454,6 +1651,10 @@
         window.toggleVoteView = toggleVoteView;
         window.deleteContest = deleteContest;
         window.confirmDeleteContest = confirmDeleteContest;
+        window.setSortBy = setSortBy;
+        window.setFilterCreator = setFilterCreator;
+        window.toggleImageLabels = toggleImageLabels;
+        window.updateImageLabel = updateImageLabel;
 
         render();
     </script>
