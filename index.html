@@ -151,13 +151,21 @@
         .toggle-switch.active .toggle-slider {
             transform: translateX(30px);
         }
+        .voting-image {
+            max-height: 50vh;
+        }
+        @media (min-width: 640px) {
+            .voting-image {
+                max-height: min(40vh, 500px);
+            }
+        }
     </style>
 </head>
 <body class="min-h-screen">
     <div id="app"></div>
 
     <script>
-        const ADMIN_DISCORD_ID = 'admin-discord-id-placeholder';
+        const ADMIN_DISCORD_ID = 'demo-user-123';  // Changed to match DemoUser for testing
         
         const mockUser = {
             id: 'demo-user-123',
@@ -233,6 +241,7 @@
             modalProcessing: false,
             imageScale: 100,
             mockResults: null,
+            mockResultsCache: {}, // Format: { contestId: generatedResults }
             scaleUpdateTimeout: null,
             newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,
@@ -244,7 +253,10 @@
             globalContestLimit: 20,
             sortBy: 'dateDesc', // Options: dateDesc, dateAsc, titleAsc, titleDesc, votersDesc, imagesDesc
             filterCreator: null, // userId or null for all
-            showVoterBreakdown: false
+            showVoterBreakdown: false,
+            showUserProfile: null, // userId or null
+            compareMode: false,           // Toggle for compare mode
+            selectedContests: []          // Array of contest IDs selected for comparison
         };
 
         const testImageUrls = [
@@ -321,10 +333,17 @@
         }
 
         function generateMockResults(contest, userVotes) {
+            // Check cache first
+            const cacheKey = contest.id;
+            if (state.mockResultsCache[cacheKey]) {
+                return state.mockResultsCache[cacheKey];
+            }
+
+            // Generate results (existing logic)
             const hasVoted = Object.keys(userVotes).length > 0;
             const totalVoters = Math.floor(Math.random() * 15) + 5;
 
-            return contest.images.map(img => {
+            const results = contest.images.map(img => {
                 let breakdown = hasVoted ? [
                     {
                         username: state.user.username,
@@ -355,6 +374,11 @@
                     breakdown
                 };
             }).sort((a, b) => b.averageScore - a.averageScore);
+
+            // Cache results
+            state.mockResultsCache[cacheKey] = results;
+
+            return results;
         }
 
         function groupByScoreRange(results) {
@@ -902,9 +926,85 @@
             }, 200);
         }
 
+        function showUserProfile(userId) {
+            state.showUserProfile = userId;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeUserProfile() {
+            state.showUserProfile = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function banUser(userId) {
+            if (!state.bannedUsers.includes(userId)) {
+                state.bannedUsers.push(userId);
+            }
+            closeUserProfile();
+            showAlert('User has been banned.', '✅');
+        }
+
+        function unbanUser(userId) {
+            state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
+            closeUserProfile();
+            showAlert('User has been unbanned.', '✅');
+        }
+
+        function confirmBanUser(userId) {
+            showConfirm(
+                'Ban this user? They will not be able to access the app.',
+                `executeBanUser_${userId}`,
+                '🚨'
+            );
+        }
+
+        function executeBanUser(userId) {
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            banUser(userId);
+            state.modalProcessing = false;
+        }
+
+        function toggleCompareMode() {
+            state.compareMode = !state.compareMode;
+            if (!state.compareMode) {
+                state.selectedContests = [];
+            }
+            render();
+        }
+
+        function toggleContestSelection(contestId) {
+            const index = state.selectedContests.indexOf(contestId);
+            if (index === -1) {
+                if (state.selectedContests.length < 5) {
+                    state.selectedContests.push(contestId);
+                }
+            } else {
+                state.selectedContests.splice(index, 1);
+            }
+            render();
+        }
+
+        function startCompare() {
+            if (state.selectedContests.length < 2) return;
+            state.view = 'compare';
+            render();
+        }
+
+        function exitCompareMode() {
+            state.view = 'home';
+            state.compareMode = true; // Keep compare mode on
+            render();
+        }
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                if (state.showBreakdownModal) {
+                if (state.showUserProfile) {
+                    closeUserProfile();
+                } else if (state.showBreakdownModal) {
                     closeBreakdown();
                 } else if (state.modal) {
                     closeModal();
@@ -914,9 +1014,9 @@
 
         function renderModal() {
             if (!state.modal) return '';
-            
+
             const isInput = state.modal.type === 'input';
-            
+
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
@@ -933,20 +1033,23 @@
                             ${state.modal.buttons.map(btn => {
                                 const actionMatch = btn.action.match(/confirmRemoveImage_(\d+)/);
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
+                                const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
                                 let onclick;
                                 if (actionMatch) {
                                     onclick = `confirmRemoveImage(${actionMatch[1]})`;
                                 } else if (deleteContestMatch) {
                                     onclick = `confirmDeleteContest('${deleteContestMatch[1]}')`;
+                                } else if (banUserMatch) {
+                                    onclick = `executeBanUser('${banUserMatch[1]}')`;
                                 } else {
                                     onclick = `${btn.action}()`;
                                 }
                                 return `
-                                    <button 
+                                    <button
                                         onclick="${onclick}"
                                         class="px-5 py-2 rounded-lg font-semibold transition text-sm ${
-                                            btn.primary 
-                                                ? 'bg-gradient-to-r from-pink-500 to-rose-600 text-white hover:from-pink-600 hover:to-rose-700' 
+                                            btn.primary
+                                                ? 'bg-gradient-to-r from-pink-500 to-rose-600 text-white hover:from-pink-600 hover:to-rose-700'
                                                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                         }"
                                     >
@@ -987,7 +1090,7 @@
                             </button>
                         ` : `
                             <div class="flex items-center gap-2">
-                                <div class="flex items-center gap-2">
+                                <div class="flex items-center gap-2 cursor-pointer hover:opacity-80" onclick="showUserProfile('${state.user.id}')">
                                     <img src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
                                     <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
                                 </div>
@@ -1064,8 +1167,12 @@
                         return b.title.toLowerCase().localeCompare(a.title.toLowerCase());
                     case 'votersDesc':
                         return voterCountB - voterCountA;
+                    case 'votersAsc':
+                        return voterCountA - voterCountB;
                     case 'imagesDesc':
                         return b.images.length - a.images.length;
+                    case 'imagesAsc':
+                        return a.images.length - b.images.length;
                     default:
                         return 0;
                 }
@@ -1073,11 +1180,16 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="flex justify-between items-center mb-4 gap-2">
+                    <div class="flex justify-between items-center mb-4 gap-2 flex-wrap">
                         <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
-                        <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
-                            + Create Contest
-                        </button>
+                        <div class="flex gap-2">
+                            <button onclick="toggleCompareMode()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition text-sm">
+                                ${state.compareMode ? '✓ Compare Mode' : 'Compare Mode'}
+                            </button>
+                            <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                                + Create Contest
+                            </button>
+                        </div>
                     </div>
 
                     <div class="bg-white rounded-lg shadow-md p-3 mb-4 flex gap-3 flex-wrap">
@@ -1089,7 +1201,9 @@
                                 <option value="titleAsc" ${state.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
                                 <option value="titleDesc" ${state.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
                                 <option value="votersDesc" ${state.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
+                                <option value="votersAsc" ${state.sortBy === 'votersAsc' ? 'selected' : ''}>Fewest Voters</option>
                                 <option value="imagesDesc" ${state.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
+                                <option value="imagesAsc" ${state.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
                             </select>
                         </div>
                         <div class="flex-1 min-w-[200px]">
@@ -1108,29 +1222,41 @@
                             const hasVoted = state.userVotedContests[contest.id];
                             const voterCount = Math.floor(Math.random() * 50) + 10;
                             const canDelete = canDeleteContest(contest);
-                            
+                            const isSelected = state.selectedContests.includes(contest.id);
+
                             const createdDate = contest.createdAt ? new Date(contest.createdAt).toLocaleString() : '';
 
                             return `
-                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4">
+                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                                    ${state.compareMode ? `
+                                        <div class="absolute top-3 left-3 z-10">
+                                            <input
+                                                type="checkbox"
+                                                ${isSelected ? 'checked' : ''}
+                                                ${state.selectedContests.length >= 5 && !isSelected ? 'disabled' : ''}
+                                                onchange="toggleContestSelection('${contest.id}')"
+                                                class="w-5 h-5 text-purple-600 rounded focus:ring-purple-500 cursor-pointer"
+                                            />
+                                        </div>
+                                    ` : ''}
+                                    ${contest.isLocked ? `
+                                        <div class="absolute top-3 right-3 bg-gray-800 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                            </svg>
+                                            Locked
+                                        </div>
+                                    ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); showUserProfile('${contest.createdBy}')" />
                                         <div class="flex-1 min-w-0">
                                             <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate">by ${contest.creatorName}</span>
+                                                <span class="truncate cursor-pointer hover:text-pink-600" onclick="event.stopPropagation(); showUserProfile('${contest.createdBy}')">by ${contest.creatorName}</span>
                                                 ${createdDate ? `<span class="whitespace-nowrap">📅 ${createdDate}</span>` : ''}
                                                 <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
-                                        ${contest.isLocked ? `
-                                            <div class="bg-gray-800 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1 flex-shrink-0">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                                                </svg>
-                                                Locked
-                                            </div>
-                                        ` : ''}
                                     </div>
 
                                     <div class="flex gap-2">
@@ -1170,6 +1296,17 @@
                             `;
                         }).join('')}
                     </div>
+
+                    ${state.compareMode && state.selectedContests.length >= 2 ? `
+                        <div class="fixed bottom-6 right-6 z-50">
+                            <button onclick="startCompare()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-3 rounded-full font-bold hover:from-purple-600 hover:to-purple-800 transition shadow-2xl flex items-center gap-2 text-base">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                </svg>
+                                Compare (${state.selectedContests.length})
+                            </button>
+                        </div>
+                    ` : ''}
                 </div>
             `;
         }
@@ -1257,12 +1394,147 @@
             `;
         }
 
+        function renderCompare() {
+            // Get selected contests
+            const selectedContests = state.selectedContests
+                .map(id => state.contests.find(c => c.id === id))
+                .filter(c => c);
+
+            if (selectedContests.length === 0) {
+                state.view = 'home';
+                render();
+                return '';
+            }
+
+            // Assign colors to each contest
+            const contestColors = [
+                { bg: 'bg-purple-500', text: 'text-purple-500' },
+                { bg: 'bg-blue-500', text: 'text-blue-500' },
+                { bg: 'bg-green-500', text: 'text-green-500' },
+                { bg: 'bg-orange-500', text: 'text-orange-500' },
+                { bg: 'bg-pink-500', text: 'text-pink-500' }
+            ];
+
+            // Combine all images with contest info
+            let allImages = [];
+            selectedContests.forEach((contest, idx) => {
+                const contestResults = generateMockResults(contest, {});
+                const color = contestColors[idx % contestColors.length];
+
+                contestResults.forEach(img => {
+                    allImages.push({
+                        ...img,
+                        contestId: contest.id,
+                        contestTitle: contest.title.length > 20 ? contest.title.substring(0, 20) + '...' : contest.title,
+                        contestColor: color
+                    });
+                });
+            });
+
+            // Group by score range
+            const grouped = groupByScoreRange(allImages);
+            const sortedKeys = Object.keys(grouped).sort((a, b) => {
+                const aMin = grouped[a].min;
+                const bMin = grouped[b].min;
+                return bMin - aMin;
+            });
+
+            const baseSize = 150;
+            const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
+            const baseFontSize = 12;
+            const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in results-bg">
+                        <div class="text-center mb-4">
+                            <div class="flex items-center justify-center gap-2 mb-2">
+                                <span class="text-4xl">📊</span>
+                                <h2 class="text-2xl font-bold text-gray-800">Contest Comparison</h2>
+                            </div>
+                            <p class="text-gray-600 text-sm mb-3">Comparing ${selectedContests.length} contests</p>
+
+                            <div class="flex flex-wrap gap-2 justify-center mb-3">
+                                ${selectedContests.map((contest, idx) => {
+                                    const color = contestColors[idx % contestColors.length];
+                                    return `
+                                        <div class="${color.bg} text-white px-3 py-1 rounded-full text-xs flex items-center gap-2">
+                                            <span>${contest.title}</span>
+                                            <button onclick="toggleContestSelection('${contest.id}'); ${state.selectedContests.length <= 2 ? 'exitCompareMode();' : ''}" class="hover:opacity-80">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+
+                            <button onclick="exitCompareMode()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition text-sm">
+                                Change Selection
+                            </button>
+                        </div>
+
+                        <div class="mb-4 max-w-md mx-auto">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                <input
+                                    type="range"
+                                    id="scaleSlider"
+                                    min="40"
+                                    max="200"
+                                    value="${state.imageScale}"
+                                    oninput="updateScale(this.value)"
+                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                />
+                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            </div>
+                        </div>
+
+                        ${sortedKeys.map(key => {
+                            const group = grouped[key];
+                            const colorStyle = getCategoryColor(group.min);
+                            return `
+                                <div class="mb-4">
+                                    <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
+                                        ${getCategoryLabel(group.min, group.max)}
+                                    </h3>
+                                    <div class="flex flex-wrap gap-1">
+                                        ${group.items.map(item => `
+                                            <div
+                                                class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                                                style="height: ${imageSize}px;"
+                                            >
+                                                <img
+                                                    src="${item.url}"
+                                                    alt="Image"
+                                                    class="h-full w-auto object-cover"
+                                                    style="height: ${imageSize}px;"
+                                                    onload="this.parentElement.classList.remove('image-loading')"
+                                                />
+                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                    ${item.averageScore}
+                                                </div>
+                                                <div class="absolute top-1 left-1 ${item.contestColor.bg} text-white px-2 py-0.5 rounded-full text-xs font-semibold shadow-lg">
+                                                    ${item.contestTitle}
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
         function renderVoting() {
             const currentImage = state.shuffledImages[state.currentImageIndex];
             const currentVote = state.votes[currentImage.id];
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
 
-            // Adaptive progress bar logic
+            // Adaptive progress bar logic - ensure EXACTLY segmentCount dashes
             const imageCount = state.shuffledImages.length;
             const segmentCount = Math.min(imageCount, 20);
             const imagesPerSegment = Math.ceil(imageCount / segmentCount);
@@ -1271,9 +1543,13 @@
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <div class="bg-gray-200 h-3 flex gap-1 p-1">
-                            ${Array.from({ length: segmentCount }).map((_, segmentIdx) => {
+                            ${Array.from({ length: segmentCount }, (_, segmentIdx) => {
                                 const startIdx = segmentIdx * imagesPerSegment;
                                 const endIdx = Math.min(startIdx + imagesPerSegment, imageCount);
+
+                                // Skip segments that would start beyond our image count
+                                if (startIdx >= imageCount) return '';
+
                                 const segmentImages = state.shuffledImages.slice(startIdx, endIdx);
 
                                 const allVotedInSegment = segmentImages.every(img => state.votes[img.id]);
@@ -1299,17 +1575,17 @@
                                 <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
                             </div>
 
-                            <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex flex-col items-center justify-center" style="min-height: 60vh;">
+                            <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex flex-col items-center justify-center">
                                 ${state.currentContest.labelsEnabled && currentImage.label ? `
                                     <div class="w-full bg-white px-4 py-2 text-center border-b border-gray-200">
                                         <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
                                     </div>
                                 ` : ''}
-                                <div class="flex-1 flex items-center justify-center p-4">
+                                <div class="flex items-center justify-center p-4 sm:p-6">
                                     <img
                                         src="${currentImage.url}"
                                         alt="Image ${state.currentImageIndex + 1}"
-                                        class="max-h-full max-w-full object-contain"
+                                        class="max-w-full object-contain voting-image"
                                         onload="this.parentElement.classList.remove('image-loading')"
                                     />
                                 </div>
@@ -1547,9 +1823,9 @@
                             </div>
 
                             <div class="mb-3 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100" style="max-height: 400px;">
-                                <img 
-                                    src="${item.url}" 
-                                    alt="Image" 
+                                <img
+                                    src="${item.url}"
+                                    alt="Image"
                                     class="max-w-full max-h-[400px] object-contain"
                                     onload="this.parentElement.classList.remove('image-loading')"
                                 />
@@ -1573,8 +1849,8 @@
                                             <div class="grid grid-cols-2 gap-2 mt-2">
                                                 ${votesByScore[score].map(vote => `
                                                     <div class="flex items-center gap-2 p-2 rounded-lg ${vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                        <span class="text-sm text-gray-700 truncate">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')" />
+                                                        <span class="text-sm text-gray-700 truncate cursor-pointer hover:text-pink-600" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
                                                     </div>
                                                 `).join('')}
                                             </div>
@@ -1583,6 +1859,113 @@
                                         `}
                                     </div>
                                 `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderUserProfileModal() {
+            if (!state.showUserProfile) return '';
+
+            // Find user info from contests or generate mock data
+            let userInfo = null;
+            const userId = state.showUserProfile;
+
+            // Check if it's the current user
+            if (state.user && userId === state.user.id) {
+                userInfo = state.user;
+            } else {
+                // Find from contest creators
+                const contest = state.contests.find(c => c.createdBy === userId);
+                if (contest) {
+                    userInfo = {
+                        id: contest.createdBy,
+                        username: contest.creatorName,
+                        avatar: contest.creatorAvatar
+                    };
+                } else {
+                    // Generate from votes (mock data)
+                    userInfo = {
+                        id: userId,
+                        username: 'User' + userId.substring(0, 4),
+                        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
+                    };
+                }
+            }
+
+            const contestsCreated = state.contests.filter(c => c.createdBy === userId);
+            const contestsVoted = Object.keys(state.userVotedContests).filter(cId =>
+                state.contests.find(c => c.id === cId)
+            ).map(cId => state.contests.find(c => c.id === cId));
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isBanned = state.bannedUsers.includes(userId);
+            const isSelf = state.user && userId === state.user.id;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeUserProfile()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                        <div class="p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-2xl font-bold text-gray-800">User Profile</h3>
+                                <button onclick="closeUserProfile()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="flex items-center gap-4 mb-6">
+                                <img src="${userInfo.avatar}" alt="${userInfo.username}" class="w-20 h-20 rounded-full" />
+                                <div>
+                                    <h4 class="text-xl font-bold text-gray-800">${userInfo.username}</h4>
+                                    ${isBanned ? '<span class="text-red-600 text-sm font-semibold">🚫 Banned</span>' : ''}
+                                </div>
+                            </div>
+
+                            <div class="space-y-4">
+                                <div class="bg-gray-50 rounded-lg p-4">
+                                    <h5 class="font-bold text-gray-800 mb-2">Contests Created: ${contestsCreated.length}</h5>
+                                    ${contestsCreated.length > 0 ? `
+                                        <ul class="space-y-1">
+                                            ${contestsCreated.map(c => `
+                                                <li class="text-sm text-gray-700 hover:text-pink-600 cursor-pointer" onclick="closeUserProfile(); viewResults(${JSON.stringify(c).replace(/'/g, '&apos;')})">
+                                                    • ${c.title}
+                                                </li>
+                                            `).join('')}
+                                        </ul>
+                                    ` : '<p class="text-sm text-gray-500 italic">No contests created yet</p>'}
+                                </div>
+
+                                <div class="bg-gray-50 rounded-lg p-4">
+                                    <h5 class="font-bold text-gray-800 mb-2">Contests Voted: ${contestsVoted.length}</h5>
+                                    ${contestsVoted.length > 0 ? `
+                                        <ul class="space-y-1">
+                                            ${contestsVoted.map(c => `
+                                                <li class="text-sm text-gray-700 hover:text-pink-600 cursor-pointer" onclick="closeUserProfile(); viewResults(${JSON.stringify(c).replace(/'/g, '&apos;')})">
+                                                    • ${c.title}
+                                                </li>
+                                            `).join('')}
+                                        </ul>
+                                    ` : '<p class="text-sm text-gray-500 italic">No contests voted yet</p>'}
+                                </div>
+
+                                ${isAdmin && !isSelf ? `
+                                    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                                        <h5 class="font-bold text-red-800 mb-2">Admin Controls</h5>
+                                        ${isBanned ? `
+                                            <button onclick="unbanUser('${userId}')" class="bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
+                                                Unban User
+                                            </button>
+                                        ` : `
+                                            <button onclick="confirmBanUser('${userId}')" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                                Ban User
+                                            </button>
+                                        `}
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
                     </div>
@@ -1612,11 +1995,14 @@
                 case 'results':
                     content = renderResults();
                     break;
+                case 'compare':
+                    content = renderCompare();
+                    break;
                 default:
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal();
+            app.innerHTML = renderHeader() + content + renderModal() + (state.showUserProfile ? renderUserProfileModal() : '');
         }
 
         window.login = login;
@@ -1655,6 +2041,15 @@
         window.setFilterCreator = setFilterCreator;
         window.toggleImageLabels = toggleImageLabels;
         window.updateImageLabel = updateImageLabel;
+        window.showUserProfile = showUserProfile;
+        window.closeUserProfile = closeUserProfile;
+        window.confirmBanUser = confirmBanUser;
+        window.executeBanUser = executeBanUser;
+        window.unbanUser = unbanUser;
+        window.toggleCompareMode = toggleCompareMode;
+        window.toggleContestSelection = toggleContestSelection;
+        window.startCompare = startCompare;
+        window.exitCompareMode = exitCompareMode;
 
         render();
     </script>
