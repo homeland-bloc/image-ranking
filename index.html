@@ -771,10 +771,30 @@
         }
 
         function backToHome() {
+            if (state.view === 'vote' && !state.hasSubmitted) {
+                showConfirm(
+                    'Are you sure you want to go back? Your votes will not be saved.',
+                    'confirmBackToHome',
+                    '🚨'
+                );
+                return;
+            }
             state.view = 'home';
             state.currentContest = null;
             state.showBreakdownModal = null;
             state.mockResults = null;
+            render();
+        }
+
+        function confirmBackToHome() {
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            state.view = 'home';
+            state.currentContest = null;
+            state.showBreakdownModal = null;
+            state.mockResults = null;
+            state.modalProcessing = false;
             render();
         }
 
@@ -1426,6 +1446,7 @@
         window.showBreakdown = showBreakdown;
         window.closeBreakdown = closeBreakdown;
         window.backToHome = backToHome;
+        window.confirmBackToHome = confirmBackToHome;
         window.closeModal = closeModal;
         window.updateScale = updateScale;
         window.confirmSubmitVotes = confirmSubmitVotes;
