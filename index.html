@@ -918,44 +918,6 @@
         }
 
 
-        function toggleCompareMode() {
-            state.compareMode = !state.compareMode;
-            if (!state.compareMode) {
-                state.selectedContests = [];
-            }
-            render();
-        }
-
-        function toggleContestSelection(contestId) {
-            const index = state.selectedContests.indexOf(contestId);
-            if (index === -1) {
-                if (state.selectedContests.length < 5) {
-                    state.selectedContests.push(contestId);
-                }
-            } else {
-                state.selectedContests.splice(index, 1);
-            }
-            render();
-        }
-
-        function startCompare() {
-            if (state.selectedContests.length < 2) return;
-            state.view = 'compare';
-            render();
-        }
-
-        function exitCompareMode() {
-            state.view = 'home';
-            state.compareMode = true; // Keep compare mode on
-            render();
-        }
-
-        function exitCompareModeToHome() {
-            state.view = 'home';
-            state.compareMode = false;
-            state.selectedContests = [];
-            render();
-        }
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -1181,14 +1143,9 @@
                 <div class="max-w-7xl mx-auto px-3 py-4">
                     <div class="flex justify-between items-center mb-4 gap-2 flex-wrap">
                         <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
-                        <div class="flex gap-2">
-                            <button onclick="toggleCompareMode()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition text-sm">
-                                ${state.compareMode ? '✓ Compare Mode' : 'Compare Mode'}
-                            </button>
-                            <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
-                                + Create Contest
-                            </button>
-                        </div>
+                        <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                            + Create Contest
+                        </button>
                     </div>
 
                     <div class="bg-white rounded-lg shadow-md p-3 mb-4 flex gap-3 flex-wrap">
@@ -1238,23 +1195,10 @@
                             const hasVoted = state.userVotedContests[contest.id];
                             const voterCount = getVoterCount(contest);
                             const canDelete = canDeleteContest(contest);
-                            const isSelected = state.selectedContests.includes(contest.id);
-
                             const createdDate = contest.createdAt ? new Date(contest.createdAt).toLocaleString() : '';
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                                    ${state.compareMode ? `
-                                        <div class="absolute top-3 left-3 z-10">
-                                            <input
-                                                type="checkbox"
-                                                ${isSelected ? 'checked' : ''}
-                                                ${state.selectedContests.length >= 5 && !isSelected ? 'disabled' : ''}
-                                                onchange="toggleContestSelection('${contest.id}')"
-                                                class="w-5 h-5 text-purple-600 rounded focus:ring-purple-500 cursor-pointer"
-                                            />
-                                        </div>
-                                    ` : ''}
                                     ${contest.isLocked ? `
                                         <div class="absolute top-3 right-3 bg-gray-800 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1">
                                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1312,17 +1256,6 @@
                             `;
                         }).join('')}
                     </div>
-
-                    ${state.compareMode && state.selectedContests.length >= 2 ? `
-                        <div class="fixed bottom-6 right-6 z-50">
-                            <button onclick="startCompare()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-3 rounded-full font-bold hover:from-purple-600 hover:to-purple-800 transition shadow-2xl flex items-center gap-2 text-base">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                                </svg>
-                                Compare (${state.selectedContests.length})
-                            </button>
-                        </div>
-                    ` : ''}
                 </div>
             `;
         }
@@ -1407,186 +1340,6 @@
                         >
                             Create Contest (${state.newContest.images.length} images)
                         </button>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderCompare() {
-            // Get selected contests
-            const selectedContests = state.selectedContests
-                .map(id => state.contests.find(c => c.id === id))
-                .filter(c => c);
-
-            if (selectedContests.length === 0) {
-                state.view = 'home';
-                render();
-                return '';
-            }
-
-            // Assign purple shades to each contest
-            const contestColors = [
-                { bg: 'bg-purple-500', hex: '#A855F7', text: 'text-purple-500' },
-                { bg: 'bg-purple-600', hex: '#9333EA', text: 'text-purple-600' },
-                { bg: 'bg-purple-700', hex: '#7C3AED', text: 'text-purple-700' },
-                { bg: 'bg-purple-800', hex: '#6B21A8', text: 'text-purple-800' },
-                { bg: 'bg-purple-900', hex: '#581C87', text: 'text-purple-900' }
-            ];
-
-            // Combine all images with contest info
-            let allImages = [];
-            selectedContests.forEach((contest, idx) => {
-                const userVotes = state.userVotedContests[contest.id] || {};
-                const contestResults = generateMockResults(contest, userVotes);
-                const color = contestColors[idx % contestColors.length];
-
-                contestResults.forEach(img => {
-                    allImages.push({
-                        ...img,
-                        contestId: contest.id,
-                        contestTitle: contest.title.length > 20 ? contest.title.substring(0, 20) + '...' : contest.title,
-                        contestColor: color,
-                        contestNumber: idx + 1
-                    });
-                });
-            });
-
-            let displayResults, grouped, sortedKeys;
-
-            if (state.showMyVotes) {
-                // Filter to only show images from contests the user has voted on
-                const votedImages = allImages.filter(img => state.userVotedContests[img.contestId]);
-
-                displayResults = votedImages.map(img => {
-                    const userVotes = state.userVotedContests[img.contestId];
-                    return {
-                        ...img,
-                        averageScore: userVotes[img.id] || 0
-                    };
-                }).sort((a, b) => b.averageScore - a.averageScore);
-
-                grouped = groupByScoreRange(displayResults);
-                sortedKeys = Object.keys(grouped).sort((a, b) => {
-                    const aMin = grouped[a].min;
-                    const bMin = grouped[b].min;
-                    return bMin - aMin;
-                });
-            } else {
-                // Average view
-                displayResults = allImages;
-                grouped = groupByScoreRange(allImages);
-                sortedKeys = Object.keys(grouped).sort((a, b) => {
-                    const aMin = grouped[a].min;
-                    const bMin = grouped[b].min;
-                    return bMin - aMin;
-                });
-            }
-
-            const baseSize = 150;
-            const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
-            const baseFontSize = 12;
-            const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
-
-            return `
-                <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in results-bg">
-                        <div class="text-center mb-4">
-                            <div class="flex items-center justify-center gap-3 mb-2">
-                                <button onclick="exitCompareModeToHome()" class="text-gray-600 hover:text-gray-800 transition text-sm flex items-center gap-1">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                                    </svg>
-                                    Back
-                                </button>
-                                <span class="text-4xl">📊</span>
-                                <h2 class="text-2xl font-bold text-gray-800">Contest Comparison</h2>
-                            </div>
-
-                            <div class="mb-3 inline-block text-left bg-purple-50 border border-purple-200 rounded-lg px-4 py-2">
-                                <div class="text-xs font-bold text-purple-900 mb-1">Comparing Contests:</div>
-                                ${selectedContests.map((contest, idx) => {
-                                    const color = contestColors[idx % contestColors.length];
-                                    return `
-                                        <div class="text-xs text-purple-800 flex items-center gap-2">
-                                            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold" style="background: ${color.hex}; font-size: 10px;">
-                                                ${idx + 1}
-                                            </span>
-                                            <span>${contest.title}</span>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-
-                            <div class="mt-3 flex items-center justify-center gap-3">
-                                <button
-                                    onclick="setResultsView('average')"
-                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
-                                >
-                                    Average
-                                </button>
-                                <button
-                                    onclick="setResultsView('myVotes')"
-                                    class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
-                                >
-                                    My Votes
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="mb-4 max-w-md mx-auto">
-                            <div class="flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
-                                <input
-                                    type="range"
-                                    id="scaleSlider"
-                                    min="40"
-                                    max="200"
-                                    value="${state.imageScale}"
-                                    oninput="updateScale(this.value)"
-                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
-                                />
-                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
-                            </div>
-                        </div>
-
-                        ${sortedKeys.map(key => {
-                            const group = grouped[key];
-                            const colorStyle = getCategoryColor(group.min);
-
-                            // Average or My Votes view - display images
-                            return `
-                                <div class="mb-4">
-                                    <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                        ${getCategoryLabel(group.min, group.max)}
-                                    </h3>
-                                    <div class="flex flex-wrap gap-1">
-                                        ${group.items.map(item => `
-                                            <div
-                                                onclick="showBreakdown(${item.id})"
-                                                class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
-                                                style="height: ${imageSize}px;"
-                                            >
-                                                <img
-                                                    src="${item.url}"
-                                                    alt="Image"
-                                                    class="h-full w-auto object-cover"
-                                                    style="height: ${imageSize}px;"
-                                                    onload="this.parentElement.classList.remove('image-loading')"
-                                                />
-                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
-                                                    ${item.averageScore}
-                                                </div>
-                                                ${item.contestNumber ? `
-                                                    <div class="absolute top-1 left-1 flex items-center justify-center w-6 h-6 rounded-full text-white font-bold shadow-lg" style="background: ${item.contestColor.hex}; font-size: ${fontSize}px;">
-                                                        ${item.contestNumber}
-                                                    </div>
-                                                ` : ''}
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                </div>
-                            `;
-                        }).join('')}
                     </div>
                 </div>
             `;
@@ -1965,116 +1718,6 @@
             `;
         }
 
-        function renderUserProfileModal() {
-            if (!state.showUserProfile) return '';
-
-            // Find user info from contests or generate mock data
-            let userInfo = null;
-            const userId = state.showUserProfile;
-
-            // Check if it's the current user
-            if (state.user && userId === state.user.id) {
-                userInfo = state.user;
-            } else {
-                // Find from contest creators
-                const contest = state.contests.find(c => c.createdBy === userId);
-                if (contest) {
-                    userInfo = {
-                        id: contest.createdBy,
-                        username: contest.creatorName,
-                        avatar: contest.creatorAvatar
-                    };
-                } else {
-                    // Generate from votes (mock data)
-                    userInfo = {
-                        id: userId,
-                        username: 'User' + userId.substring(0, 4),
-                        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
-                    };
-                }
-            }
-
-            const contestsCreated = state.contests.filter(c => c.createdBy === userId);
-            const contestsVoted = Object.keys(state.userVotedContests).filter(cId =>
-                state.contests.find(c => c.id === cId)
-            ).map(cId => state.contests.find(c => c.id === cId));
-
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const isBanned = state.bannedUsers.includes(userId);
-            const isSelf = state.user && userId === state.user.id;
-
-            return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeUserProfile()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
-                        <div class="p-6">
-                            <div class="flex justify-between items-center mb-4">
-                                <h3 class="text-2xl font-bold text-gray-800">User Profile</h3>
-                                <button onclick="closeUserProfile()" class="text-gray-500 hover:text-gray-700">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
-                            </div>
-
-                            <div class="flex items-center gap-4 mb-6">
-                                <img src="${userInfo.avatar}" alt="${userInfo.username}" class="w-20 h-20 rounded-full" />
-                                <div>
-                                    <h4 class="text-xl font-bold text-gray-800">${userInfo.username}</h4>
-                                    ${isBanned ? '<span class="text-red-600 text-sm font-semibold">🚫 Banned</span>' : ''}
-                                </div>
-                            </div>
-
-                            <div class="space-y-4">
-                                <div class="bg-gray-50 rounded-lg p-4">
-                                    <div class="flex justify-between items-center mb-2">
-                                        <h5 class="font-bold text-gray-800">Contests Created: ${contestsCreated.length}</h5>
-                                        ${contestsCreated.length > 0 ? `
-                                            <button onclick="viewAllByCreator('${userId}')" class="text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                                                View All →
-                                            </button>
-                                        ` : ''}
-                                    </div>
-                                    ${contestsCreated.length > 0 ? `
-                                        <p class="text-sm text-gray-600">Click "View All" to see all contests created by ${userInfo.username}</p>
-                                    ` : '<p class="text-sm text-gray-500 italic">No contests created yet</p>'}
-                                </div>
-
-                                <div class="bg-gray-50 rounded-lg p-4">
-                                    <div class="flex justify-between items-center mb-2">
-                                        <h5 class="font-bold text-gray-800">Contests Voted: ${contestsVoted.length}</h5>
-                                        ${contestsVoted.length > 0 ? `
-                                            <button onclick="viewAllByVoter('${userId}')" class="text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                                                View All →
-                                            </button>
-                                        ` : ''}
-                                    </div>
-                                    ${contestsVoted.length > 0 ? `
-                                        <p class="text-sm text-gray-600">Click "View All" to see all contests where ${userInfo.username} voted</p>
-                                    ` : '<p class="text-sm text-gray-500 italic">No contests voted yet</p>'}
-                                </div>
-
-                                ${isAdmin && !isSelf ? `
-                                    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
-                                        <h5 class="font-bold text-red-800 mb-2">Admin Controls</h5>
-                                        ${isBanned ? `
-                                            <button onclick="unbanUser('${userId}')" class="bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
-                                                Unban User
-                                            </button>
-                                        ` : `
-                                            <button onclick="confirmBanUser('${userId}')" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
-                                                Ban User
-                                            </button>
-                                        `}
-                                    </div>
-                                ` : ''}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderAdminDashboard() {
             if (!state.showAdminDashboard) return '';
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -2213,14 +1856,11 @@
                 case 'results':
                     content = renderResults();
                     break;
-                case 'compare':
-                    content = renderCompare();
-                    break;
                 default:
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + (state.showUserProfile ? renderUserProfileModal() : '') + (state.showAdminDashboard ? renderAdminDashboard() : '');
+            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '');
         }
 
         window.login = login;
@@ -2265,10 +1905,6 @@
         window.confirmBanUser = confirmBanUser;
         window.executeBanUser = executeBanUser;
         window.unbanUser = unbanUser;
-        window.toggleCompareMode = toggleCompareMode;
-        window.toggleContestSelection = toggleContestSelection;
-        window.startCompare = startCompare;
-        window.exitCompareMode = exitCompareMode;
 
         render();
     </script>
