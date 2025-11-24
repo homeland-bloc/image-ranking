@@ -343,13 +343,23 @@
                 { name: 'Eve', seed: 5 }
             ];
 
+            // Extract numeric part from contestId (e.g., "contest-1" -> 1)
+            const contestNum = typeof contestId === 'string'
+                ? parseInt(contestId.split('-').pop()) || 0
+                : contestId;
+
+            // Convert imageId to number (handle both string and numeric IDs)
+            const imageNum = typeof imageId === 'string'
+                ? parseInt(imageId) || 0
+                : imageId;
+
             // Generate consistent number of voters (3-5) based on contest
-            const voterCountSeed = parseInt(contestId) * 100;
+            const voterCountSeed = contestNum * 100;
             const voterCount = 3 + Math.floor(seededRandom(voterCountSeed) * 3); // 3-5 voters
 
             return demoVoters.slice(0, voterCount).map(voter => {
                 // Generate consistent score (1-5) based on contest + image + voter
-                const scoreSeed = parseInt(contestId) * 1000 + parseInt(imageId) * 100 + voter.seed;
+                const scoreSeed = contestNum * 1000 + (imageNum % 1000) * 100 + voter.seed;
                 const score = 1 + Math.floor(seededRandom(scoreSeed) * 5); // 1-5
 
                 return {
@@ -525,6 +535,8 @@
             document.body.classList.remove('modal-open');
             state.hasSubmitted = true;
             state.userVotedContests[state.currentContest.id] = {...state.votes};
+            // Clear cache to ensure user's votes are included in results
+            delete state.mockResultsCache[state.currentContest.id];
             state.view = 'results';
             state.mockResults = generateMockResults(state.currentContest, state.votes);
             state.modalProcessing = false;
