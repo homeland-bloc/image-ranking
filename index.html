@@ -269,8 +269,6 @@
             nextContestId: 4, // Start at 4 since we have 3 mock contests
             bannedUsers: [], // Array of user IDs who are banned from app
             blockedVotes: {}, // Format: { contestId: { imageId: [userId1, userId2] } }
-            userContestLimits: {}, // Format: { userId: maxContests }
-            globalContestLimit: 20,
             sortBy: 'dateDesc', // Options: dateDesc, dateAsc, titleAsc, titleDesc, votersDesc, imagesDesc
             filterCreator: null, // userId or null for all
             showVoterBreakdown: false,
@@ -279,7 +277,6 @@
             compareMode: false,           // Toggle for compare mode
             selectedContests: [],          // Array of contest IDs selected for comparison
             viewingSpecificUser: null,     // Username or null - for viewing specific user's votes
-            adminModeEnabled: false,       // Admin mode toggle
             filters: {
                 createdBy: null,           // Username or null
                 votedBy: null,             // Username or null
@@ -287,15 +284,6 @@
             }
         };
 
-        const testImageUrls = [
-            'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800',
-            'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=800',
-            'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=800',
-            'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800',
-            'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=800',
-            'https://images.unsplash.com/photo-1426604966848-d7adac402bff?w=800',
-            'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=800'
-        ];
 
         function shuffleArray(array) {
             const newArray = [...array];
@@ -569,22 +557,6 @@
         }
 
         function startCreateContest() {
-            const USER_CONTEST_LIMIT = 3;
-
-            // Check global limit
-            if (state.contests.length >= state.globalContestLimit) {
-                showAlert(`Global contest limit reached (${state.globalContestLimit} contests). Contact the admin for more slots.`, '❌');
-                return;
-            }
-
-            // Check user limit
-            const userContests = state.contests.filter(c => c.createdBy === state.user.id).length;
-            const userLimit = state.userContestLimits[state.user.id] || USER_CONTEST_LIMIT;
-            if (userContests >= userLimit) {
-                showAlert(`You have reached your contest limit (${userLimit} contests). Contact the admin for more slots.`, '❌');
-                return;
-            }
-
             showInputModal('Contest Title', 'Enter contest title...', 'handleContestTitle', false);
         }
 
@@ -687,86 +659,7 @@
             }
         }
 
-        function showFileUploadWarning() {
-            showModal({
-                type: 'alert',
-                icon: '⚠️',
-                title: 'Storage Warning',
-                message: `Direct file uploads consume ~250 KB per image.
 
-With 50 images per contest, that's ~12.5 MB per contest.
-
-The app can only handle ~40 contests with uploaded files before reaching storage limits.
-
-Consider using image URLs when possible.`,
-                buttons: [
-                    { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Continue with Upload', action: 'proceedWithFileUpload', primary: true }
-                ]
-            });
-        }
-
-        function proceedWithFileUpload() {
-            closeModal();
-            addImageFromFile();
-        }
-
-        function addImageFromFile() {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.multiple = true;
-            input.accept = 'image/*';
-            input.onchange = async (e) => {
-                const files = Array.from(e.target.files);
-                for (const file of files) {
-                    if (state.newContest.images.length >= 50) {
-                        showAlert('Maximum 50 images reached!', '🚨');
-                        break;
-                    }
-                    try {
-                        const url = URL.createObjectURL(file);
-                        await loadImageFromUrl(url);
-                        // Generate label from filename
-                        const filename = file.name.replace(/\.[^/.]+$/, ''); // Remove extension
-                        const label = filename.replace(/[-_]/g, ' '); // Replace dashes/underscores with spaces
-                        state.newContest.images.push({
-                            id: Date.now() + Math.random(),
-                            url,
-                            author: null,
-                            isFileUpload: true,
-                            label: label
-                        });
-                    } catch (error) {
-                        console.error('Failed to load file:', error);
-                    }
-                }
-                render();
-            };
-            input.click();
-        }
-
-        async function addRandomTestImage() {
-            if (state.newContest.images.length >= 50) {
-                showAlert('Maximum 50 images per contest!', '❌');
-                return;
-            }
-            
-            const randomUrl = testImageUrls[Math.floor(Math.random() * testImageUrls.length)];
-            try {
-                await loadImageFromUrl(randomUrl);
-                const imageCount = state.newContest.images.length + 1;
-                state.newContest.images.push({
-                    id: Date.now() + Math.random(),
-                    url: randomUrl,
-                    author: null,
-                    isFileUpload: false,
-                    label: `Test Image ${imageCount}`
-                });
-                render();
-            } catch (error) {
-                showAlert('Failed to load test image', '❌');
-            }
-        }
 
         function removeContestImage(index) {
             showConfirm(
@@ -846,14 +739,6 @@ Consider using image URLs when possible.`,
             render();
         }
 
-        function adjustGlobalLimit(delta) {
-            if (delta > 0) {
-                state.globalContestLimit++;
-            } else if (delta < 0 && state.contests.length < state.globalContestLimit) {
-                state.globalContestLimit--;
-            }
-            render();
-        }
 
         function startVoting(contest) {
             state.currentContest = contest;
@@ -1225,10 +1110,6 @@ Consider using image URLs when possible.`,
             state.modalProcessing = false;
         }
 
-        function toggleAdminMode() {
-            state.adminModeEnabled = !state.adminModeEnabled;
-            render();
-        }
 
         function toggleCompareMode() {
             state.compareMode = !state.compareMode;
@@ -1340,21 +1221,13 @@ Consider using image URLs when possible.`,
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg ${isAdmin && state.adminModeEnabled ? 'border-t-4 border-orange-500' : ''}">
+                <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
                             <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-pink-400 to-pink-600">
                                 <span class="text-xl">🌸</span>
                             </div>
                             <h1 class="text-xl font-bold">Peony</h1>
-                            ${isAdmin ? `
-                                <div class="ml-3 flex items-center gap-2 bg-white/20 px-3 py-1 rounded-lg">
-                                    <span class="text-xs font-medium">Admin Mode</span>
-                                    <div onclick="toggleAdminMode()" class="toggle-switch ${state.adminModeEnabled ? 'active' : ''}" style="width: 44px; height: 22px;">
-                                        <div class="toggle-slider" style="width: 16px; height: 16px; top: 3px; left: 3px;"></div>
-                                    </div>
-                                </div>
-                            ` : ''}
                             ${showBackButton ? `
                                 <button onclick="backToHome()" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg font-semibold transition text-sm flex items-center gap-1">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1371,13 +1244,6 @@ Consider using image URLs when possible.`,
                             </button>
                         ` : `
                             <div class="flex items-center gap-2">
-                                ${state.user.id === ADMIN_DISCORD_ID ? `
-                                    <div class="flex items-center gap-2 bg-white/20 px-3 py-1 rounded-lg">
-                                        <span class="text-sm font-medium">${state.contests.length}/${state.globalContestLimit}</span>
-                                        <button onclick="adjustGlobalLimit(1)" class="bg-white/30 hover:bg-white/40 w-6 h-6 rounded flex items-center justify-center text-sm">+</button>
-                                        <button onclick="adjustGlobalLimit(-1)" class="bg-white/30 hover:bg-white/40 w-6 h-6 rounded flex items-center justify-center text-sm" ${state.contests.length >= state.globalContestLimit ? 'disabled' : ''}>-</button>
-                                    </div>
-                                ` : ''}
                                 <div class="relative group">
                                     <div class="flex items-center gap-2 cursor-pointer hover:opacity-80">
                                         <img src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
@@ -1712,38 +1578,24 @@ Consider using image URLs when possible.`,
                             </button>
                         </div>
 
-                        ${state.user.id === ADMIN_DISCORD_ID && state.adminModeEnabled ? `
-                            <div class="upload-area rounded-xl p-4 mb-4 text-center cursor-pointer" onclick="showFileUploadWarning()">
-                                <div class="text-3xl mb-2">🖼️</div>
-                                <h3 class="font-bold text-gray-800 mb-1 text-sm">Click to Upload Images</h3>
-                                <p class="text-xs text-gray-600">or use the options below</p>
-                            </div>
-                        ` : `
-                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                                <h3 class="font-bold text-blue-900 mb-2 flex items-center gap-2 text-sm">
-                                    <span class="text-xl">📸</span>
-                                    How to Add Images
-                                </h3>
-                                <p class="text-xs text-blue-800 mb-2">
-                                    Please use image URLs instead of uploading files.
-                                    Direct uploads consume significant storage and are reserved for the admin.
-                                </p>
-                                <p class="text-xs text-blue-800">
-                                    💡 <strong>Tip:</strong> Upload images to Discord, right-click → Copy Link, then paste the URL below!
-                                </p>
-                            </div>
-                        `}
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                            <h3 class="font-bold text-blue-900 mb-2 flex items-center gap-2 text-sm">
+                                <span class="text-xl">📸</span>
+                                How to Add Images
+                            </h3>
+                            <p class="text-xs text-blue-800 mb-2">
+                                Use image URLs to add images to your contest.
+                            </p>
+                            <p class="text-xs text-blue-800">
+                                💡 <strong>Tip:</strong> Upload images to Discord, right-click → Copy Link, then paste the URL below!
+                            </p>
+                        </div>
 
                         <div class="mb-4">
                             <input type="url" id="contestUrlInput" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-sm mb-2" placeholder="Paste Discord image URL or any image URL...">
-                            <div class="flex gap-2">
-                                <button onclick="addImageFromUrl('contestUrlInput')" class="flex-1 bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition text-sm">
-                                    Add URL
-                                </button>
-                                <button onclick="addRandomTestImage()" class="flex-1 bg-gradient-to-r from-green-500 to-green-700 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition text-sm">
-                                    Random Image
-                                </button>
-                            </div>
+                            <button onclick="addImageFromUrl('contestUrlInput')" class="w-full bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition text-sm">
+                                Add URL
+                            </button>
                         </div>
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
