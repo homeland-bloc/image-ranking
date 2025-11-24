@@ -925,18 +925,6 @@
             }, 200);
         }
 
-        function showUserProfile(userId) {
-            state.showUserProfile = userId;
-            document.body.classList.add('modal-open');
-            render();
-        }
-
-        function closeUserProfile() {
-            state.showUserProfile = null;
-            document.body.classList.remove('modal-open');
-            render();
-        }
-
         function showAdminDashboard() {
             state.showAdminDashboard = true;
             document.body.classList.add('modal-open');
@@ -949,59 +937,15 @@
             render();
         }
 
-        function viewAllByCreator(userId) {
-            state.filters.createdBy = userId;
-            state.filters.votedBy = null;
-            state.showUserProfile = null;
-            document.body.classList.remove('modal-open');
-            state.view = 'home';
-            render();
-        }
-
-        function viewAllByVoter(userId) {
-            state.filters.votedBy = userId;
-            state.filters.createdBy = null;
-            state.showUserProfile = null;
-            document.body.classList.remove('modal-open');
-            state.view = 'home';
-            render();
-        }
-
-        function viewResultsFromProfile(contestId) {
-            const contest = state.contests.find(c => c.id === contestId);
-            if (!contest) return;
-
-            // Close profile modal
-            state.showUserProfile = null;
-            document.body.classList.remove('modal-open');
-
-            // Open results
-            viewResults(contest);
-        }
-
-        function startVotingFromProfile(contestId) {
-            const contest = state.contests.find(c => c.id === contestId);
-            if (!contest) return;
-
-            // Close profile modal
-            state.showUserProfile = null;
-            document.body.classList.remove('modal-open');
-
-            // Start voting
-            startVoting(contest);
-        }
-
         function banUser(userId) {
             if (!state.bannedUsers.includes(userId)) {
                 state.bannedUsers.push(userId);
             }
-            closeUserProfile();
             showAlert('User has been banned.', '✅');
         }
 
         function unbanUser(userId) {
             state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
-            closeUserProfile();
             showAlert('User has been unbanned.', '✅');
         }
 
@@ -1063,9 +1007,7 @@
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                if (state.showUserProfile) {
-                    closeUserProfile();
-                } else if (state.showBreakdownModal) {
+                if (state.showBreakdownModal) {
                     closeBreakdown();
                 } else if (state.modal) {
                     closeModal();
@@ -1158,15 +1100,12 @@
                                         </svg>
                                     </div>
                                     <div class="hidden group-hover:block absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
-                                        <button onclick="showUserProfile('${state.user.id}')" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                            My Profile
-                                        </button>
                                         ${isAdmin ? `
                                             <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                 Admin Dashboard
                                             </button>
                                         ` : ''}
-                                        <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200">
+                                        <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                             Logout
                                         </button>
                                     </div>
@@ -1404,11 +1343,11 @@
                                         </div>
                                     ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); showUserProfile('${contest.createdBy}')" />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
                                         <div class="flex-1 min-w-0">
                                             <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate cursor-pointer hover:text-pink-600" onclick="event.stopPropagation(); showUserProfile('${contest.createdBy}')">by ${contest.creatorName}</span>
+                                                <span class="truncate">by ${contest.creatorName}</span>
                                                 ${createdDate ? `<span class="whitespace-nowrap">📅 ${createdDate}</span>` : ''}
                                                 <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
                                             </div>
@@ -2209,22 +2148,12 @@
                                             <div class="grid grid-cols-2 gap-2 mt-2">
                                                 ${votesByScore[score].map(vote => `
                                                     <div class="flex items-center gap-2 p-2 rounded-lg ${
-                                                        vote.isBlocked ? 'bg-gray-200 opacity-50' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')" />
-                                                        <span class="text-sm text-gray-700 truncate cursor-pointer hover:text-pink-600 ${vote.isBlocked ? 'opacity-50 line-through' : ''}" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')">
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <span class="text-sm text-gray-700 truncate">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}
                                                         </span>
-                                                        ${state.user.id === ADMIN_DISCORD_ID && state.adminModeEnabled && !vote.isCurrentUser ? `
-                                                            <button
-                                                                onclick="toggleBlockVote('${state.showBreakdownModal}', '${vote.username}')"
-                                                                class="ml-auto text-base ${vote.isBlocked ? 'text-green-600' : 'text-red-600'} hover:opacity-70 transition w-8 h-8 flex items-center justify-center"
-                                                                title="${vote.isBlocked ? 'Unblock user' : 'Block user'}"
-                                                            >
-                                                                ${vote.isBlocked ? '✅' : '🚫'}
-                                                            </button>
-                                                        ` : ''}
                                                     </div>
                                                 `).join('')}
                                             </div>
