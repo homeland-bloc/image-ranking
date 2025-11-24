@@ -744,8 +744,6 @@
             state.votes = userVotes;
             state.mockResults = generateMockResults(contest, userVotes);
             state.showMyVotes = false;
-            state.showVoterBreakdown = false;
-            state.viewingSpecificUser = null;
             state.view = 'results';
             render();
         }
@@ -755,8 +753,6 @@
             state.votes = {};
             state.mockResults = generateMockResults(contest, {});
             state.showMyVotes = false;
-            state.showVoterBreakdown = false;
-            state.viewingSpecificUser = null;
             state.view = 'results';
             render();
         }
@@ -847,8 +843,6 @@
             state.showBreakdownModal = null;
             state.mockResults = null;
             state.showMyVotes = false;
-            state.showVoterBreakdown = false;
-            state.viewingSpecificUser = null;
             render();
         }
 
@@ -861,8 +855,6 @@
             state.showBreakdownModal = null;
             state.mockResults = null;
             state.showMyVotes = false;
-            state.showVoterBreakdown = false;
-            state.viewingSpecificUser = null;
             state.modalProcessing = false;
             render();
         }
@@ -874,7 +866,6 @@
 
         function setResultsView(view) {
             state.showMyVotes = view === 'myVotes';
-            state.showVoterBreakdown = view === 'byVoter';
             render();
         }
 
@@ -1493,38 +1484,7 @@
 
             let displayResults, grouped, sortedKeys;
 
-            if (state.showVoterBreakdown) {
-                // By Voter view: Calculate each voter's average score across all contests
-                const voterAverages = {};
-
-                allImages.forEach(img => {
-                    img.breakdown.forEach(vote => {
-                        if (!voterAverages[vote.username]) {
-                            voterAverages[vote.username] = {
-                                username: vote.username,
-                                avatar: vote.avatar,
-                                scores: [],
-                                isCurrentUser: vote.isCurrentUser,
-                                userId: vote.userId
-                            };
-                        }
-                        voterAverages[vote.username].scores.push(vote.score);
-                    });
-                });
-
-                const voters = Object.values(voterAverages).map(voter => ({
-                    ...voter,
-                    averageScore: parseFloat((voter.scores.reduce((a, b) => a + b, 0) / voter.scores.length).toFixed(2))
-                })).sort((a, b) => b.averageScore - a.averageScore);
-
-                grouped = groupByScoreRange(voters);
-                sortedKeys = Object.keys(grouped).sort((a, b) => {
-                    const aMin = grouped[a].min;
-                    const bMin = grouped[b].min;
-                    return bMin - aMin;
-                });
-                displayResults = voters;
-            } else if (state.showMyVotes) {
+            if (state.showMyVotes) {
                 // Filter to only show images from contests the user has voted on
                 const votedImages = allImages.filter(img => state.userVotedContests[img.contestId]);
 
@@ -1591,7 +1551,7 @@
                             <div class="mt-3 flex items-center justify-center gap-3">
                                 <button
                                     onclick="setResultsView('average')"
-                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes && !state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
                                 >
                                     Average
                                 </button>
@@ -1600,12 +1560,6 @@
                                     class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
                                 >
                                     My Votes
-                                </button>
-                                <button
-                                    onclick="setResultsView('byVoter')"
-                                    class="px-3 py-1 rounded-lg ${state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
-                                >
-                                    By Voter
                                 </button>
                             </div>
                         </div>
@@ -1630,64 +1584,39 @@
                             const group = grouped[key];
                             const colorStyle = getCategoryColor(group.min);
 
-                            if (state.showVoterBreakdown) {
-                                // By Voter view - display voters
-                                return `
-                                    <div class="mb-4">
-                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                            ${getCategoryLabel(group.min, group.max)}
-                                        </h3>
-                                        <div class="flex flex-wrap gap-2">
-                                            ${group.items.map(voter => `
-                                                <div
-                                                    onclick="showVoterVotes('${voter.username}')"
-                                                    class="flex items-center gap-2 p-2 rounded-lg bg-white shadow hover:shadow-lg transition cursor-pointer"
-                                                >
-                                                    <img src="${voter.avatar}" class="w-10 h-10 rounded-full" />
-                                                    <div>
-                                                        <div class="font-semibold">${voter.username}${voter.isCurrentUser ? ' (You)' : ''}</div>
-                                                        <div class="text-sm text-gray-600">Avg: ${voter.averageScore}</div>
-                                                    </div>
-                                                </div>
-                                            `).join('')}
-                                        </div>
-                                    </div>
-                                `;
-                            } else {
-                                // Average or My Votes view - display images
-                                return `
-                                    <div class="mb-4">
-                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                            ${getCategoryLabel(group.min, group.max)}
-                                        </h3>
-                                        <div class="flex flex-wrap gap-1">
-                                            ${group.items.map(item => `
-                                                <div
-                                                    onclick="showBreakdown(${item.id})"
-                                                    class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                            // Average or My Votes view - display images
+                            return `
+                                <div class="mb-4">
+                                    <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
+                                        ${getCategoryLabel(group.min, group.max)}
+                                    </h3>
+                                    <div class="flex flex-wrap gap-1">
+                                        ${group.items.map(item => `
+                                            <div
+                                                onclick="showBreakdown(${item.id})"
+                                                class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                                                style="height: ${imageSize}px;"
+                                            >
+                                                <img
+                                                    src="${item.url}"
+                                                    alt="Image"
+                                                    class="h-full w-auto object-cover"
                                                     style="height: ${imageSize}px;"
-                                                >
-                                                    <img
-                                                        src="${item.url}"
-                                                        alt="Image"
-                                                        class="h-full w-auto object-cover"
-                                                        style="height: ${imageSize}px;"
-                                                        onload="this.parentElement.classList.remove('image-loading')"
-                                                    />
-                                                    <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
-                                                        ${item.averageScore}
-                                                    </div>
-                                                    ${item.contestNumber ? `
-                                                        <div class="absolute top-1 left-1 flex items-center justify-center w-6 h-6 rounded-full text-white font-bold shadow-lg" style="background: ${item.contestColor.hex}; font-size: ${fontSize}px;">
-                                                            ${item.contestNumber}
-                                                        </div>
-                                                    ` : ''}
+                                                    onload="this.parentElement.classList.remove('image-loading')"
+                                                />
+                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                    ${item.averageScore}
                                                 </div>
-                                            `).join('')}
-                                        </div>
+                                                ${item.contestNumber ? `
+                                                    <div class="absolute top-1 left-1 flex items-center justify-center w-6 h-6 rounded-full text-white font-bold shadow-lg" style="background: ${item.contestColor.hex}; font-size: ${fontSize}px;">
+                                                        ${item.contestNumber}
+                                                    </div>
+                                                ` : ''}
+                                            </div>
+                                        `).join('')}
                                     </div>
-                                `;
-                            }
+                                </div>
+                            `;
                         }).join('')}
                     </div>
                 </div>
@@ -1844,40 +1773,7 @@
 
             let displayResults, grouped, sortedKeys;
 
-            if (state.showVoterBreakdown) {
-                // By Voter view: Calculate each voter's average score
-                const voterAverages = {};
-
-                state.mockResults.forEach(img => {
-                    img.breakdown.forEach(vote => {
-                        if (!voterAverages[vote.username]) {
-                            voterAverages[vote.username] = {
-                                username: vote.username,
-                                avatar: vote.avatar,
-                                scores: [],
-                                isCurrentUser: vote.isCurrentUser,
-                                userId: vote.userId
-                            };
-                        }
-                        voterAverages[vote.username].scores.push(vote.score);
-                    });
-                });
-
-                // Calculate averages
-                const voters = Object.values(voterAverages).map(voter => ({
-                    ...voter,
-                    averageScore: parseFloat((voter.scores.reduce((a, b) => a + b, 0) / voter.scores.length).toFixed(2))
-                })).sort((a, b) => b.averageScore - a.averageScore);
-
-                // Group voters by score ranges
-                grouped = groupByScoreRange(voters);
-                sortedKeys = Object.keys(grouped).sort((a, b) => {
-                    const aMin = grouped[a].min;
-                    const bMin = grouped[b].min;
-                    return bMin - aMin;
-                });
-                displayResults = voters;
-            } else if (state.showMyVotes && Object.keys(state.votes).length > 0) {
+            if (state.showMyVotes && Object.keys(state.votes).length > 0) {
                 // My Votes view
                 displayResults = state.currentContest.images.map(img => ({
                     ...img,
@@ -1917,29 +1813,23 @@
                                 <span class="text-4xl">🎆</span>
                                 <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
                             </div>
-                            <p class="text-gray-600 text-sm mb-1">${state.showVoterBreakdown ? 'Voters ranked by average' : state.showMyVotes ? 'Your votes only' : 'Average votes from all participants'}</p>
-                            <p class="text-xs text-gray-500">${state.showVoterBreakdown ? 'Click on any voter to see their individual votes' : 'Click on any image to see the vote breakdown'}</p>
+                            <p class="text-gray-600 text-sm mb-1">${state.showMyVotes ? 'Your votes only' : 'Average votes from all participants'}</p>
+                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
                             <div class="mt-3 flex items-center justify-center gap-3">
                                 <button
                                     onclick="setResultsView('average')"
-                                        class="px-3 py-1 rounded-lg ${!state.showMyVotes && !state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Average
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('myVotes')"
-                                        class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
-                                    >
-                                        My Votes
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('byVoter')"
-                                        class="px-3 py-1 rounded-lg ${state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
-                                    >
-                                        By Voter
-                                    </button>
-                                </div>
+                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                >
+                                    Average
+                                </button>
+                                <button
+                                    onclick="setResultsView('myVotes')"
+                                    class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                >
+                                    My Votes
+                                </button>
+                            </div>
                         </div>
 
                         <div class="mb-4 max-w-md mx-auto">
@@ -1967,31 +1857,7 @@
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
 
-                            if (state.showVoterBreakdown) {
-                                // By Voter view - display voters
-                                const colorStyle = getCategoryColor(group.min);
-                                return `
-                                    <div class="mb-4">
-                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                            ${getCategoryLabel(group.min, group.max)}
-                                        </h3>
-                                        <div class="flex flex-wrap gap-2">
-                                            ${group.items.map(voter => `
-                                                <div
-                                                    onclick="showVoterVotes('${voter.username}')"
-                                                    class="flex items-center gap-2 p-2 rounded-lg bg-white shadow hover:shadow-lg transition cursor-pointer"
-                                                >
-                                                    <img src="${voter.avatar}" class="w-10 h-10 rounded-full" />
-                                                    <div>
-                                                        <div class="font-semibold">${voter.username}${voter.isCurrentUser ? ' (You)' : ''}</div>
-                                                        <div class="text-sm text-gray-600">Avg: ${voter.averageScore}</div>
-                                                    </div>
-                                                </div>
-                                            `).join('')}
-                                        </div>
-                                    </div>
-                                `;
-                            } else if (state.showMyVotes) {
+                            if (state.showMyVotes) {
                                 const score = group.score;
                                 const colorStyle = getScoreColor(score);
                                 return `
