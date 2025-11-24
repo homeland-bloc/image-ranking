@@ -268,7 +268,6 @@
             shuffledImages: [],
             nextContestId: 4, // Start at 4 since we have 3 mock contests
             bannedUsers: [], // Array of user IDs who are banned from app
-            blockedVotes: {}, // Format: { contestId: { imageId: [userId1, userId2] } }
             sortBy: 'dateDesc', // Options: dateDesc, dateAsc, titleAsc, titleDesc, votersDesc, imagesDesc
             filterCreator: null, // userId or null for all
             showVoterBreakdown: false,
@@ -526,7 +525,7 @@
         }
 
         function canDeleteContest(contest) {
-            return state.user && (contest.createdBy === state.user.id || state.user.id === ADMIN_DISCORD_ID);
+            return state.user && contest.createdBy === state.user.id;
         }
 
         function deleteContest(contestId) {
@@ -662,20 +661,8 @@
 
 
         function removeContestImage(index) {
-            showConfirm(
-                'Delete this image from the contest?',
-                `confirmRemoveImage_${index}`,
-                '🚨'
-            );
-        }
-
-        function confirmRemoveImage(index) {
-            state.modalProcessing = true;
-            state.modal = null;
-            document.body.classList.remove('modal-open');
             state.newContest.images.splice(index, 1);
-            state.modalProcessing = false;
-            showAlert('Image removed successfully!', '✅');
+            render();
         }
 
         function toggleImageLabels() {
@@ -884,82 +871,6 @@
             render();
         }
 
-        function toggleBlockVote(imageId, username) {
-            const contestId = state.currentContest.id;
-
-            // Initialize structure if needed
-            if (!state.blockedVotes[contestId]) {
-                state.blockedVotes[contestId] = {};
-            }
-            if (!state.blockedVotes[contestId][imageId]) {
-                state.blockedVotes[contestId][imageId] = [];
-            }
-
-            const blockedList = state.blockedVotes[contestId][imageId];
-            const index = blockedList.indexOf(username);
-
-            if (index === -1) {
-                // Block the vote
-                showConfirm(
-                    'Block this vote? It will be excluded from score calculations.',
-                    `confirmBlockVote_${imageId}_${username}`,
-                    '🚫'
-                );
-            } else {
-                // Unblock the vote
-                blockedList.splice(index, 1);
-                // Update existing results without regenerating votes
-                updateBlockedVotesInResults(contestId, imageId, username, false);
-                render();
-            }
-        }
-
-        function confirmBlockVote(imageId, username) {
-            state.modalProcessing = true;
-            state.modal = null;
-            document.body.classList.remove('modal-open');
-
-            const contestId = state.currentContest.id;
-            state.blockedVotes[contestId][imageId].push(username);
-
-            // Update existing results without regenerating votes
-            updateBlockedVotesInResults(contestId, imageId, username, true);
-
-            state.modalProcessing = false;
-            render();
-        }
-
-        function updateBlockedVotesInResults(contestId, imageId, username, isBlocked) {
-            // Update cached results to mark vote as blocked/unblocked
-            if (state.mockResultsCache[contestId]) {
-                const results = state.mockResultsCache[contestId];
-                const imageResult = results.find(r => r.id === imageId);
-
-                if (imageResult) {
-                    // Update the breakdown to mark this vote as blocked/unblocked
-                    imageResult.breakdown = imageResult.breakdown.map(vote => {
-                        if (vote.username === username) {
-                            return { ...vote, isBlocked };
-                        }
-                        return vote;
-                    });
-
-                    // Recalculate average excluding blocked votes
-                    const validVotes = imageResult.breakdown.filter(vote => !vote.isBanned && !vote.isBlocked);
-                    const sum = validVotes.reduce((acc, vote) => acc + vote.score, 0);
-                    imageResult.averageScore = validVotes.length > 0 ? parseFloat((sum / validVotes.length).toFixed(2)) : 0;
-                    imageResult.totalVotes = validVotes.length;
-
-                    // Re-sort the results by average score
-                    state.mockResultsCache[contestId].sort((a, b) => b.averageScore - a.averageScore);
-                }
-            }
-
-            // Update current mockResults if viewing this contest
-            if (state.mockResults) {
-                state.mockResults = state.mockResultsCache[contestId];
-            }
-        }
 
         function backToHome() {
             if (state.view === 'vote' && !state.hasSubmitted) {
@@ -1181,19 +1092,13 @@
                         </div>
                         <div class="flex gap-2 justify-center">
                             ${state.modal.buttons.map(btn => {
-                                const actionMatch = btn.action.match(/confirmRemoveImage_(\d+)/);
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
                                 const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
-                                const blockVoteMatch = btn.action.match(/confirmBlockVote_(.+)_(.+)/);
                                 let onclick;
-                                if (actionMatch) {
-                                    onclick = `confirmRemoveImage(${actionMatch[1]})`;
-                                } else if (deleteContestMatch) {
+                                if (deleteContestMatch) {
                                     onclick = `confirmDeleteContest('${deleteContestMatch[1]}')`;
                                 } else if (banUserMatch) {
                                     onclick = `executeBanUser('${banUserMatch[1]}')`;
-                                } else if (blockVoteMatch) {
-                                    onclick = `confirmBlockVote('${blockVoteMatch[1]}', '${blockVoteMatch[2]}')`;
                                 } else {
                                     onclick = `${btn.action}()`;
                                 }
