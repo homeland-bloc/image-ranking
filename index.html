@@ -530,9 +530,9 @@
 
         function deleteContest(contestId) {
             showConfirm(
-                'Permanently delete this contest? This cannot be undone.',
+                '🗑️ Delete Contest\nThis will permanently delete the contest and all its data.\n⚠️ This action cannot be undone.',
                 `confirmDeleteContest_${contestId}`,
-                '🚨'
+                '🗑️'
             );
         }
 
@@ -611,9 +611,9 @@
 
         function cancelCreateContest() {
             showConfirm(
-                'Cancel contest creation? All added images will be lost.',
+                '⚠️ Discard Progress\nYour progress will be lost if you proceed.\nAre you sure?',
                 'confirmCancelCreate',
-                '🚨'
+                '⚠️'
             );
         }
 
@@ -800,9 +800,9 @@
 
         function cancelVoting() {
             showConfirm(
-                'Are you sure you want to cancel? Your votes will not be saved.',
+                '⚠️ Discard Progress\nYour progress will be lost if you proceed.\nAre you sure?',
                 'confirmCancelVoting',
-                '🚨'
+                '⚠️'
             );
         }
 
@@ -813,9 +813,9 @@
                 return;
             }
             showConfirm(
-                'Your votes cannot be changed after submission. Are you sure?',
+                '✅ Submit Votes\nYour votes will be locked and cannot be changed after submission.\n⚠️ This action cannot be undone.',
                 'confirmSubmitVotes',
-                '🚨'
+                '✅'
             );
         }
 
@@ -875,9 +875,9 @@
         function backToHome() {
             if (state.view === 'vote' && !state.hasSubmitted) {
                 showConfirm(
-                    'Are you sure you want to go back? Your votes will not be saved.',
+                    '⚠️ Discard Progress\nYour progress will be lost if you proceed.\nAre you sure?',
                     'confirmBackToHome',
-                    '🚨'
+                    '⚠️'
                 );
                 return;
             }
@@ -1007,9 +1007,9 @@
 
         function confirmBanUser(userId) {
             showConfirm(
-                'Ban this user? They will not be able to access the app.',
+                '🚫 Ban User\nThis user will not be able to create contests or vote.\n⚠️ This action can be undone later.',
                 `executeBanUser_${userId}`,
-                '🚨'
+                '🚫'
             );
         }
 
