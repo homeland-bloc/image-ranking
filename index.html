@@ -782,6 +782,21 @@
             render();
         }
 
+        function toggleContestLock(contestId) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) return;
+
+            // Only the creator can lock/unlock
+            if (contest.createdBy !== state.user.id) {
+                showAlert('Only the creator can lock/unlock this contest.', '🔒');
+                return;
+            }
+
+            contest.isLocked = !contest.isLocked;
+            showAlert(contest.isLocked ? 'Contest locked. Users cannot vote.' : 'Contest unlocked. Users can now vote.', contest.isLocked ? '🔒' : '🔓');
+            render();
+        }
+
         function handleVote(score) {
             if (state.isAnimating) return;
             
@@ -1252,7 +1267,26 @@
                                     <div class="flex items-start gap-2 mb-2">
                                         <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
                                         <div class="flex-1 min-w-0">
-                                            <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
+                                            <div class="flex items-center gap-2">
+                                                <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
+                                                ${contest.createdBy === state.user.id ? `
+                                                    <button
+                                                        onclick='toggleContestLock("${contest.id}")'
+                                                        class="flex-shrink-0 p-1 hover:bg-gray-100 rounded transition"
+                                                        title="${contest.isLocked ? 'Unlock contest' : 'Lock contest'}"
+                                                    >
+                                                        ${contest.isLocked ? `
+                                                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                                            </svg>
+                                                        ` : `
+                                                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
+                                                            </svg>
+                                                        `}
+                                                    </button>
+                                                ` : ''}
+                                            </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by ${contest.creatorName}</span>
                                                 ${createdDate ? `<span class="whitespace-nowrap">📅 ${createdDate}</span>` : ''}
@@ -1978,6 +2012,7 @@
         window.startVoting = startVoting;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
+        window.toggleContestLock = toggleContestLock;
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
         window.jumpToImage = jumpToImage;
