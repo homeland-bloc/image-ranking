@@ -268,6 +268,8 @@
             shuffledImages: [],
             nextContestId: 4, // Start at 4 since we have 3 mock contests
             bannedUsers: [], // Array of user IDs who are banned from app
+            allUsers: [], // Track all users who have logged in
+            showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             filters: {
                 createdBy: null,           // Username or null
@@ -729,6 +731,16 @@
         function login() {
             state.isLoggedIn = true;
             state.user = mockUser;
+
+            // Track user in allUsers if not already there
+            if (!state.allUsers.find(u => u.id === mockUser.id)) {
+                state.allUsers.push({
+                    id: mockUser.id,
+                    username: mockUser.username,
+                    avatar: mockUser.avatar
+                });
+            }
+
             render();
         }
 
@@ -902,16 +914,30 @@
             render();
         }
 
+        function showUserList() {
+            state.showUserList = true;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeUserList() {
+            state.showUserList = false;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
         function banUser(userId) {
             if (!state.bannedUsers.includes(userId)) {
                 state.bannedUsers.push(userId);
             }
             showAlert('User has been banned.', '✅');
+            render();
         }
 
         function unbanUser(userId) {
             state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
             showAlert('User has been unbanned.', '✅');
+            render();
         }
 
         function confirmBanUser(userId) {
@@ -1028,6 +1054,9 @@
                                     </div>
                                     <div class="hidden group-hover:block absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
                                         ${isAdmin ? `
+                                            <button onclick="showUserList()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                👥 User List
+                                            </button>
                                             <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                 Admin Dashboard
                                             </button>
@@ -1731,6 +1760,7 @@
             `;
         }
 
+        function renderAdminDashboard() {
             if (!state.showAdminDashboard) return '';
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -1847,6 +1877,62 @@
             `;
         }
 
+        function renderUserList() {
+            if (!state.showUserList) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeUserList()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                        <div class="p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-2xl font-bold text-gray-800">👥 User List</h3>
+                                <button onclick="closeUserList()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
+                                <h4 class="font-bold text-gray-800 mb-3">All Logged-In Users</h4>
+                                ${state.allUsers.length > 0 ? `
+                                    <div class="space-y-2">
+                                        ${state.allUsers.map(user => {
+                                            const isBanned = state.bannedUsers.includes(user.id);
+                                            return `
+                                                <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
+                                                    <div class="flex items-center gap-3">
+                                                        <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
+                                                        <div>
+                                                            <div class="font-semibold text-gray-800">${user.username}</div>
+                                                            <div class="text-xs text-gray-500">${user.id}</div>
+                                                            ${isBanned ? '<span class="text-xs text-red-600 font-semibold">BANNED</span>' : ''}
+                                                        </div>
+                                                    </div>
+                                                    ${isBanned ? `
+                                                        <button onclick="unbanUser('${user.id}')" class="bg-green-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
+                                                            Unban
+                                                        </button>
+                                                    ` : `
+                                                        <button onclick="confirmBanUser('${user.id}')" class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                                            Ban
+                                                        </button>
+                                                    `}
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                ` : '<p class="text-sm text-gray-500 italic">No users have logged in yet</p>'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function render() {
             const app = document.getElementById('app');
             
@@ -1873,7 +1959,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '');
+            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showUserList ? renderUserList() : '');
         }
 
         window.login = login;
@@ -1915,6 +2001,8 @@
         window.updateImageLabel = updateImageLabel;
         window.showAdminDashboard = showAdminDashboard;
         window.closeAdminDashboard = closeAdminDashboard;
+        window.showUserList = showUserList;
+        window.closeUserList = closeUserList;
         window.confirmBanUser = confirmBanUser;
         window.executeBanUser = executeBanUser;
         window.unbanUser = unbanUser;
