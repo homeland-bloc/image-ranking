@@ -358,7 +358,7 @@
                 // Mark banned users and blocked votes
                 breakdown = breakdown.map(vote => {
                     const isBanned = state.bannedUsers.includes(vote.userId);
-                    const isBlocked = state.blockedVotes[contest.id]?.[img.id]?.includes(vote.userId) || false;
+                    const isBlocked = state.blockedVotes[contest.id]?.[img.id]?.includes(vote.username) || false;
                     return { ...vote, isBanned, isBlocked };
                 });
 
@@ -414,7 +414,7 @@
 
         function groupMyVotesByScore(results) {
             const grouped = {};
-            
+
             [5, 4, 3, 2, 1].forEach(score => {
                 const items = results.filter(r => r.averageScore === score);
                 if (items.length > 0) {
@@ -424,8 +424,17 @@
                     };
                 }
             });
-            
+
             return grouped;
+        }
+
+        function getVoterCount(contest) {
+            // Get cached results for this contest
+            const results = state.mockResultsCache[contest.id];
+            if (!results || !results[0]) return 0;
+
+            // Get breakdown from first image (all images have same voters)
+            return results[0].breakdown.length;
         }
 
         function showModal(config) {
@@ -785,6 +794,15 @@
             render();
         }
 
+        function adjustGlobalLimit(delta) {
+            if (delta > 0) {
+                state.globalContestLimit++;
+            } else if (delta < 0 && state.contests.length < state.globalContestLimit) {
+                state.globalContestLimit--;
+            }
+            render();
+        }
+
         function startVoting(contest) {
             state.currentContest = contest;
             state.shuffledImages = shuffleArray(contest.images);
@@ -879,9 +897,82 @@
             render();
         }
 
+        function showVoterVotes(username) {
+            // Find the voter's votes from the mock results
+            const voterVotes = {};
+            state.mockResults.forEach(img => {
+                const vote = img.breakdown.find(v => v.username === username);
+                if (vote) {
+                    voterVotes[img.id] = vote.score;
+                }
+            });
+
+            // Temporarily show this voter's votes in "My Votes" format
+            const previousShowMyVotes = state.showMyVotes;
+            const previousVotes = state.votes;
+
+            state.showMyVotes = true;
+            state.votes = voterVotes;
+
+            // Render and then restore
+            setTimeout(() => {
+                state.showMyVotes = previousShowMyVotes;
+                state.votes = previousVotes;
+            }, 100);
+
+            render();
+        }
+
         function closeBreakdown() {
             state.showBreakdownModal = null;
             document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function toggleBlockVote(imageId, username) {
+            const contestId = state.currentContest.id;
+
+            // Initialize structure if needed
+            if (!state.blockedVotes[contestId]) {
+                state.blockedVotes[contestId] = {};
+            }
+            if (!state.blockedVotes[contestId][imageId]) {
+                state.blockedVotes[contestId][imageId] = [];
+            }
+
+            const blockedList = state.blockedVotes[contestId][imageId];
+            const index = blockedList.indexOf(username);
+
+            if (index === -1) {
+                // Block the vote
+                showConfirm(
+                    'Block this vote? It will be excluded from score calculations.',
+                    `confirmBlockVote_${imageId}_${username}`,
+                    '🚫'
+                );
+            } else {
+                // Unblock the vote
+                blockedList.splice(index, 1);
+                // Regenerate results
+                delete state.mockResultsCache[contestId];
+                state.mockResults = generateMockResults(state.currentContest, state.votes);
+                render();
+            }
+        }
+
+        function confirmBlockVote(imageId, username) {
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            const contestId = state.currentContest.id;
+            state.blockedVotes[contestId][imageId].push(username);
+
+            // Regenerate results to exclude blocked vote
+            delete state.mockResultsCache[contestId];
+            state.mockResults = generateMockResults(state.currentContest, state.votes);
+
+            state.modalProcessing = false;
             render();
         }
 
@@ -918,6 +1009,12 @@
             render();
         }
 
+        function setResultsView(view) {
+            state.showMyVotes = view === 'myVotes';
+            state.showVoterBreakdown = view === 'byVoter';
+            render();
+        }
+
         function updateScale(value) {
             clearTimeout(state.scaleUpdateTimeout);
             state.scaleUpdateTimeout = setTimeout(() => {
@@ -936,6 +1033,30 @@
             state.showUserProfile = null;
             document.body.classList.remove('modal-open');
             render();
+        }
+
+        function viewResultsFromProfile(contestId) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) return;
+
+            // Close profile modal
+            state.showUserProfile = null;
+            document.body.classList.remove('modal-open');
+
+            // Open results
+            viewResults(contest);
+        }
+
+        function startVotingFromProfile(contestId) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) return;
+
+            // Close profile modal
+            state.showUserProfile = null;
+            document.body.classList.remove('modal-open');
+
+            // Start voting
+            startVoting(contest);
         }
 
         function banUser(userId) {
@@ -1018,7 +1139,7 @@
             const isInput = state.modal.type === 'input';
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeModal()">
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
                         <div class="text-center mb-4">
                             <div class="text-5xl mb-3">${state.modal.icon}</div>
@@ -1034,6 +1155,7 @@
                                 const actionMatch = btn.action.match(/confirmRemoveImage_(\d+)/);
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
                                 const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
+                                const blockVoteMatch = btn.action.match(/confirmBlockVote_(.+)_(.+)/);
                                 let onclick;
                                 if (actionMatch) {
                                     onclick = `confirmRemoveImage(${actionMatch[1]})`;
@@ -1041,6 +1163,8 @@
                                     onclick = `confirmDeleteContest('${deleteContestMatch[1]}')`;
                                 } else if (banUserMatch) {
                                     onclick = `executeBanUser('${banUserMatch[1]}')`;
+                                } else if (blockVoteMatch) {
+                                    onclick = `confirmBlockVote('${blockVoteMatch[1]}', '${blockVoteMatch[2]}')`;
                                 } else {
                                     onclick = `${btn.action}()`;
                                 }
@@ -1090,6 +1214,13 @@
                             </button>
                         ` : `
                             <div class="flex items-center gap-2">
+                                ${state.user.id === ADMIN_DISCORD_ID ? `
+                                    <div class="flex items-center gap-2 bg-white/20 px-3 py-1 rounded-lg">
+                                        <span class="text-sm font-medium">${state.contests.length}/${state.globalContestLimit}</span>
+                                        <button onclick="adjustGlobalLimit(1)" class="bg-white/30 hover:bg-white/40 w-6 h-6 rounded flex items-center justify-center text-sm">+</button>
+                                        <button onclick="adjustGlobalLimit(-1)" class="bg-white/30 hover:bg-white/40 w-6 h-6 rounded flex items-center justify-center text-sm" ${state.contests.length >= state.globalContestLimit ? 'disabled' : ''}>-</button>
+                                    </div>
+                                ` : ''}
                                 <div class="flex items-center gap-2 cursor-pointer hover:opacity-80" onclick="showUserProfile('${state.user.id}')">
                                     <img src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
                                     <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
@@ -1142,6 +1273,14 @@
         }
 
         function renderHome() {
+            // Ensure all contests have results generated for voter count
+            state.contests.forEach(contest => {
+                if (!state.mockResultsCache[contest.id]) {
+                    const userVotes = state.userVotedContests[contest.id] || {};
+                    state.mockResultsCache[contest.id] = generateMockResults(contest, userVotes);
+                }
+            });
+
             // Get unique creators
             const creators = [...new Set(state.contests.map(c => ({ id: c.createdBy, name: c.creatorName })))];
             const uniqueCreators = Array.from(new Map(creators.map(c => [c.id, c])).values());
@@ -1153,8 +1292,8 @@
 
             // Sort contests
             filteredContests = [...filteredContests].sort((a, b) => {
-                const voterCountA = Math.floor(Math.random() * 50) + 10;
-                const voterCountB = Math.floor(Math.random() * 50) + 10;
+                const voterCountA = getVoterCount(a);
+                const voterCountB = getVoterCount(b);
 
                 switch (state.sortBy) {
                     case 'dateDesc':
@@ -1220,7 +1359,7 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         ${filteredContests.map(contest => {
                             const hasVoted = state.userVotedContests[contest.id];
-                            const voterCount = Math.floor(Math.random() * 50) + 10;
+                            const voterCount = getVoterCount(contest);
                             const canDelete = canDeleteContest(contest);
                             const isSelected = state.selectedContests.includes(contest.id);
 
@@ -1418,7 +1557,8 @@
             // Combine all images with contest info
             let allImages = [];
             selectedContests.forEach((contest, idx) => {
-                const contestResults = generateMockResults(contest, {});
+                const userVotes = state.userVotedContests[contest.id] || {};
+                const contestResults = generateMockResults(contest, userVotes);
                 const color = contestColors[idx % contestColors.length];
 
                 contestResults.forEach(img => {
@@ -1431,13 +1571,67 @@
                 });
             });
 
-            // Group by score range
-            const grouped = groupByScoreRange(allImages);
-            const sortedKeys = Object.keys(grouped).sort((a, b) => {
-                const aMin = grouped[a].min;
-                const bMin = grouped[b].min;
-                return bMin - aMin;
-            });
+            let displayResults, grouped, sortedKeys;
+
+            if (state.showVoterBreakdown) {
+                // By Voter view: Calculate each voter's average score across all contests
+                const voterAverages = {};
+
+                allImages.forEach(img => {
+                    img.breakdown.forEach(vote => {
+                        if (!voterAverages[vote.username]) {
+                            voterAverages[vote.username] = {
+                                username: vote.username,
+                                avatar: vote.avatar,
+                                scores: [],
+                                isCurrentUser: vote.isCurrentUser,
+                                userId: vote.userId
+                            };
+                        }
+                        voterAverages[vote.username].scores.push(vote.score);
+                    });
+                });
+
+                const voters = Object.values(voterAverages).map(voter => ({
+                    ...voter,
+                    averageScore: parseFloat((voter.scores.reduce((a, b) => a + b, 0) / voter.scores.length).toFixed(2))
+                })).sort((a, b) => b.averageScore - a.averageScore);
+
+                grouped = groupByScoreRange(voters);
+                sortedKeys = Object.keys(grouped).sort((a, b) => {
+                    const aMin = grouped[a].min;
+                    const bMin = grouped[b].min;
+                    return bMin - aMin;
+                });
+                displayResults = voters;
+            } else if (state.showMyVotes) {
+                // Filter to only show images from contests the user has voted on
+                const votedImages = allImages.filter(img => state.userVotedContests[img.contestId]);
+
+                displayResults = votedImages.map(img => {
+                    const userVotes = state.userVotedContests[img.contestId];
+                    return {
+                        ...img,
+                        averageScore: userVotes[img.id] || 0
+                    };
+                }).sort((a, b) => b.averageScore - a.averageScore);
+
+                grouped = groupByScoreRange(displayResults);
+                sortedKeys = Object.keys(grouped).sort((a, b) => {
+                    const aMin = grouped[a].min;
+                    const bMin = grouped[b].min;
+                    return bMin - aMin;
+                });
+            } else {
+                // Average view
+                displayResults = allImages;
+                grouped = groupByScoreRange(allImages);
+                sortedKeys = Object.keys(grouped).sort((a, b) => {
+                    const aMin = grouped[a].min;
+                    const bMin = grouped[b].min;
+                    return bMin - aMin;
+                });
+            }
 
             const baseSize = 150;
             const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
@@ -1473,6 +1667,27 @@
                             <button onclick="exitCompareMode()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition text-sm">
                                 Change Selection
                             </button>
+
+                            <div class="mt-3 flex items-center justify-center gap-3">
+                                <button
+                                    onclick="setResultsView('average')"
+                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes && !state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                >
+                                    Average
+                                </button>
+                                <button
+                                    onclick="setResultsView('myVotes')"
+                                    class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                >
+                                    My Votes
+                                </button>
+                                <button
+                                    onclick="setResultsView('byVoter')"
+                                    class="px-3 py-1 rounded-lg ${state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                >
+                                    By Voter
+                                </button>
+                            </div>
                         </div>
 
                         <div class="mb-4 max-w-md mx-auto">
@@ -1494,35 +1709,65 @@
                         ${sortedKeys.map(key => {
                             const group = grouped[key];
                             const colorStyle = getCategoryColor(group.min);
-                            return `
-                                <div class="mb-4">
-                                    <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                        ${getCategoryLabel(group.min, group.max)}
-                                    </h3>
-                                    <div class="flex flex-wrap gap-1">
-                                        ${group.items.map(item => `
-                                            <div
-                                                class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
-                                                style="height: ${imageSize}px;"
-                                            >
-                                                <img
-                                                    src="${item.url}"
-                                                    alt="Image"
-                                                    class="h-full w-auto object-cover"
-                                                    style="height: ${imageSize}px;"
-                                                    onload="this.parentElement.classList.remove('image-loading')"
-                                                />
-                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
-                                                    ${item.averageScore}
+
+                            if (state.showVoterBreakdown) {
+                                // By Voter view - display voters
+                                return `
+                                    <div class="mb-4">
+                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
+                                            ${getCategoryLabel(group.min, group.max)}
+                                        </h3>
+                                        <div class="flex flex-wrap gap-2">
+                                            ${group.items.map(voter => `
+                                                <div
+                                                    onclick="showVoterVotes('${voter.username}')"
+                                                    class="flex items-center gap-2 p-2 rounded-lg bg-white shadow hover:shadow-lg transition cursor-pointer"
+                                                >
+                                                    <img src="${voter.avatar}" class="w-10 h-10 rounded-full" />
+                                                    <div>
+                                                        <div class="font-semibold">${voter.username}${voter.isCurrentUser ? ' (You)' : ''}</div>
+                                                        <div class="text-sm text-gray-600">Avg: ${voter.averageScore}</div>
+                                                    </div>
                                                 </div>
-                                                <div class="absolute top-1 left-1 ${item.contestColor.bg} text-white px-2 py-0.5 rounded-full text-xs font-semibold shadow-lg">
-                                                    ${item.contestTitle}
-                                                </div>
-                                            </div>
-                                        `).join('')}
+                                            `).join('')}
+                                        </div>
                                     </div>
-                                </div>
-                            `;
+                                `;
+                            } else {
+                                // Average or My Votes view - display images
+                                return `
+                                    <div class="mb-4">
+                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
+                                            ${getCategoryLabel(group.min, group.max)}
+                                        </h3>
+                                        <div class="flex flex-wrap gap-1">
+                                            ${group.items.map(item => `
+                                                <div
+                                                    onclick="showBreakdown(${item.id})"
+                                                    class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                                                    style="height: ${imageSize}px;"
+                                                >
+                                                    <img
+                                                        src="${item.url}"
+                                                        alt="Image"
+                                                        class="h-full w-auto object-cover"
+                                                        style="height: ${imageSize}px;"
+                                                        onload="this.parentElement.classList.remove('image-loading')"
+                                                    />
+                                                    <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                        ${item.averageScore}
+                                                    </div>
+                                                    ${item.contestColor ? `
+                                                        <div class="absolute top-1 left-1 ${item.contestColor.bg} text-white px-2 py-0.5 rounded-full text-xs font-semibold shadow-lg">
+                                                            ${item.contestTitle}
+                                                        </div>
+                                                    ` : ''}
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                `;
+                            }
                         }).join('')}
                     </div>
                 </div>
@@ -1552,17 +1797,29 @@
 
                                 const segmentImages = state.shuffledImages.slice(startIdx, endIdx);
 
-                                const allVotedInSegment = segmentImages.every(img => state.votes[img.id]);
+                                const votedCount = segmentImages.filter(img => state.votes[img.id]).length;
+                                const totalCount = segmentImages.length;
                                 const hasCurrentImage = state.currentImageIndex >= startIdx && state.currentImageIndex < endIdx;
 
+                                // Determine color based on priority
+                                let bgColor;
+                                if (hasCurrentImage) {
+                                    bgColor = 'bg-pink-500';
+                                } else if (votedCount === totalCount) {
+                                    bgColor = 'bg-green-500';
+                                } else if (votedCount > 0) {
+                                    bgColor = 'bg-yellow-500';
+                                } else {
+                                    bgColor = 'bg-gray-300';
+                                }
+
                                 const imageRange = startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`;
-                                const votedCount = segmentImages.filter(img => state.votes[img.id]).length;
-                                const tooltip = `${imageRange} (${votedCount}/${segmentImages.length} voted)`;
+                                const tooltip = `${imageRange} (${votedCount}/${totalCount} voted)`;
 
                                 return `
                                     <div
                                         onclick="jumpToImage(${startIdx})"
-                                        class="progress-segment flex-1 ${allVotedInSegment ? 'bg-green-500' : hasCurrentImage ? 'bg-pink-500' : 'bg-gray-300'}"
+                                        class="progress-segment flex-1 ${bgColor}"
                                         title="${tooltip}"
                                     ></div>
                                 `;
@@ -1575,29 +1832,36 @@
                                 <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
                             </div>
 
-                            <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex flex-col items-center justify-center">
-                                ${state.currentContest.labelsEnabled && currentImage.label ? `
-                                    <div class="w-full bg-white px-4 py-2 text-center border-b border-gray-200">
-                                        <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
+                            ${(() => {
+                                const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+                                const imageContainerHeight = isMobile ? '50vh' : '60vh';
+                                const maxImageHeight = isMobile ? 'none' : '600px';
+
+                                return `
+                                    <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="height: ${imageContainerHeight};">
+                                        ${state.currentContest.labelsEnabled && currentImage.label ? `
+                                            <div class="absolute top-0 left-0 right-0 bg-white px-4 py-2 text-center border-b border-gray-200 z-10">
+                                                <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
+                                            </div>
+                                        ` : ''}
+                                        <img
+                                            src="${currentImage.url}"
+                                            alt="Image ${state.currentImageIndex + 1}"
+                                            class="max-h-full max-w-full object-contain"
+                                            style="${maxImageHeight !== 'none' ? `max-height: ${maxImageHeight};` : ''}"
+                                            onload="this.parentElement.classList.remove('image-loading')"
+                                        />
+                                        ${currentVote ? `
+                                            <div class="absolute top-2 right-2 bg-white rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
+                                                <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                                </svg>
+                                                <span class="font-semibold">Voted: ${currentVote}</span>
+                                            </div>
+                                        ` : ''}
                                     </div>
-                                ` : ''}
-                                <div class="flex items-center justify-center p-4 sm:p-6">
-                                    <img
-                                        src="${currentImage.url}"
-                                        alt="Image ${state.currentImageIndex + 1}"
-                                        class="max-w-full object-contain voting-image"
-                                        onload="this.parentElement.classList.remove('image-loading')"
-                                    />
-                                </div>
-                                ${currentVote ? `
-                                    <div class="absolute top-2 right-2 bg-white rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
-                                        <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                        </svg>
-                                        <span class="font-semibold">Voted: ${currentVote}</span>
-                                    </div>
-                                ` : ''}
-                            </div>
+                                `;
+                            })()}
 
                             <div class="flex justify-center gap-2 mb-3">
                                 ${[1, 2, 3, 4, 5].map(score => `
@@ -1657,30 +1921,68 @@
             if (!state.mockResults) {
                 state.mockResults = generateMockResults(state.currentContest, state.votes);
             }
-            
-            const displayResults = state.showMyVotes && Object.keys(state.votes).length > 0
-                ? state.currentContest.images.map(img => ({
+
+            let displayResults, grouped, sortedKeys;
+
+            if (state.showVoterBreakdown) {
+                // By Voter view: Calculate each voter's average score
+                const voterAverages = {};
+
+                state.mockResults.forEach(img => {
+                    img.breakdown.forEach(vote => {
+                        if (!voterAverages[vote.username]) {
+                            voterAverages[vote.username] = {
+                                username: vote.username,
+                                avatar: vote.avatar,
+                                scores: [],
+                                isCurrentUser: vote.isCurrentUser,
+                                userId: vote.userId
+                            };
+                        }
+                        voterAverages[vote.username].scores.push(vote.score);
+                    });
+                });
+
+                // Calculate averages
+                const voters = Object.values(voterAverages).map(voter => ({
+                    ...voter,
+                    averageScore: parseFloat((voter.scores.reduce((a, b) => a + b, 0) / voter.scores.length).toFixed(2))
+                })).sort((a, b) => b.averageScore - a.averageScore);
+
+                // Group voters by score ranges
+                grouped = groupByScoreRange(voters);
+                sortedKeys = Object.keys(grouped).sort((a, b) => {
+                    const aMin = grouped[a].min;
+                    const bMin = grouped[b].min;
+                    return bMin - aMin;
+                });
+                displayResults = voters;
+            } else if (state.showMyVotes && Object.keys(state.votes).length > 0) {
+                // My Votes view
+                displayResults = state.currentContest.images.map(img => ({
                     ...img,
                     averageScore: state.votes[img.id] || 0,
                     totalVotes: 1,
-                    breakdown: [{ 
-                        username: state.user.username, 
-                        avatar: state.user.avatar, 
-                        score: state.votes[img.id] || 0, 
-                        isCurrentUser: true 
+                    breakdown: [{
+                        username: state.user.username,
+                        avatar: state.user.avatar,
+                        score: state.votes[img.id] || 0,
+                        isCurrentUser: true
                     }]
-                })).sort((a, b) => b.averageScore - a.averageScore)
-                : state.mockResults;
-            
-            const grouped = state.showMyVotes ? groupMyVotesByScore(displayResults) : groupByScoreRange(displayResults);
-            const sortedKeys = Object.keys(grouped).sort((a, b) => {
-                if (state.showMyVotes) {
-                    return parseInt(b) - parseInt(a);
-                }
-                const aMin = grouped[a].min;
-                const bMin = grouped[b].min;
-                return bMin - aMin;
-            });
+                })).sort((a, b) => b.averageScore - a.averageScore);
+
+                grouped = groupMyVotesByScore(displayResults);
+                sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
+            } else {
+                // Average view
+                displayResults = state.mockResults;
+                grouped = groupByScoreRange(displayResults);
+                sortedKeys = Object.keys(grouped).sort((a, b) => {
+                    const aMin = grouped[a].min;
+                    const bMin = grouped[b].min;
+                    return bMin - aMin;
+                });
+            }
             
             const baseSize = 150;
             const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
@@ -1695,19 +1997,29 @@
                                 <span class="text-4xl">🎆</span>
                                 <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
                             </div>
-                            <p class="text-gray-600 text-sm mb-1">${state.showMyVotes ? 'Your votes only' : 'Average votes from all participants'}</p>
-                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
-                            
+                            <p class="text-gray-600 text-sm mb-1">${state.showVoterBreakdown ? 'Voters ranked by average' : state.showMyVotes ? 'Your votes only' : 'Average votes from all participants'}</p>
+                            <p class="text-xs text-gray-500">${state.showVoterBreakdown ? 'Click on any voter to see their individual votes' : 'Click on any image to see the vote breakdown'}</p>
+
                             ${Object.keys(state.votes).length > 0 ? `
                                 <div class="mt-3 flex items-center justify-center gap-3">
-                                    <span class="text-sm font-medium text-gray-700">Average</span>
-                                    <div 
-                                        class="toggle-switch ${state.showMyVotes ? 'active' : ''}" 
-                                        onclick="toggleVoteView()"
+                                    <button
+                                        onclick="setResultsView('average')"
+                                        class="px-3 py-1 rounded-lg ${!state.showMyVotes && !state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
                                     >
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                    <span class="text-sm font-medium text-gray-700">My Votes</span>
+                                        Average
+                                    </button>
+                                    <button
+                                        onclick="setResultsView('myVotes')"
+                                        class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                    >
+                                        My Votes
+                                    </button>
+                                    <button
+                                        onclick="setResultsView('byVoter')"
+                                        class="px-3 py-1 rounded-lg ${state.showVoterBreakdown ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                    >
+                                        By Voter
+                                    </button>
                                 </div>
                             ` : ''}
                         </div>
@@ -1730,8 +2042,32 @@
 
                         ${sortedKeys.map(key => {
                             const group = grouped[key];
-                            
-                            if (state.showMyVotes) {
+
+                            if (state.showVoterBreakdown) {
+                                // By Voter view - display voters
+                                const colorStyle = getCategoryColor(group.min);
+                                return `
+                                    <div class="mb-4">
+                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
+                                            ${getCategoryLabel(group.min, group.max)}
+                                        </h3>
+                                        <div class="flex flex-wrap gap-2">
+                                            ${group.items.map(voter => `
+                                                <div
+                                                    onclick="showVoterVotes('${voter.username}')"
+                                                    class="flex items-center gap-2 p-2 rounded-lg bg-white shadow hover:shadow-lg transition cursor-pointer"
+                                                >
+                                                    <img src="${voter.avatar}" class="w-10 h-10 rounded-full" />
+                                                    <div>
+                                                        <div class="font-semibold">${voter.username}${voter.isCurrentUser ? ' (You)' : ''}</div>
+                                                        <div class="text-sm text-gray-600">Avg: ${voter.averageScore}</div>
+                                                    </div>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                `;
+                            } else if (state.showMyVotes) {
                                 const score = group.score;
                                 const colorStyle = getScoreColor(score);
                                 return `
@@ -1741,15 +2077,15 @@
                                         </h3>
                                         <div class="flex flex-wrap gap-1">
                                             ${group.items.map(item => `
-                                                <div 
+                                                <div
                                                     onclick="showBreakdown(${item.id})"
                                                     class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
                                                     style="height: ${imageSize}px;"
                                                 >
-                                                    <img 
-                                                        src="${item.url}" 
-                                                        alt="Image" 
-                                                        class="h-full w-auto object-cover" 
+                                                    <img
+                                                        src="${item.url}"
+                                                        alt="Image"
+                                                        class="h-full w-auto object-cover"
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
@@ -1767,15 +2103,15 @@
                                         </h3>
                                         <div class="flex flex-wrap gap-1">
                                             ${group.items.map(item => `
-                                                <div 
+                                                <div
                                                     onclick="showBreakdown(${item.id})"
                                                     class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
                                                     style="height: ${imageSize}px;"
                                                 >
-                                                    <img 
-                                                        src="${item.url}" 
-                                                        alt="Image" 
-                                                        class="h-full w-auto object-cover" 
+                                                    <img
+                                                        src="${item.url}"
+                                                        alt="Image"
+                                                        class="h-full w-auto object-cover"
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
@@ -1848,9 +2184,22 @@
                                         ${votesByScore[score].length > 0 ? `
                                             <div class="grid grid-cols-2 gap-2 mt-2">
                                                 ${votesByScore[score].map(vote => `
-                                                    <div class="flex items-center gap-2 p-2 rounded-lg ${vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
+                                                    <div class="flex items-center gap-2 p-2 rounded-lg ${
+                                                        vote.isBlocked ? 'bg-gray-200 opacity-50' :
+                                                        vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
+                                                    }">
                                                         <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')" />
-                                                        <span class="text-sm text-gray-700 truncate cursor-pointer hover:text-pink-600" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')">${vote.username}${vote.isCurrentUser ? ' (You)' : ''}</span>
+                                                        <span class="text-sm text-gray-700 truncate cursor-pointer hover:text-pink-600 ${vote.isBlocked ? 'line-through' : ''}" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')">
+                                                            ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBlocked ? ' (Blocked)' : ''}
+                                                        </span>
+                                                        ${state.user.id === ADMIN_DISCORD_ID && !vote.isCurrentUser ? `
+                                                            <button
+                                                                onclick="toggleBlockVote('${state.showBreakdownModal}', '${vote.username}')"
+                                                                class="ml-auto text-xs ${vote.isBlocked ? 'text-green-600' : 'text-red-600'} hover:underline"
+                                                            >
+                                                                ${vote.isBlocked ? '✅ Unblock' : '🚫 Block'}
+                                                            </button>
+                                                        ` : ''}
                                                     </div>
                                                 `).join('')}
                                             </div>
@@ -1929,26 +2278,48 @@
                                 <div class="bg-gray-50 rounded-lg p-4">
                                     <h5 class="font-bold text-gray-800 mb-2">Contests Created: ${contestsCreated.length}</h5>
                                     ${contestsCreated.length > 0 ? `
-                                        <ul class="space-y-1">
+                                        <div class="space-y-2">
                                             ${contestsCreated.map(c => `
-                                                <li class="text-sm text-gray-700 hover:text-pink-600 cursor-pointer" onclick="closeUserProfile(); viewResults(${JSON.stringify(c).replace(/'/g, '&apos;')})">
-                                                    • ${c.title}
-                                                </li>
+                                                <div class="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                                    <span class="text-sm">${c.title}</span>
+                                                    <div class="flex gap-2">
+                                                        <button onclick="viewResultsFromProfile('${c.id}')" class="text-xs bg-blue-500 text-white px-2 py-1 rounded">
+                                                            View Results
+                                                        </button>
+                                                        ${canDeleteContest(c) ? `
+                                                            <button onclick="deleteContest('${c.id}')" class="text-xs bg-red-500 text-white px-2 py-1 rounded">
+                                                                Delete
+                                                            </button>
+                                                        ` : ''}
+                                                    </div>
+                                                </div>
                                             `).join('')}
-                                        </ul>
+                                        </div>
                                     ` : '<p class="text-sm text-gray-500 italic">No contests created yet</p>'}
                                 </div>
 
                                 <div class="bg-gray-50 rounded-lg p-4">
                                     <h5 class="font-bold text-gray-800 mb-2">Contests Voted: ${contestsVoted.length}</h5>
                                     ${contestsVoted.length > 0 ? `
-                                        <ul class="space-y-1">
-                                            ${contestsVoted.map(c => `
-                                                <li class="text-sm text-gray-700 hover:text-pink-600 cursor-pointer" onclick="closeUserProfile(); viewResults(${JSON.stringify(c).replace(/'/g, '&apos;')})">
-                                                    • ${c.title}
-                                                </li>
-                                            `).join('')}
-                                        </ul>
+                                        <div class="space-y-2">
+                                            ${contestsVoted.map(c => {
+                                                const hasVoted = state.userVotedContests[c.id];
+                                                return `
+                                                    <div class="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                                        <span class="text-sm">${c.title}</span>
+                                                        ${hasVoted ? `
+                                                            <button onclick="viewResultsFromProfile('${c.id}')" class="text-xs bg-blue-500 text-white px-2 py-1 rounded">
+                                                                View Results
+                                                            </button>
+                                                        ` : `
+                                                            <button onclick="startVotingFromProfile('${c.id}')" class="text-xs bg-pink-500 text-white px-2 py-1 rounded">
+                                                                Start Voting
+                                                            </button>
+                                                        `}
+                                                    </div>
+                                                `;
+                                            }).join('')}
+                                        </div>
                                     ` : '<p class="text-sm text-gray-500 italic">No contests voted yet</p>'}
                                 </div>
 
