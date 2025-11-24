@@ -265,6 +265,7 @@
             filterCreator: null, // userId or null for all
             showVoterBreakdown: false,
             showUserProfile: null, // userId or null
+            showAdminDashboard: false, // Show admin dashboard modal
             compareMode: false,           // Toggle for compare mode
             selectedContests: [],          // Array of contest IDs selected for comparison
             viewingSpecificUser: null,     // Username or null - for viewing specific user's votes
@@ -1130,6 +1131,36 @@ Consider using image URLs when possible.`,
             render();
         }
 
+        function showAdminDashboard() {
+            state.showAdminDashboard = true;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeAdminDashboard() {
+            state.showAdminDashboard = false;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function viewAllByCreator(userId) {
+            state.filters.createdBy = userId;
+            state.filters.votedBy = null;
+            state.showUserProfile = null;
+            document.body.classList.remove('modal-open');
+            state.view = 'home';
+            render();
+        }
+
+        function viewAllByVoter(userId) {
+            state.filters.votedBy = userId;
+            state.filters.createdBy = null;
+            state.showUserProfile = null;
+            document.body.classList.remove('modal-open');
+            state.view = 'home';
+            render();
+        }
+
         function viewResultsFromProfile(contestId) {
             const contest = state.contests.find(c => c.id === contestId);
             if (!contest) return;
@@ -1337,13 +1368,28 @@ Consider using image URLs when possible.`,
                                         <button onclick="adjustGlobalLimit(-1)" class="bg-white/30 hover:bg-white/40 w-6 h-6 rounded flex items-center justify-center text-sm" ${state.contests.length >= state.globalContestLimit ? 'disabled' : ''}>-</button>
                                     </div>
                                 ` : ''}
-                                <div class="flex items-center gap-2 cursor-pointer hover:opacity-80" onclick="showUserProfile('${state.user.id}')">
-                                    <img src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
-                                    <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
+                                <div class="relative group">
+                                    <div class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                                        <img src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
+                                        <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                        </svg>
+                                    </div>
+                                    <div class="hidden group-hover:block absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
+                                        <button onclick="showUserProfile('${state.user.id}')" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            My Profile
+                                        </button>
+                                        ${isAdmin ? `
+                                            <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                Admin Dashboard
+                                            </button>
+                                        ` : ''}
+                                        <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200">
+                                            Logout
+                                        </button>
+                                    </div>
                                 </div>
-                                <button onclick="logout()" class="bg-white text-pink-600 px-3 py-2 rounded-lg font-semibold hover:bg-pink-50 transition text-sm">
-                                    Logout
-                                </button>
                             </div>
                         `}
                     </div>
@@ -1379,12 +1425,24 @@ Consider using image URLs when possible.`,
         }
 
         function setSortBy(sortBy) {
-            state.sortBy = sortBy;
+            state.filters.sortBy = sortBy;
             render();
         }
 
         function setFilterCreator(creatorId) {
-            state.filterCreator = creatorId === 'all' ? null : creatorId;
+            state.filters.createdBy = creatorId === 'all' ? null : creatorId;
+            render();
+        }
+
+        function setFilterVoter(voterId) {
+            state.filters.votedBy = voterId === 'all' ? null : voterId;
+            render();
+        }
+
+        function clearAllFilters() {
+            state.filters.createdBy = null;
+            state.filters.votedBy = null;
+            state.filters.sortBy = 'newest';
             render();
         }
 
@@ -1401,27 +1459,55 @@ Consider using image URLs when possible.`,
             const creators = [...new Set(state.contests.map(c => ({ id: c.createdBy, name: c.creatorName })))];
             const uniqueCreators = Array.from(new Map(creators.map(c => [c.id, c])).values());
 
+            // Get unique voters (users who have voted on contests)
+            const voters = [];
+            state.contests.forEach(contest => {
+                const results = state.mockResultsCache[contest.id];
+                if (results && results.voters) {
+                    results.voters.forEach(voter => {
+                        if (!voters.find(v => v.id === voter.id)) {
+                            voters.push({ id: voter.id, name: voter.name });
+                        }
+                    });
+                }
+            });
+
             // Filter contests
-            let filteredContests = state.filterCreator
-                ? state.contests.filter(c => c.createdBy === state.filterCreator)
-                : state.contests;
+            let filteredContests = state.contests;
+
+            // Filter by creator
+            if (state.filters.createdBy) {
+                filteredContests = filteredContests.filter(c => c.createdBy === state.filters.createdBy);
+            }
+
+            // Filter by voter
+            if (state.filters.votedBy) {
+                filteredContests = filteredContests.filter(c => {
+                    const results = state.mockResultsCache[c.id];
+                    return results && results.voters && results.voters.some(v => v.id === state.filters.votedBy);
+                });
+            }
 
             // Sort contests
             filteredContests = [...filteredContests].sort((a, b) => {
                 const voterCountA = getVoterCount(a);
                 const voterCountB = getVoterCount(b);
 
-                switch (state.sortBy) {
+                switch (state.filters.sortBy) {
+                    case 'newest':
                     case 'dateDesc':
                         return (b.createdAt || 0) - (a.createdAt || 0);
+                    case 'oldest':
                     case 'dateAsc':
                         return (a.createdAt || 0) - (b.createdAt || 0);
                     case 'titleAsc':
                         return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
                     case 'titleDesc':
                         return b.title.toLowerCase().localeCompare(a.title.toLowerCase());
+                    case 'mostVoted':
                     case 'votersDesc':
                         return voterCountB - voterCountA;
+                    case 'leastVoted':
                     case 'votersAsc':
                         return voterCountA - voterCountB;
                     case 'imagesDesc':
@@ -1451,26 +1537,60 @@ Consider using image URLs when possible.`,
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
                             <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
-                                <option value="dateDesc" ${state.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
-                                <option value="dateAsc" ${state.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
-                                <option value="titleAsc" ${state.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
-                                <option value="titleDesc" ${state.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
-                                <option value="votersDesc" ${state.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
-                                <option value="votersAsc" ${state.sortBy === 'votersAsc' ? 'selected' : ''}>Fewest Voters</option>
-                                <option value="imagesDesc" ${state.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
-                                <option value="imagesAsc" ${state.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
+                                <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
+                                <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
+                                <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
+                                <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
+                                <option value="mostVoted" ${state.filters.sortBy === 'mostVoted' || state.filters.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
+                                <option value="leastVoted" ${state.filters.sortBy === 'leastVoted' || state.filters.sortBy === 'votersAsc' ? 'selected' : ''}>Fewest Voters</option>
+                                <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
+                                <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
                             </select>
                         </div>
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
                             <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
-                                <option value="all" ${state.filterCreator === null ? 'selected' : ''}>All Creators</option>
+                                <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
                                 ${uniqueCreators.map(creator => `
-                                    <option value="${creator.id}" ${state.filterCreator === creator.id ? 'selected' : ''}>${creator.name}</option>
+                                    <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
                                 `).join('')}
                             </select>
                         </div>
+                        <div class="flex-1 min-w-[200px]">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Voter</label>
+                            <select onchange="setFilterVoter(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
+                                <option value="all" ${state.filters.votedBy === null ? 'selected' : ''}>All Voters</option>
+                                ${voters.map(voter => `
+                                    <option value="${voter.id}" ${state.filters.votedBy === voter.id ? 'selected' : ''}>${voter.name}</option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        ${state.filters.createdBy || state.filters.votedBy || state.filters.sortBy !== 'newest' ? `
+                            <div class="flex items-end">
+                                <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                    Clear All Filters
+                                </button>
+                            </div>
+                        ` : ''}
                     </div>
+
+                    ${state.filters.createdBy || state.filters.votedBy ? `
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex gap-2 items-center flex-wrap">
+                            <span class="text-sm font-medium text-blue-800">Active Filters:</span>
+                            ${state.filters.createdBy ? `
+                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                                    Creator: ${uniqueCreators.find(c => c.id === state.filters.createdBy)?.name || 'Unknown'}
+                                    <button onclick="setFilterCreator('all')" class="hover:text-blue-900">✕</button>
+                                </span>
+                            ` : ''}
+                            ${state.filters.votedBy ? `
+                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                                    Voter: ${voters.find(v => v.id === state.filters.votedBy)?.name || 'Unknown'}
+                                    <button onclick="setFilterVoter('all')" class="hover:text-blue-900">✕</button>
+                                </span>
+                            ` : ''}
+                        </div>
+                    ` : ''}
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         ${filteredContests.map(contest => {
@@ -2414,50 +2534,30 @@ Consider using image URLs when possible.`,
 
                             <div class="space-y-4">
                                 <div class="bg-gray-50 rounded-lg p-4">
-                                    <h5 class="font-bold text-gray-800 mb-2">Contests Created: ${contestsCreated.length}</h5>
+                                    <div class="flex justify-between items-center mb-2">
+                                        <h5 class="font-bold text-gray-800">Contests Created: ${contestsCreated.length}</h5>
+                                        ${contestsCreated.length > 0 ? `
+                                            <button onclick="viewAllByCreator('${userId}')" class="text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                                                View All →
+                                            </button>
+                                        ` : ''}
+                                    </div>
                                     ${contestsCreated.length > 0 ? `
-                                        <div class="space-y-2">
-                                            ${contestsCreated.map(c => `
-                                                <div class="flex items-center justify-between p-2 bg-gray-50 rounded">
-                                                    <span class="text-sm">${c.title}</span>
-                                                    <div class="flex gap-2">
-                                                        <button onclick="viewResultsFromProfile('${c.id}')" class="text-xs bg-blue-500 text-white px-2 py-1 rounded">
-                                                            View Results
-                                                        </button>
-                                                        ${canDeleteContest(c) ? `
-                                                            <button onclick="deleteContest('${c.id}')" class="text-xs bg-red-500 text-white px-2 py-1 rounded">
-                                                                Delete
-                                                            </button>
-                                                        ` : ''}
-                                                    </div>
-                                                </div>
-                                            `).join('')}
-                                        </div>
+                                        <p class="text-sm text-gray-600">Click "View All" to see all contests created by ${userInfo.username}</p>
                                     ` : '<p class="text-sm text-gray-500 italic">No contests created yet</p>'}
                                 </div>
 
                                 <div class="bg-gray-50 rounded-lg p-4">
-                                    <h5 class="font-bold text-gray-800 mb-2">Contests Voted: ${contestsVoted.length}</h5>
+                                    <div class="flex justify-between items-center mb-2">
+                                        <h5 class="font-bold text-gray-800">Contests Voted: ${contestsVoted.length}</h5>
+                                        ${contestsVoted.length > 0 ? `
+                                            <button onclick="viewAllByVoter('${userId}')" class="text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                                                View All →
+                                            </button>
+                                        ` : ''}
+                                    </div>
                                     ${contestsVoted.length > 0 ? `
-                                        <div class="space-y-2">
-                                            ${contestsVoted.map(c => {
-                                                const hasVoted = state.userVotedContests[c.id];
-                                                return `
-                                                    <div class="flex items-center justify-between p-2 bg-gray-50 rounded">
-                                                        <span class="text-sm">${c.title}</span>
-                                                        ${hasVoted ? `
-                                                            <button onclick="viewResultsFromProfile('${c.id}')" class="text-xs bg-blue-500 text-white px-2 py-1 rounded">
-                                                                View Results
-                                                            </button>
-                                                        ` : `
-                                                            <button onclick="startVotingFromProfile('${c.id}')" class="text-xs bg-pink-500 text-white px-2 py-1 rounded">
-                                                                Start Voting
-                                                            </button>
-                                                        `}
-                                                    </div>
-                                                `;
-                                            }).join('')}
-                                        </div>
+                                        <p class="text-sm text-gray-600">Click "View All" to see all contests where ${userInfo.username} voted</p>
                                     ` : '<p class="text-sm text-gray-500 italic">No contests voted yet</p>'}
                                 </div>
 
@@ -2475,6 +2575,123 @@ Consider using image URLs when possible.`,
                                         `}
                                     </div>
                                 ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAdminDashboard() {
+            if (!state.showAdminDashboard) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            // Get banned users info
+            const bannedUsersInfo = state.bannedUsers.map(userId => {
+                // Try to find user info from contests
+                const contest = state.contests.find(c => c.createdBy === userId);
+                if (contest) {
+                    return {
+                        id: userId,
+                        username: contest.creatorName,
+                        avatar: contest.creatorAvatar
+                    };
+                }
+                // Try to find from votes
+                for (const contestId in state.mockResultsCache) {
+                    const results = state.mockResultsCache[contestId];
+                    if (results && results.voters) {
+                        const voter = results.voters.find(v => v.id === userId);
+                        if (voter) {
+                            return {
+                                id: userId,
+                                username: voter.name,
+                                avatar: voter.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
+                            };
+                        }
+                    }
+                }
+                // Fallback
+                return {
+                    id: userId,
+                    username: 'User' + userId.substring(0, 4),
+                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
+                };
+            });
+
+            // Calculate admin statistics
+            const totalContests = state.contests.length;
+            const totalVotes = Object.values(state.mockResultsCache).reduce((sum, results) => {
+                return sum + (results.voters ? results.voters.length : 0);
+            }, 0);
+            const uniqueVoters = new Set();
+            Object.values(state.mockResultsCache).forEach(results => {
+                if (results.voters) {
+                    results.voters.forEach(voter => uniqueVoters.add(voter.id));
+                }
+            });
+            const totalUniqueVoters = uniqueVoters.size;
+            const totalBannedUsers = state.bannedUsers.length;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeAdminDashboard()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                        <div class="p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-2xl font-bold text-gray-800">Admin Dashboard</h3>
+                                <button onclick="closeAdminDashboard()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="space-y-4">
+                                <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
+                                    <h4 class="font-bold text-gray-800 mb-3">Statistics</h4>
+                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
+                                            <div class="text-xs text-gray-600">Total Contests</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-blue-600">${totalVotes}</div>
+                                            <div class="text-xs text-gray-600">Total Votes</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
+                                            <div class="text-xs text-gray-600">Unique Voters</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-red-600">${totalBannedUsers}</div>
+                                            <div class="text-xs text-gray-600">Banned Users</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="bg-red-50 rounded-lg p-4 border border-red-200">
+                                    <h4 class="font-bold text-red-800 mb-3">Banned Users</h4>
+                                    ${bannedUsersInfo.length > 0 ? `
+                                        <div class="space-y-2">
+                                            ${bannedUsersInfo.map(user => `
+                                                <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                                                    <div class="flex items-center gap-3">
+                                                        <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
+                                                        <div>
+                                                            <div class="font-semibold text-gray-800">${user.username}</div>
+                                                            <div class="text-xs text-gray-500">${user.id}</div>
+                                                        </div>
+                                                    </div>
+                                                    <button onclick="unbanUser('${user.id}')" class="bg-green-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
+                                                        Unban
+                                                    </button>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    ` : '<p class="text-sm text-gray-500 italic">No banned users</p>'}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2511,7 +2728,7 @@ Consider using image URLs when possible.`,
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + (state.showUserProfile ? renderUserProfileModal() : '');
+            app.innerHTML = renderHeader() + content + renderModal() + (state.showUserProfile ? renderUserProfileModal() : '') + (state.showAdminDashboard ? renderAdminDashboard() : '');
         }
 
         window.login = login;
@@ -2548,10 +2765,16 @@ Consider using image URLs when possible.`,
         window.confirmDeleteContest = confirmDeleteContest;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
+        window.setFilterVoter = setFilterVoter;
+        window.clearAllFilters = clearAllFilters;
         window.toggleImageLabels = toggleImageLabels;
         window.updateImageLabel = updateImageLabel;
         window.showUserProfile = showUserProfile;
         window.closeUserProfile = closeUserProfile;
+        window.showAdminDashboard = showAdminDashboard;
+        window.closeAdminDashboard = closeAdminDashboard;
+        window.viewAllByCreator = viewAllByCreator;
+        window.viewAllByVoter = viewAllByVoter;
         window.confirmBanUser = confirmBanUser;
         window.executeBanUser = executeBanUser;
         window.unbanUser = unbanUser;
