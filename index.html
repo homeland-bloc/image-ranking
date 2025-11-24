@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🌸 Peony - Image Contest App</title>
+
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
+
+    <!-- Apple Touch Icon for iPhone home screen -->
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="data:application/json,{%22name%22:%22Peony%22,%22short_name%22:%22Peony%22,%22icons%22:[{%22src%22:%22data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>%22,%22sizes%22:%22512x512%22,%22type%22:%22image/svg+xml%22}],%22theme_color%22:%22%23EC4899%22,%22background_color%22:%22%23ffffff%22,%22display%22:%22standalone%22}">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Lilita+One&display=swap');
@@ -256,7 +266,14 @@
             showVoterBreakdown: false,
             showUserProfile: null, // userId or null
             compareMode: false,           // Toggle for compare mode
-            selectedContests: []          // Array of contest IDs selected for comparison
+            selectedContests: [],          // Array of contest IDs selected for comparison
+            viewingSpecificUser: null,     // Username or null - for viewing specific user's votes
+            adminModeEnabled: false,       // Admin mode toggle
+            filters: {
+                createdBy: null,           // Username or null
+                votedBy: null,             // Username or null
+                sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
+            }
         };
 
         const testImageUrls = [
@@ -659,6 +676,30 @@
             }
         }
 
+        function showFileUploadWarning() {
+            showModal({
+                type: 'alert',
+                icon: '⚠️',
+                title: 'Storage Warning',
+                message: `Direct file uploads consume ~250 KB per image.
+
+With 50 images per contest, that's ~12.5 MB per contest.
+
+The app can only handle ~40 contests with uploaded files before reaching storage limits.
+
+Consider using image URLs when possible.`,
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Continue with Upload', action: 'proceedWithFileUpload', primary: true }
+                ]
+            });
+        }
+
+        function proceedWithFileUpload() {
+            closeModal();
+            addImageFromFile();
+        }
+
         function addImageFromFile() {
             const input = document.createElement('input');
             input.type = 'file';
@@ -820,6 +861,8 @@
             state.votes = userVotes;
             state.mockResults = generateMockResults(contest, userVotes);
             state.showMyVotes = false;
+            state.showVoterBreakdown = false;
+            state.viewingSpecificUser = null;
             state.view = 'results';
             render();
         }
@@ -829,6 +872,8 @@
             state.votes = {};
             state.mockResults = generateMockResults(contest, {});
             state.showMyVotes = false;
+            state.showVoterBreakdown = false;
+            state.viewingSpecificUser = null;
             state.view = 'results';
             render();
         }
@@ -898,28 +943,42 @@
         }
 
         function showVoterVotes(username) {
-            // Find the voter's votes from the mock results
-            const voterVotes = {};
-            state.mockResults.forEach(img => {
+            // Set viewing specific user
+            state.viewingSpecificUser = username;
+            state.showMyVotes = false;
+            state.showVoterBreakdown = false;
+
+            // Filter mockResults to show only images with this user's votes
+            // and update the results to show this user's score as the primary score
+            state.mockResults = state.mockResults.map(img => {
                 const vote = img.breakdown.find(v => v.username === username);
                 if (vote) {
-                    voterVotes[img.id] = vote.score;
+                    return {
+                        ...img,
+                        averageScore: vote.score,
+                        userSpecificScore: vote.score
+                    };
                 }
-            });
+                return null;
+            }).filter(img => img !== null)
+            .sort((a, b) => b.averageScore - a.averageScore);
 
-            // Temporarily show this voter's votes in "My Votes" format
-            const previousShowMyVotes = state.showMyVotes;
-            const previousVotes = state.votes;
+            render();
+        }
 
-            state.showMyVotes = true;
-            state.votes = voterVotes;
+        function viewUserVotes(username) {
+            // Alias for showVoterVotes for clarity
+            showVoterVotes(username);
+        }
 
-            // Render and then restore
-            setTimeout(() => {
-                state.showMyVotes = previousShowMyVotes;
-                state.votes = previousVotes;
-            }, 100);
-
+        function clearUserVotesView() {
+            state.viewingSpecificUser = null;
+            state.showVoterBreakdown = true;
+            // Regenerate full results
+            if (state.currentContest) {
+                const userVotes = state.userVotedContests[state.currentContest.id] || state.votes || {};
+                state.mockResults = generateMockResults(state.currentContest, userVotes);
+            }
             render();
         }
 
@@ -953,9 +1012,8 @@
             } else {
                 // Unblock the vote
                 blockedList.splice(index, 1);
-                // Regenerate results
-                delete state.mockResultsCache[contestId];
-                state.mockResults = generateMockResults(state.currentContest, state.votes);
+                // Update existing results without regenerating votes
+                updateBlockedVotesInResults(contestId, imageId, username, false);
                 render();
             }
         }
@@ -968,12 +1026,43 @@
             const contestId = state.currentContest.id;
             state.blockedVotes[contestId][imageId].push(username);
 
-            // Regenerate results to exclude blocked vote
-            delete state.mockResultsCache[contestId];
-            state.mockResults = generateMockResults(state.currentContest, state.votes);
+            // Update existing results without regenerating votes
+            updateBlockedVotesInResults(contestId, imageId, username, true);
 
             state.modalProcessing = false;
             render();
+        }
+
+        function updateBlockedVotesInResults(contestId, imageId, username, isBlocked) {
+            // Update cached results to mark vote as blocked/unblocked
+            if (state.mockResultsCache[contestId]) {
+                const results = state.mockResultsCache[contestId];
+                const imageResult = results.find(r => r.id === imageId);
+
+                if (imageResult) {
+                    // Update the breakdown to mark this vote as blocked/unblocked
+                    imageResult.breakdown = imageResult.breakdown.map(vote => {
+                        if (vote.username === username) {
+                            return { ...vote, isBlocked };
+                        }
+                        return vote;
+                    });
+
+                    // Recalculate average excluding blocked votes
+                    const validVotes = imageResult.breakdown.filter(vote => !vote.isBanned && !vote.isBlocked);
+                    const sum = validVotes.reduce((acc, vote) => acc + vote.score, 0);
+                    imageResult.averageScore = validVotes.length > 0 ? parseFloat((sum / validVotes.length).toFixed(2)) : 0;
+                    imageResult.totalVotes = validVotes.length;
+
+                    // Re-sort the results by average score
+                    state.mockResultsCache[contestId].sort((a, b) => b.averageScore - a.averageScore);
+                }
+            }
+
+            // Update current mockResults if viewing this contest
+            if (state.mockResults) {
+                state.mockResults = state.mockResultsCache[contestId];
+            }
         }
 
         function backToHome() {
@@ -989,6 +1078,9 @@
             state.currentContest = null;
             state.showBreakdownModal = null;
             state.mockResults = null;
+            state.showMyVotes = false;
+            state.showVoterBreakdown = false;
+            state.viewingSpecificUser = null;
             render();
         }
 
@@ -1000,6 +1092,9 @@
             state.currentContest = null;
             state.showBreakdownModal = null;
             state.mockResults = null;
+            state.showMyVotes = false;
+            state.showVoterBreakdown = false;
+            state.viewingSpecificUser = null;
             state.modalProcessing = false;
             render();
         }
@@ -1089,6 +1184,11 @@
             state.modalProcessing = false;
         }
 
+        function toggleAdminMode() {
+            state.adminModeEnabled = !state.adminModeEnabled;
+            render();
+        }
+
         function toggleCompareMode() {
             state.compareMode = !state.compareMode;
             if (!state.compareMode) {
@@ -1118,6 +1218,13 @@
         function exitCompareMode() {
             state.view = 'home';
             state.compareMode = true; // Keep compare mode on
+            render();
+        }
+
+        function exitCompareModeToHome() {
+            state.view = 'home';
+            state.compareMode = false;
+            state.selectedContests = [];
             render();
         }
 
@@ -1189,15 +1296,24 @@
 
         function renderHeader() {
             const showBackButton = state.view === 'results' || state.view === 'vote';
-            
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+
             return `
-                <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg">
+                <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg ${isAdmin && state.adminModeEnabled ? 'border-t-4 border-orange-500' : ''}">
                     <div class="max-w-7xl mx-auto px-3 py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
                             <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-pink-400 to-pink-600">
                                 <span class="text-xl">🌸</span>
                             </div>
                             <h1 class="text-xl font-bold">Peony</h1>
+                            ${isAdmin ? `
+                                <div class="ml-3 flex items-center gap-2 bg-white/20 px-3 py-1 rounded-lg">
+                                    <span class="text-xs font-medium">Admin Mode</span>
+                                    <div onclick="toggleAdminMode()" class="toggle-switch ${state.adminModeEnabled ? 'active' : ''}" style="width: 44px; height: 22px;">
+                                        <div class="toggle-slider" style="width: 16px; height: 16px; top: 3px; left: 3px;"></div>
+                                    </div>
+                                </div>
+                            ` : ''}
                             ${showBackButton ? `
                                 <button onclick="backToHome()" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg font-semibold transition text-sm flex items-center gap-1">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1466,11 +1582,27 @@
                             </button>
                         </div>
 
-                        <div class="upload-area rounded-xl p-4 mb-4 text-center cursor-pointer" onclick="addImageFromFile()">
-                            <div class="text-3xl mb-2">🖼️</div>
-                            <h3 class="font-bold text-gray-800 mb-1 text-sm">Click to Upload Images</h3>
-                            <p class="text-xs text-gray-600">or use the options below</p>
-                        </div>
+                        ${state.user.id === ADMIN_DISCORD_ID && state.adminModeEnabled ? `
+                            <div class="upload-area rounded-xl p-4 mb-4 text-center cursor-pointer" onclick="showFileUploadWarning()">
+                                <div class="text-3xl mb-2">🖼️</div>
+                                <h3 class="font-bold text-gray-800 mb-1 text-sm">Click to Upload Images</h3>
+                                <p class="text-xs text-gray-600">or use the options below</p>
+                            </div>
+                        ` : `
+                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                                <h3 class="font-bold text-blue-900 mb-2 flex items-center gap-2 text-sm">
+                                    <span class="text-xl">📸</span>
+                                    How to Add Images
+                                </h3>
+                                <p class="text-xs text-blue-800 mb-2">
+                                    Please use image URLs instead of uploading files.
+                                    Direct uploads consume significant storage and are reserved for the admin.
+                                </p>
+                                <p class="text-xs text-blue-800">
+                                    💡 <strong>Tip:</strong> Upload images to Discord, right-click → Copy Link, then paste the URL below!
+                                </p>
+                            </div>
+                        `}
 
                         <div class="mb-4">
                             <input type="url" id="contestUrlInput" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-sm mb-2" placeholder="Paste Discord image URL or any image URL...">
@@ -1545,13 +1677,13 @@
                 return '';
             }
 
-            // Assign colors to each contest
+            // Assign purple shades to each contest
             const contestColors = [
-                { bg: 'bg-purple-500', text: 'text-purple-500' },
-                { bg: 'bg-blue-500', text: 'text-blue-500' },
-                { bg: 'bg-green-500', text: 'text-green-500' },
-                { bg: 'bg-orange-500', text: 'text-orange-500' },
-                { bg: 'bg-pink-500', text: 'text-pink-500' }
+                { bg: 'bg-purple-500', hex: '#A855F7', text: 'text-purple-500' },
+                { bg: 'bg-purple-600', hex: '#9333EA', text: 'text-purple-600' },
+                { bg: 'bg-purple-700', hex: '#7C3AED', text: 'text-purple-700' },
+                { bg: 'bg-purple-800', hex: '#6B21A8', text: 'text-purple-800' },
+                { bg: 'bg-purple-900', hex: '#581C87', text: 'text-purple-900' }
             ];
 
             // Combine all images with contest info
@@ -1566,7 +1698,8 @@
                         ...img,
                         contestId: contest.id,
                         contestTitle: contest.title.length > 20 ? contest.title.substring(0, 20) + '...' : contest.title,
-                        contestColor: color
+                        contestColor: color,
+                        contestNumber: idx + 1
                     });
                 });
             });
@@ -1642,31 +1775,31 @@
                 <div class="max-w-7xl mx-auto px-3 py-4">
                     <div class="bg-white rounded-xl shadow-xl p-4 fade-in results-bg">
                         <div class="text-center mb-4">
-                            <div class="flex items-center justify-center gap-2 mb-2">
+                            <div class="flex items-center justify-center gap-3 mb-2">
+                                <button onclick="exitCompareModeToHome()" class="text-gray-600 hover:text-gray-800 transition text-sm flex items-center gap-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                                    </svg>
+                                    Back
+                                </button>
                                 <span class="text-4xl">📊</span>
                                 <h2 class="text-2xl font-bold text-gray-800">Contest Comparison</h2>
                             </div>
-                            <p class="text-gray-600 text-sm mb-3">Comparing ${selectedContests.length} contests</p>
 
-                            <div class="flex flex-wrap gap-2 justify-center mb-3">
+                            <div class="mb-3 inline-block text-left bg-purple-50 border border-purple-200 rounded-lg px-4 py-2">
+                                <div class="text-xs font-bold text-purple-900 mb-1">Comparing Contests:</div>
                                 ${selectedContests.map((contest, idx) => {
                                     const color = contestColors[idx % contestColors.length];
                                     return `
-                                        <div class="${color.bg} text-white px-3 py-1 rounded-full text-xs flex items-center gap-2">
+                                        <div class="text-xs text-purple-800 flex items-center gap-2">
+                                            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold" style="background: ${color.hex}; font-size: 10px;">
+                                                ${idx + 1}
+                                            </span>
                                             <span>${contest.title}</span>
-                                            <button onclick="toggleContestSelection('${contest.id}'); ${state.selectedContests.length <= 2 ? 'exitCompareMode();' : ''}" class="hover:opacity-80">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                                </svg>
-                                            </button>
                                         </div>
                                     `;
                                 }).join('')}
                             </div>
-
-                            <button onclick="exitCompareMode()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition text-sm">
-                                Change Selection
-                            </button>
 
                             <div class="mt-3 flex items-center justify-center gap-3">
                                 <button
@@ -1757,9 +1890,9 @@
                                                     <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
                                                         ${item.averageScore}
                                                     </div>
-                                                    ${item.contestColor ? `
-                                                        <div class="absolute top-1 left-1 ${item.contestColor.bg} text-white px-2 py-0.5 rounded-full text-xs font-semibold shadow-lg">
-                                                            ${item.contestTitle}
+                                                    ${item.contestNumber ? `
+                                                        <div class="absolute top-1 left-1 flex items-center justify-center w-6 h-6 rounded-full text-white font-bold shadow-lg" style="background: ${item.contestColor.hex}; font-size: ${fontSize}px;">
+                                                            ${item.contestNumber}
                                                         </div>
                                                     ` : ''}
                                                 </div>
@@ -2189,15 +2322,16 @@
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
                                                         <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:opacity-80" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')" />
-                                                        <span class="text-sm text-gray-700 truncate cursor-pointer hover:text-pink-600 ${vote.isBlocked ? 'line-through' : ''}" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')">
-                                                            ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBlocked ? ' (Blocked)' : ''}
+                                                        <span class="text-sm text-gray-700 truncate cursor-pointer hover:text-pink-600 ${vote.isBlocked ? 'opacity-50 line-through' : ''}" onclick="event.stopPropagation(); closeBreakdown(); showUserProfile('${vote.userId}')">
+                                                            ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}
                                                         </span>
-                                                        ${state.user.id === ADMIN_DISCORD_ID && !vote.isCurrentUser ? `
+                                                        ${state.user.id === ADMIN_DISCORD_ID && state.adminModeEnabled && !vote.isCurrentUser ? `
                                                             <button
                                                                 onclick="toggleBlockVote('${state.showBreakdownModal}', '${vote.username}')"
-                                                                class="ml-auto text-xs ${vote.isBlocked ? 'text-green-600' : 'text-red-600'} hover:underline"
+                                                                class="ml-auto text-base ${vote.isBlocked ? 'text-green-600' : 'text-red-600'} hover:opacity-70 transition w-8 h-8 flex items-center justify-center"
+                                                                title="${vote.isBlocked ? 'Unblock user' : 'Block user'}"
                                                             >
-                                                                ${vote.isBlocked ? '✅ Unblock' : '🚫 Block'}
+                                                                ${vote.isBlocked ? '✅' : '🚫'}
                                                             </button>
                                                         ` : ''}
                                                     </div>
