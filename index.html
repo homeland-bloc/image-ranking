@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+    <!-- PWA Configuration -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Peony">
 
     <!-- Favicon for browsers -->
     <link rel="icon" type="image/x-icon" href="/favicon/favicon.ico">
@@ -22,7 +28,7 @@
     <!-- Theme color for mobile browsers -->
     <meta name="theme-color" content="#EC4899">
 
-    <title>🌸 Peony - Image Contest App</title>
+    <title>Peony</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -193,6 +199,50 @@
             avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo'
         };
 
+        // Consistent mock users for testing
+        const mockUsers = [
+            {
+                id: 'demo-user-123',
+                username: 'DemoUser',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo'
+            },
+            {
+                id: 'user-nature-lover',
+                username: 'NatureLover',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nature'
+            },
+            {
+                id: 'user-photo-pro',
+                username: 'PhotoPro',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=photo'
+            },
+            {
+                id: 'user-art-enthusiast',
+                username: 'ArtEnthusiast',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=art'
+            },
+            {
+                id: 'user-creative-mind',
+                username: 'CreativeMind',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=creative'
+            },
+            {
+                id: 'user-pixel-master',
+                username: 'PixelMaster',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=pixel'
+            },
+            {
+                id: 'user-lens-wizard',
+                username: 'LensWizard',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=lens'
+            },
+            {
+                id: 'user-visual-artist',
+                username: 'VisualArtist',
+                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=visual'
+            }
+        ];
+
         const mockContests = [
             {
                 id: 'contest-1',
@@ -231,7 +281,7 @@
                 title: 'Wildlife Photography Contest',
                 isLocked: false,
                 resultsPublic: true,
-                createdBy: 'other-user',
+                createdBy: 'user-nature-lover',
                 creatorName: 'NatureLover',
                 creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nature',
                 createdAt: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1 day ago
@@ -268,11 +318,12 @@
             shuffledImages: [],
             nextContestId: 4, // Start at 4 since we have 3 mock contests
             bannedUsers: [], // Array of user IDs who are banned from app
-            allUsers: [], // Track all users who have logged in
+            allUsers: [...mockUsers], // Track all users who have logged in - initialized with mock users
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             showJoinModal: false, // Show join contests modal
             joinedContests: [], // Array of contest IDs joined with current contest
+            mergedContestMap: [], // Map of contest numbers to titles for merged view
             filters: {
                 createdBy: null,           // Username or null
                 sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
@@ -335,13 +386,11 @@
         }
 
         function generateFixedDemoVoters(contestId, imageId) {
-            const demoVoters = [
-                { name: 'Alice', seed: 1 },
-                { name: 'Bob', seed: 2 },
-                { name: 'Charlie', seed: 3 },
-                { name: 'Diana', seed: 4 },
-                { name: 'Eve', seed: 5 }
-            ];
+            // Use mockUsers for consistent demo voters (skip first user which is DemoUser/admin)
+            const demoVoters = mockUsers.slice(1).map((user, index) => ({
+                ...user,
+                seed: index + 1
+            }));
 
             // Extract numeric part from contestId (e.g., "contest-1" -> 1)
             const contestNum = typeof contestId === 'string'
@@ -353,9 +402,9 @@
                 ? parseInt(imageId) || 0
                 : imageId;
 
-            // Generate consistent number of voters (3-5) based on contest
+            // Generate consistent number of voters (3-6) based on contest
             const voterCountSeed = contestNum * 100;
-            const voterCount = 3 + Math.floor(seededRandom(voterCountSeed) * 3); // 3-5 voters
+            const voterCount = 3 + Math.floor(seededRandom(voterCountSeed) * 4); // 3-6 voters
 
             return demoVoters.slice(0, voterCount).map(voter => {
                 // Generate consistent score (1-5) based on contest + image + voter
@@ -363,11 +412,11 @@
                 const score = 1 + Math.floor(seededRandom(scoreSeed) * 5); // 1-5
 
                 return {
-                    username: voter.name,
-                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${voter.name}`,
+                    username: voter.username,
+                    avatar: voter.avatar,
                     score: score,
                     isCurrentUser: false,
-                    userId: `demo-${voter.seed}`
+                    userId: voter.id
                 };
             });
         }
@@ -537,6 +586,7 @@
             state.userVotedContests[state.currentContest.id] = {...state.votes};
             // Clear cache to ensure user's votes are included in results
             delete state.mockResultsCache[state.currentContest.id];
+            state.joinedContests = []; // Clear merged contests when viewing single contest results
             state.view = 'results';
             state.mockResults = generateMockResults(state.currentContest, state.votes);
             state.modalProcessing = false;
@@ -559,7 +609,7 @@
 
         function deleteContest(contestId) {
             showConfirm(
-                '🗑️ Delete Contest\nThis will permanently delete the contest and all its data.\n⚠️ This action cannot be undone.',
+                'Delete Contest\n\nThis will permanently delete the contest and all its data.\n\n⚠️ This action cannot be undone.',
                 `confirmDeleteContest_${contestId}`,
                 '🗑️'
             );
@@ -640,7 +690,7 @@
 
         function cancelCreateContest() {
             showConfirm(
-                '⚠️ Discard Progress\nYour progress will be lost if you proceed.\nAre you sure?',
+                'Discard Progress\n\nYour progress will be lost if you proceed.\n\nAre you sure?',
                 'confirmCancelCreate',
                 '⚠️'
             );
@@ -667,6 +717,7 @@
 
             // Convert Discord CDN URLs to media.discordapp.net for compatibility
             url = url.replace(/cdn\.discordapp\.com/g, 'media.discordapp.net');
+            url = url.replace(/images-ext-\d+\.discordapp\.net/g, 'media.discordapp.net');
 
             if (state.newContest.images.length >= 50) {
                 showAlert('Maximum 50 images per contest!', '❌');
@@ -694,7 +745,7 @@
 
         function removeContestImage(index) {
             showConfirm(
-                '⚠️ Remove Image\nAre you sure you want to remove this image from the contest?',
+                'Remove Image\n\nAre you sure you want to remove this image from the contest?',
                 `confirmRemoveImage_${index}`,
                 '⚠️'
             );
@@ -718,6 +769,7 @@
             if (state.newContest.images[index]) {
                 // Convert Discord CDN URLs to media.discordapp.net for compatibility
                 label = label.replace(/cdn\.discordapp\.com/g, 'media.discordapp.net');
+                label = label.replace(/images-ext-\d+\.discordapp\.net/g, 'media.discordapp.net');
                 state.newContest.images[index].label = label;
             }
         }
@@ -752,39 +804,57 @@
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 img.crossOrigin = 'anonymous';
+                let timedOut = false;
 
-                img.onload = () => resolve(img);
+                // Network timeout with specific message
+                const timeoutId = setTimeout(() => {
+                    timedOut = true;
+                    reject(new Error('⏱️ Network timeout: Image took too long to load. Possible causes: slow connection, large file size, or server issues. Try a different image or check your internet connection.'));
+                }, 10000);
+
+                img.onload = () => {
+                    if (!timedOut) {
+                        clearTimeout(timeoutId);
+                        resolve(img);
+                    }
+                };
 
                 img.onerror = () => {
+                    if (timedOut) return; // Already handled by timeout
+                    clearTimeout(timeoutId);
+
                     // Provide specific error details
-                    let errorMsg = 'Failed to load image. ';
+                    let errorMsg = '❌ Failed to load image.\n\n';
 
                     // Check URL validity
                     try {
                         new URL(url);
                     } catch {
-                        reject(new Error(errorMsg + 'Invalid URL format.'));
+                        reject(new Error(errorMsg + '🔗 Invalid URL format. Please enter a valid image URL.'));
                         return;
                     }
 
-                    // Provide likely causes
+                    // Check file extension
+                    const extension = url.split('?')[0].split('.').pop().toLowerCase();
+                    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'];
+
+                    // Provide likely causes based on URL analysis
                     if (url.includes('discord')) {
-                        errorMsg += 'Discord CDN link may be expired or invalid.';
+                        errorMsg += '💬 Discord CDN issue: The link may be expired, deleted, or have restricted access. Try re-uploading the image to Discord and getting a fresh link.';
                     } else if (url.startsWith('http://')) {
-                        errorMsg += 'HTTP URLs may have CORS issues. Try HTTPS.';
+                        errorMsg += '🔒 CORS/Security issue: HTTP URLs often have cross-origin restrictions. Try using an HTTPS URL instead, or upload the image to a public image host.';
+                    } else if (!validExtensions.includes(extension)) {
+                        errorMsg += '📁 Unsupported format: The URL doesn\'t end with a recognized image extension (.jpg, .png, .gif, .webp). Make sure you\'re linking directly to an image file.';
+                    } else if (url.includes('imgur') && !url.includes('i.imgur')) {
+                        errorMsg += '🖼️ Imgur link issue: Use direct image links (i.imgur.com) instead of gallery links. Right-click the image and select "Copy image address".';
                     } else {
-                        errorMsg += 'Possible causes: CORS restrictions, broken link, unsupported format, or the image no longer exists.';
+                        errorMsg += '🌐 Possible causes:\n• CORS restrictions from the image host\n• Broken or expired link\n• Image was deleted or moved\n• Server is down or blocking requests\n• Private/restricted access image\n\nTry uploading to a public image host like Imgur or Discord.';
                     }
 
                     reject(new Error(errorMsg));
                 };
 
                 img.src = url;
-
-                // Network timeout with specific message
-                setTimeout(() => {
-                    reject(new Error('Network timeout: Image took too long to load. Check your connection or try a different image.'));
-                }, 10000);
             });
         }
 
@@ -898,7 +968,7 @@
 
         function cancelVoting() {
             showConfirm(
-                '⚠️ Discard Progress\nYour progress will be lost if you proceed.\nAre you sure?',
+                'Discard Progress\n\nYour progress will be lost if you proceed.\n\nAre you sure?',
                 'confirmCancelVoting',
                 '⚠️'
             );
@@ -911,7 +981,7 @@
                 return;
             }
             showConfirm(
-                '✅ Submit Votes\nYour votes will be locked and cannot be changed after submission.\n⚠️ This action cannot be undone.',
+                'Submit Votes\n\nYour votes will be locked and cannot be changed after submission.\n\n⚠️ This action cannot be undone.',
                 'confirmSubmitVotes',
                 '✅'
             );
@@ -973,7 +1043,7 @@
         function backToHome() {
             if (state.view === 'vote' && !state.hasSubmitted) {
                 showConfirm(
-                    '⚠️ Discard Progress\nYour progress will be lost if you proceed.\nAre you sure?',
+                    'Discard Progress\n\nYour progress will be lost if you proceed.\n\nAre you sure?',
                     'confirmBackToHome',
                     '⚠️'
                 );
@@ -1036,17 +1106,6 @@
             render();
         }
 
-        function showUserList() {
-            state.showUserList = true;
-            document.body.classList.add('modal-open');
-            render();
-        }
-
-        function closeUserList() {
-            state.showUserList = false;
-            document.body.classList.remove('modal-open');
-            render();
-        }
 
         function viewAllByCreator(userId) {
             state.filters.createdBy = userId;
@@ -1070,7 +1129,7 @@
 
         function confirmBanUser(userId) {
             showConfirm(
-                '🚫 Ban User\nThis user will not be able to create contests or vote.\n⚠️ This action can be undone later.',
+                'Ban User\n\nThis user will not be able to create contests or vote.\n\n⚠️ This action can be undone later.',
                 `executeBanUser_${userId}`,
                 '🚫'
             );
@@ -1124,11 +1183,26 @@
         }
 
         function generateMergedResults() {
+            // Create contest numbering map
+            const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
+            const contestNumberMap = {};
+            allContests.forEach((contest, index) => {
+                contestNumberMap[contest.id] = index + 1;
+            });
+
+            // Store the contest map for display in results
+            state.mergedContestMap = allContests.map((contest, index) => ({
+                number: index + 1,
+                title: contest.title,
+                id: contest.id
+            }));
+
             // Get results from current contest
             const currentResults = generateMockResults(state.currentContest, state.votes).map(img => ({
                 ...img,
                 contestId: state.currentContest.id,
-                contestTitle: state.currentContest.title
+                contestTitle: state.currentContest.title,
+                contestNumber: contestNumberMap[state.currentContest.id]
             }));
 
             // Get results from joined contests
@@ -1140,7 +1214,8 @@
                 return generateMockResults(contest, userVotes).map(img => ({
                     ...img,
                     contestId: contest.id,
-                    contestTitle: contest.title
+                    contestTitle: contest.title,
+                    contestNumber: contestNumberMap[contest.id]
                 }));
             });
 
@@ -1249,11 +1324,8 @@
                                     </div>
                                     <div class="hidden group-hover:block absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
                                         ${isAdmin ? `
-                                            <button onclick="showUserList()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                                👥 User List
-                                            </button>
                                             <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                                Admin Dashboard
+                                                ⚙️ Admin Dashboard
                                             </button>
                                         ` : ''}
                                         <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
@@ -1444,7 +1516,23 @@
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                                    ${contest.isLocked ? `
+                                    ${contest.createdBy === state.user.id ? `
+                                        <button
+                                            onclick='toggleContestLock("${contest.id}")'
+                                            class="absolute top-3 right-3 p-2 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'}"
+                                            title="${contest.isLocked ? 'Click to unlock contest' : 'Click to lock contest'}"
+                                        >
+                                            ${contest.isLocked ? `
+                                                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                                </svg>
+                                            ` : `
+                                                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
+                                                </svg>
+                                            `}
+                                        </button>
+                                    ` : contest.isLocked ? `
                                         <div class="absolute top-3 right-3 bg-gray-800 text-white p-2 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
@@ -1456,23 +1544,6 @@
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
                                                 <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
-                                                ${contest.createdBy === state.user.id ? `
-                                                    <button
-                                                        onclick='toggleContestLock("${contest.id}")'
-                                                        class="flex-shrink-0 p-1 hover:bg-gray-100 rounded transition"
-                                                        title="${contest.isLocked ? 'Unlock contest' : 'Lock contest'}"
-                                                    >
-                                                        ${contest.isLocked ? `
-                                                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                                                            </svg>
-                                                        ` : `
-                                                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
-                                                            </svg>
-                                                        `}
-                                                    </button>
-                                                ` : ''}
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by ${contest.creatorName}</span>
@@ -1804,7 +1875,18 @@
                             </div>
                             <p class="text-gray-600 text-sm mb-1">${state.showMyVotes ? 'Your votes only' : 'Average votes from all participants'}</p>
                             ${state.joinedContests.length > 0 ? `
-                                <p class="text-xs text-purple-600 font-semibold mb-1">🔗 Viewing ${state.joinedContests.length + 1} merged contests</p>
+                                <p class="text-xs text-purple-600 font-semibold mb-2">🔗 Viewing ${state.joinedContests.length + 1} merged contests</p>
+                                <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2 max-w-2xl mx-auto">
+                                    <p class="text-xs font-semibold text-purple-800 mb-2">Contest Legend:</p>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
+                                        ${state.mergedContestMap.map(contest => `
+                                            <div class="flex items-center gap-2">
+                                                <span class="bg-purple-600 text-white px-2 py-0.5 rounded font-bold min-w-[24px] text-center">#${contest.number}</span>
+                                                <span class="text-gray-700 truncate">${contest.title}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
                             ` : ''}
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
@@ -1899,9 +1981,9 @@
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
-                                                    ${state.joinedContests.length > 0 && item.contestTitle ? `
-                                                        <div class="absolute top-0 left-0 right-0 bg-purple-600 text-white text-center py-0.5 font-semibold truncate px-1" style="font-size: ${Math.max(8, fontSize * 0.75)}px;">
-                                                            ${item.contestTitle}
+                                                    ${state.joinedContests.length > 0 && item.contestNumber ? `
+                                                        <div class="absolute top-0 left-0 bg-purple-600 text-white text-center font-bold px-2 py-0.5 rounded-br" style="font-size: ${Math.max(10, fontSize)}px;">
+                                                            #${item.contestNumber}
                                                         </div>
                                                     ` : ''}
                                                 </div>
@@ -1930,9 +2012,9 @@
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
-                                                    ${state.joinedContests.length > 0 && item.contestTitle ? `
-                                                        <div class="absolute top-0 left-0 right-0 bg-purple-600 text-white text-center py-0.5 font-semibold truncate px-1" style="font-size: ${Math.max(8, fontSize * 0.75)}px;">
-                                                            ${item.contestTitle}
+                                                    ${state.joinedContests.length > 0 && item.contestNumber ? `
+                                                        <div class="absolute top-0 left-0 bg-purple-600 text-white text-center font-bold px-2 py-0.5 rounded-br" style="font-size: ${Math.max(10, fontSize)}px;">
+                                                            #${item.contestNumber}
                                                         </div>
                                                     ` : ''}
                                                     <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
@@ -1966,9 +2048,9 @@
             });
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeBreakdown()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col modal-content" onclick="event.stopPropagation()">
-                        <div class="p-4 sticky top-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
                                 <h3 class="text-xl font-bold text-gray-800">Vote Breakdown</h3>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
@@ -2140,68 +2222,45 @@
                                         </div>
                                     ` : '<p class="text-sm text-gray-500 italic">No banned users</p>'}
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
 
-        function renderUserList() {
-            if (!state.showUserList) return '';
-
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (!isAdmin) return '';
-
-            return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeUserList()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
-                        <div class="p-6">
-                            <div class="flex justify-between items-center mb-4">
-                                <h3 class="text-2xl font-bold text-gray-800">👥 User List</h3>
-                                <button onclick="closeUserList()" class="text-gray-500 hover:text-gray-700">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
-                            </div>
-
-                            <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
-                                <h4 class="font-bold text-gray-800 mb-3">All Logged-In Users</h4>
-                                ${state.allUsers.length > 0 ? `
-                                    <div class="space-y-2">
-                                        ${state.allUsers.map(user => {
-                                            const isBanned = state.bannedUsers.includes(user.id);
-                                            return `
-                                                <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
-                                                    <div class="flex items-center gap-3">
-                                                        <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
-                                                        <div>
-                                                            <div class="font-semibold text-gray-800">${user.username}</div>
-                                                            <div class="text-xs text-gray-500">${user.id}</div>
-                                                            ${isBanned ? '<span class="text-xs text-red-600 font-semibold">BANNED</span>' : ''}
+                                <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                                    <h4 class="font-bold text-blue-800 mb-3">👥 All Users</h4>
+                                    ${state.allUsers.length > 0 ? `
+                                        <div class="space-y-2 max-h-96 overflow-y-auto">
+                                            ${state.allUsers.map(user => {
+                                                const isBanned = state.bannedUsers.includes(user.id);
+                                                return `
+                                                    <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
+                                                        <div class="flex items-center gap-3">
+                                                            <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
+                                                            <div>
+                                                                <div class="font-semibold text-gray-800">${user.username}</div>
+                                                                <div class="text-xs text-gray-500">${user.id}</div>
+                                                                ${isBanned ? '<span class="text-xs text-red-600 font-semibold">BANNED</span>' : ''}
+                                                            </div>
                                                         </div>
+                                                        ${isBanned ? `
+                                                            <button onclick="unbanUser('${user.id}')" class="bg-green-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
+                                                                Unban
+                                                            </button>
+                                                        ` : `
+                                                            <button onclick="confirmBanUser('${user.id}')" class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                                                Ban
+                                                            </button>
+                                                        `}
                                                     </div>
-                                                    ${isBanned ? `
-                                                        <button onclick="unbanUser('${user.id}')" class="bg-green-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
-                                                            Unban
-                                                        </button>
-                                                    ` : `
-                                                        <button onclick="confirmBanUser('${user.id}')" class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
-                                                            Ban
-                                                        </button>
-                                                    `}
-                                                </div>
-                                            `;
-                                        }).join('')}
-                                    </div>
-                                ` : '<p class="text-sm text-gray-500 italic">No users have logged in yet</p>'}
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                    ` : '<p class="text-sm text-gray-500 italic">No users have logged in yet</p>'}
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
             `;
         }
+
 
         function renderJoinContestsModal() {
             if (!state.showJoinModal) return '';
@@ -2303,7 +2362,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showUserList ? renderUserList() : '') + (state.showJoinModal ? renderJoinContestsModal() : '');
+            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showJoinModal ? renderJoinContestsModal() : '');
         }
 
         window.login = login;
@@ -2345,8 +2404,6 @@
         window.updateImageLabel = updateImageLabel;
         window.showAdminDashboard = showAdminDashboard;
         window.closeAdminDashboard = closeAdminDashboard;
-        window.showUserList = showUserList;
-        window.closeUserList = closeUserList;
         window.showJoinContests = showJoinContests;
         window.closeJoinContests = closeJoinContests;
         window.toggleJoinContest = toggleJoinContest;
