@@ -30,6 +30,7 @@
 
     <title>Peony</title>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -226,114 +227,19 @@
     <div id="app"></div>
 
     <script>
-        const ADMIN_DISCORD_ID = 'demo-user-123';  // Changed to match DemoUser for testing
-        
-        const mockUser = {
-            id: 'demo-user-123',
-            username: 'DemoUser',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo'
-        };
+        // Supabase Configuration
+        const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        // Consistent mock users for testing
-        const mockUsers = [
-            {
-                id: 'demo-user-123',
-                username: 'DemoUser',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo'
-            },
-            {
-                id: 'user-nature-lover',
-                username: 'NatureLover',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nature'
-            },
-            {
-                id: 'user-photo-pro',
-                username: 'PhotoPro',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=photo'
-            },
-            {
-                id: 'user-art-enthusiast',
-                username: 'ArtEnthusiast',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=art'
-            },
-            {
-                id: 'user-creative-mind',
-                username: 'CreativeMind',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=creative'
-            },
-            {
-                id: 'user-pixel-master',
-                username: 'PixelMaster',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=pixel'
-            },
-            {
-                id: 'user-lens-wizard',
-                username: 'LensWizard',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=lens'
-            },
-            {
-                id: 'user-visual-artist',
-                username: 'VisualArtist',
-                avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=visual'
-            }
-        ];
-
-        const mockContests = [
-            {
-                id: 'contest-1',
-                title: 'Spring Garden Photography',
-                isLocked: false,
-                resultsPublic: true,
-                createdBy: 'demo-user-123',
-                creatorName: 'DemoUser',
-                creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo',
-                createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000, // 7 days ago
-                images: [
-                    { id: 1, url: 'https://images.unsplash.com/photo-1490750967868-88aa4486c946?w=800', author: null, isFileUpload: false },
-                    { id: 2, url: 'https://images.unsplash.com/photo-1464297162577-f5295c892194?w=800', author: null, isFileUpload: false },
-                    { id: 3, url: 'https://images.unsplash.com/photo-1466781783364-36c955e42a7f?w=800', author: null, isFileUpload: false },
-                    { id: 4, url: 'https://images.unsplash.com/photo-1455659817273-f96807779a8a?w=800', author: null, isFileUpload: false },
-                    { id: 5, url: 'https://images.unsplash.com/photo-1463852247062-1bbca38f7805?w=800', author: null, isFileUpload: false }
-                ]
-            },
-            {
-                id: 'contest-2',
-                title: 'Urban Architecture Challenge',
-                isLocked: true,
-                resultsPublic: false,
-                createdBy: 'demo-user-123',
-                creatorName: 'DemoUser',
-                creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo',
-                createdAt: Date.now() - 3 * 24 * 60 * 60 * 1000, // 3 days ago
-                images: [
-                    { id: 6, url: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800', author: null, isFileUpload: false },
-                    { id: 7, url: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?w=800', author: null, isFileUpload: false },
-                    { id: 8, url: 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800', author: null, isFileUpload: false }
-                ]
-            },
-            {
-                id: 'contest-3',
-                title: 'Wildlife Photography Contest',
-                isLocked: false,
-                resultsPublic: true,
-                createdBy: 'user-nature-lover',
-                creatorName: 'NatureLover',
-                creatorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nature',
-                createdAt: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1 day ago
-                images: [
-                    { id: 9, url: 'https://images.unsplash.com/photo-1564349683136-77e08dba1ef7?w=800', author: null, isFileUpload: false },
-                    { id: 10, url: 'https://images.unsplash.com/photo-1437622368342-7a3d73a34c8f?w=800', author: null, isFileUpload: false },
-                    { id: 11, url: 'https://images.unsplash.com/photo-1441057206919-63d19fac2369?w=800', author: null, isFileUpload: false },
-                    { id: 12, url: 'https://images.unsplash.com/photo-1456926631375-92c8ce872def?w=800', author: null, isFileUpload: false }
-                ]
-            }
-        ];
+        // Admin Discord ID - Replace with your actual Discord user ID after first login
+        const ADMIN_DISCORD_ID = 'YOUR_DISCORD_USER_ID_HERE';
 
         let state = {
             isLoggedIn: false,
             user: null,
             view: 'home',
-            contests: mockContests,
+            contests: [],
             currentContest: null,
             currentImageIndex: 0,
             votes: {},
@@ -352,9 +258,9 @@
             showMyVotes: false,  // Deprecated, use resultsView
             resultsView: 'average',  // 'average', 'myVotes', or 'byVoter'
             shuffledImages: [],
-            nextContestId: 4, // Start at 4 since we have 3 mock contests
+            nextContestId: 1,
             bannedUsers: [], // Array of user IDs who are banned from app
-            allUsers: [...mockUsers], // Track all users who have logged in - initialized with mock users
+            allUsers: [], // Track all users who have logged in
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             showJoinModal: false, // Show join contests modal
@@ -364,7 +270,9 @@
                 createdBy: null,           // Username or null
                 sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
             },
-            toast: null // Toast notification { message, icon }
+            toast: null, // Toast notification { message, icon }
+            isLoading: false,
+            loadingMessage: ''
         };
 
 
@@ -375,6 +283,18 @@
                 [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
             }
             return newArray;
+        }
+
+        function setLoading(message) {
+            state.isLoading = true;
+            state.loadingMessage = message;
+            render();
+        }
+
+        function clearLoading() {
+            state.isLoading = false;
+            state.loadingMessage = '';
+            render();
         }
 
         function getScoreColor(score) {
@@ -458,55 +378,71 @@
             });
         }
 
-        function generateMockResults(contest, userVotes) {
-            // Check cache first
-            const cacheKey = contest.id;
-            if (state.mockResultsCache[cacheKey]) {
-                return state.mockResultsCache[cacheKey];
+        async function loadResults() {
+            const { data: votes, error } = await supabase
+                .from('votes')
+                .select(`
+                    *,
+                    voter:users!votes_user_id_fkey (username, avatar)
+                `)
+                .eq('contest_id', state.currentContest.id);
+
+            if (error) {
+                console.error('Error loading results:', error);
+                return;
             }
 
-            // Generate fixed demo voters for consistency
-            const hasVoted = Object.keys(userVotes).length > 0;
-            const demoVoters = generateFixedDemoVoters(contest.id, 0); // Same demo voters for all images in contest
-
-            const results = contest.images.map(img => {
-                // Get fixed scores for this specific image
-                const imageVoters = generateFixedDemoVoters(contest.id, img.id);
-
-                let breakdown = hasVoted ? [
-                    {
-                        username: state.user.username,
-                        avatar: state.user.avatar,
-                        score: userVotes[img.id] || 3,
-                        isCurrentUser: true,
-                        userId: state.user.id
-                    },
-                    ...imageVoters
-                ] : imageVoters;
+            // Calculate averages
+            const imageScores = {};
+            votes.forEach(vote => {
+                if (!imageScores[vote.image_id]) {
+                    imageScores[vote.image_id] = {
+                        scores: [],
+                        breakdown: []
+                    };
+                }
 
                 // Mark banned users
-                breakdown = breakdown.map(vote => {
-                    const isBanned = state.bannedUsers.includes(vote.userId);
-                    return { ...vote, isBanned };
-                });
+                const isBanned = state.bannedUsers.includes(vote.user_id);
 
-                // Calculate average excluding banned votes
-                const validVotes = breakdown.filter(vote => !vote.isBanned);
-                const sum = validVotes.reduce((acc, vote) => acc + vote.score, 0);
-                const averageScore = validVotes.length > 0 ? parseFloat((sum / validVotes.length).toFixed(2)) : 0;
+                imageScores[vote.image_id].scores.push(vote.score);
+                imageScores[vote.image_id].breakdown.push({
+                    username: vote.voter.username,
+                    avatar: vote.voter.avatar,
+                    score: vote.score,
+                    isCurrentUser: vote.user_id === state.user?.id,
+                    userId: vote.user_id,
+                    isBanned: isBanned
+                });
+            });
+
+            state.mockResults = state.currentContest.images.map(img => {
+                const imageData = imageScores[img.id] || { scores: [], breakdown: [] };
+
+                // Filter out banned votes for average calculation
+                const validBreakdown = imageData.breakdown.filter(vote => !vote.isBanned);
+                const validScores = validBreakdown.map(vote => vote.score);
+                const sum = validScores.reduce((acc, s) => acc + s, 0);
+                const average = validScores.length > 0 ? parseFloat((sum / validScores.length).toFixed(2)) : 0;
 
                 return {
                     ...img,
-                    averageScore,
-                    totalVotes: validVotes.length,
-                    breakdown
+                    averageScore: average,
+                    totalVotes: validScores.length,
+                    breakdown: imageData.breakdown
                 };
             }).sort((a, b) => b.averageScore - a.averageScore);
+        }
 
-            // Cache results
-            state.mockResultsCache[cacheKey] = results;
-
-            return results;
+        // Temporary stub for merge functionality - returns empty results
+        // TODO: Implement proper async merge functionality with database queries
+        function generateMockResults(contest, userVotes) {
+            return contest.images.map(img => ({
+                ...img,
+                averageScore: 0,
+                totalVotes: 0,
+                breakdown: []
+            }));
         }
 
         function groupByScoreRange(results) {
@@ -689,17 +625,40 @@
             });
         }
 
-        function confirmSubmitVotes() {
+        async function confirmSubmitVotes() {
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
+
+            const votesToInsert = [];
+            state.shuffledImages.forEach(img => {
+                if (state.votes[img.id]) {
+                    votesToInsert.push({
+                        user_id: state.user.id,
+                        image_id: img.id,
+                        contest_id: state.currentContest.id,
+                        score: state.votes[img.id]
+                    });
+                }
+            });
+
+            const { error } = await supabase
+                .from('votes')
+                .upsert(votesToInsert, {
+                    onConflict: 'user_id,image_id'
+                });
+
+            if (error) {
+                showAlert('Failed to submit votes: ' + error.message, '❌');
+                state.modalProcessing = false;
+                return;
+            }
+
+            await loadUserVotes();
             state.hasSubmitted = true;
-            state.userVotedContests[state.currentContest.id] = {...state.votes};
-            // Clear cache to ensure user's votes are included in results
-            delete state.mockResultsCache[state.currentContest.id];
             state.joinedContests = []; // Clear merged contests when viewing single contest results
             state.view = 'results';
-            state.mockResults = generateMockResults(state.currentContest, state.votes);
+            await loadResults();
             state.modalProcessing = false;
             render();
         }
@@ -715,7 +674,13 @@
         }
 
         function canDeleteContest(contest) {
-            return state.user && contest.createdBy === state.user.id;
+            if (!state.user) return false;
+
+            // Check if user is contest creator
+            if (contest.createdBy === state.user.id) return true;
+
+            // Admin check
+            return state.user.id === ADMIN_DISCORD_ID;
         }
 
         function deleteContest(contestId) {
@@ -726,21 +691,41 @@
             );
         }
 
-        function confirmDeleteContest(contestId) {
+        async function confirmDeleteContest(contestId) {
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
-            
+
             const contest = state.contests.find(c => c.id === contestId);
-            const hasFileUploads = contest && contest.images.some(img => img.isFileUpload);
-            
-            if (hasFileUploads) {
-                console.log('Would delete uploaded files from storage');
+
+            // Delete uploaded files from storage
+            if (contest) {
+                const uploadedImages = contest.images.filter(img => img.isFileUpload);
+                for (const img of uploadedImages) {
+                    // Extract file path from URL
+                    const urlParts = img.url.split('/contest-images/');
+                    if (urlParts.length > 1) {
+                        await supabase.storage
+                            .from('contest-images')
+                            .remove([urlParts[1]]);
+                    }
+                }
             }
-            
-            state.contests = state.contests.filter(c => c.id !== contestId);
+
+            // Delete contest (cascades to images and votes)
+            const { error } = await supabase
+                .from('contests')
+                .delete()
+                .eq('id', contestId);
+
+            if (error) {
+                showAlert('Failed to delete contest: ' + error.message, '❌');
+                state.modalProcessing = false;
+                return;
+            }
+
+            await loadContests();
             delete state.userVotedContests[contestId];
-            
             state.modalProcessing = false;
             showAlert('Contest deleted successfully!', '✅');
         }
@@ -885,29 +870,81 @@
             }
         }
 
-        function finishCreateContest() {
+        async function finishCreateContest() {
             if (state.newContest.images.length === 0) {
                 showAlert('Add at least one image!', '❌');
                 return;
             }
-            
-            const newContest = {
-                id: 'contest-' + state.nextContestId,
-                title: state.newContest.title,
-                isLocked: false,
-                resultsPublic: true,
-                createdBy: state.user.id,
-                creatorName: state.user.username,
-                creatorAvatar: state.user.avatar,
-                createdAt: Date.now(),
-                labelsEnabled: state.newContest.labelsEnabled,
-                images: state.newContest.images
-            };
 
-            state.contests.unshift(newContest);
-            state.nextContestId++;
-            state.newContest = { title: '', images: [], labelsEnabled: false };
+            setLoading('Creating contest...');
+
+            const contestId = 'contest-' + Date.now();
+
+            // Insert contest
+            const { error: contestError } = await supabase
+                .from('contests')
+                .insert({
+                    id: contestId,
+                    title: state.newContest.title,
+                    created_by: state.user.id
+                });
+
+            if (contestError) {
+                clearLoading();
+                showAlert('Failed to create contest: ' + contestError.message, '❌');
+                return;
+            }
+
+            // Upload files and insert images
+            const imagesToInsert = [];
+            for (let i = 0; i < state.newContest.images.length; i++) {
+                const img = state.newContest.images[i];
+                let finalUrl = img.url;
+
+                if (img.isFileUpload) {
+                    // Upload to Supabase storage
+                    const blob = await fetch(img.url).then(r => r.blob());
+                    const fileName = `${state.user.id}/${contestId}/${Date.now()}-${i}.jpg`;
+
+                    const { data: uploadData, error: uploadError } = await supabase.storage
+                        .from('contest-images')
+                        .upload(fileName, blob);
+
+                    if (uploadError) {
+                        console.error('Upload error:', uploadError);
+                        continue;
+                    }
+
+                    const { data: { publicUrl } } = supabase.storage
+                        .from('contest-images')
+                        .getPublicUrl(fileName);
+
+                    finalUrl = publicUrl;
+                }
+
+                imagesToInsert.push({
+                    contest_id: contestId,
+                    url: finalUrl,
+                    is_file_upload: img.isFileUpload,
+                    author: img.author,
+                    image_order: i
+                });
+            }
+
+            const { error: imagesError } = await supabase
+                .from('images')
+                .insert(imagesToInsert);
+
+            if (imagesError) {
+                clearLoading();
+                showAlert('Failed to add images: ' + imagesError.message, '❌');
+                return;
+            }
+
+            state.newContest = { title: '', images: [] };
+            await loadContests();
             state.view = 'home';
+            clearLoading();
             showAlert('Contest created successfully!', '✅');
         }
 
@@ -969,27 +1006,116 @@
             });
         }
 
-        function login() {
-            state.isLoggedIn = true;
-            state.user = mockUser;
-
-            // Track user in allUsers if not already there
-            if (!state.allUsers.find(u => u.id === mockUser.id)) {
-                state.allUsers.push({
-                    id: mockUser.id,
-                    username: mockUser.username,
-                    avatar: mockUser.avatar
-                });
+        async function login() {
+            const { data, error } = await supabase.auth.signInWithOAuth({
+                provider: 'discord',
+                options: {
+                    redirectTo: window.location.origin
+                }
+            });
+            if (error) {
+                showAlert('Login failed: ' + error.message, '❌');
             }
-
-            render();
         }
 
-        function logout() {
+        async function logout() {
+            await supabase.auth.signOut();
             state.isLoggedIn = false;
             state.user = null;
             state.view = 'home';
             render();
+        }
+
+        async function handleAuthSession(session) {
+            const discordUser = session.user.user_metadata;
+
+            // Upsert user in database
+            const { error } = await supabase
+                .from('users')
+                .upsert({
+                    id: session.user.id,
+                    username: discordUser.custom_claims?.global_name || discordUser.name || 'User',
+                    avatar: discordUser.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.id}`
+                });
+
+            if (!error) {
+                state.isLoggedIn = true;
+                state.user = {
+                    id: session.user.id,
+                    username: discordUser.custom_claims?.global_name || discordUser.name || 'User',
+                    avatar: discordUser.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.id}`
+                };
+
+                // Track user in allUsers if not already there
+                if (!state.allUsers.find(u => u.id === session.user.id)) {
+                    state.allUsers.push({
+                        id: session.user.id,
+                        username: state.user.username,
+                        avatar: state.user.avatar
+                    });
+                }
+
+                render();
+            }
+        }
+
+        async function loadContests() {
+            const { data: contests, error } = await supabase
+                .from('contests')
+                .select(`
+                    *,
+                    images (*),
+                    creator:users!contests_created_by_fkey (username, avatar)
+                `)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('Error loading contests:', error);
+                return;
+            }
+
+            state.contests = contests.map(contest => ({
+                id: contest.id,
+                title: contest.title,
+                isLocked: contest.is_locked,
+                resultsPublic: contest.results_public,
+                createdBy: contest.created_by,
+                creatorName: contest.creator.username,
+                creatorAvatar: contest.creator.avatar,
+                images: contest.images
+                    .sort((a, b) => a.image_order - b.image_order)
+                    .map(img => ({
+                        id: img.id,
+                        url: img.url,
+                        author: img.author,
+                        isFileUpload: img.is_file_upload
+                    }))
+            }));
+
+            render();
+        }
+
+        async function loadUserVotes() {
+            if (!state.user) return;
+
+            const { data: votes, error } = await supabase
+                .from('votes')
+                .select('*')
+                .eq('user_id', state.user.id);
+
+            if (error) {
+                console.error('Error loading votes:', error);
+                return;
+            }
+
+            // Group votes by contest
+            state.userVotedContests = {};
+            votes.forEach(vote => {
+                if (!state.userVotedContests[vote.contest_id]) {
+                    state.userVotedContests[vote.contest_id] = {};
+                }
+                state.userVotedContests[vote.contest_id][vote.image_id] = vote.score;
+            });
         }
 
 
@@ -1004,21 +1130,21 @@
             render();
         }
 
-        function viewResults(contest) {
+        async function viewResults(contest) {
             state.currentContest = contest;
             const userVotes = state.userVotedContests[contest.id] || {};
             state.votes = userVotes;
-            state.mockResults = generateMockResults(contest, userVotes);
+            await loadResults();
             state.showMyVotes = false;
             state.joinedContests = []; // Clear merged contests when viewing single contest
             state.view = 'results';
             render();
         }
 
-        function viewLockedResults(contest) {
+        async function viewLockedResults(contest) {
             state.currentContest = contest;
             state.votes = {};
-            state.mockResults = generateMockResults(contest, {});
+            await loadResults();
             state.showMyVotes = false;
             state.joinedContests = []; // Clear merged contests when viewing single contest
             state.view = 'results';
@@ -1133,13 +1259,12 @@
             showVoterVotes(username);
         }
 
-        function clearUserVotesView() {
+        async function clearUserVotesView() {
             state.viewingSpecificUser = null;
             state.showVoterBreakdown = true;
             // Regenerate full results
             if (state.currentContest) {
-                const userVotes = state.userVotedContests[state.currentContest.id] || state.votes || {};
-                state.mockResults = generateMockResults(state.currentContest, userVotes);
+                await loadResults();
             }
             render();
         }
@@ -2621,7 +2746,33 @@
         window.executeBanUser = executeBanUser;
         window.unbanUser = unbanUser;
 
-        render();
+        // Initialize app
+        (async function init() {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+                await handleAuthSession(session);
+            }
+            await loadContests();
+            if (state.user) {
+                await loadUserVotes();
+            }
+            render();
+        })();
+
+        // Listen for auth changes
+        supabase.auth.onAuthStateChange(async (event, session) => {
+            if (event === 'SIGNED_IN' && session) {
+                await handleAuthSession(session);
+                await loadContests();
+                await loadUserVotes();
+                render();
+            } else if (event === 'SIGNED_OUT') {
+                state.isLoggedIn = false;
+                state.user = null;
+                state.view = 'home';
+                render();
+            }
+        });
     </script>
 </body>
 </html>
