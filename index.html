@@ -26,11 +26,28 @@
     <link rel="manifest" href="/favicon/site.webmanifest">
 
     <!-- Theme color for mobile browsers -->
-    <meta name="theme-color" content="#C026D3">
+    <meta name="theme-color" content="#C77BA6">
 
     <title>Peony</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'mauve': {
+                            300: '#D88FB8',
+                            400: '#C77BA6',
+                            500: '#B76E9E',
+                            600: '#A86590',
+                            700: '#995C82'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Lilita+One&display=swap');
         
@@ -111,12 +128,12 @@
         input[type="range"]::-webkit-slider-track {
             height: 6px;
             border-radius: 3px;
-            background: linear-gradient(to right, rgb(236, 72, 153) 0%, rgb(34, 197, 94) 100%);
+            background: linear-gradient(to right, rgb(199, 123, 166) 0%, rgb(34, 197, 94) 100%);
         }
         input[type="range"]::-moz-range-track {
             height: 6px;
             border-radius: 3px;
-            background: linear-gradient(to right, rgb(236, 72, 153) 0%, rgb(34, 197, 94) 100%);
+            background: linear-gradient(to right, rgb(199, 123, 166) 0%, rgb(34, 197, 94) 100%);
         }
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
@@ -125,7 +142,7 @@
             height: 18px;
             border-radius: 50%;
             background: white;
-            border: 2px solid rgb(236, 72, 153);
+            border: 2px solid rgb(199, 123, 166);
             cursor: pointer;
             box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
@@ -134,17 +151,17 @@
             height: 18px;
             border-radius: 50%;
             background: white;
-            border: 2px solid rgb(236, 72, 153);
+            border: 2px solid rgb(199, 123, 166);
             cursor: pointer;
             box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
         .upload-area {
-            border: 3px dashed #EC4899;
+            border: 3px dashed #C77BA6;
             transition: all 0.3s ease;
         }
         .upload-area:hover {
-            border-color: #BE185D;
-            background: rgba(236, 72, 153, 0.05);
+            border-color: #B76E9E;
+            background: rgba(199, 123, 166, 0.05);
         }
         .upload-area.dragover {
             border-color: #22C55E;
@@ -175,7 +192,7 @@
             display: inline-block;
         }
         .toggle-switch.active {
-            background-color: #EC4899;
+            background-color: #C77BA6;
         }
         .toggle-slider {
             position: absolute;
@@ -198,6 +215,10 @@
             .voting-image {
                 max-height: min(40vh, 500px);
             }
+        }
+        /* PWA safe area support for iOS and Android fullscreen mode */
+        .safe-header {
+            padding-top: env(safe-area-inset-top);
         }
     </style>
 </head>
@@ -328,7 +349,8 @@
             mockResultsCache: {}, // Format: { contestId: generatedResults }
             scaleUpdateTimeout: null,
             newContest: { title: '', images: [], labelsEnabled: false },
-            showMyVotes: false,
+            showMyVotes: false,  // Deprecated, use resultsView
+            resultsView: 'average',  // 'average', 'myVotes', or 'byVoter'
             shuffledImages: [],
             nextContestId: 4, // Start at 4 since we have 3 mock contests
             bannedUsers: [], // Array of user IDs who are banned from app
@@ -543,6 +565,63 @@
             return results[0].breakdown.length;
         }
 
+        /**
+         * Generate voter statistics across one or more contests
+         * Calculates each voter's average score across all images they voted on
+         *
+         * @param {Object|Array} contests - Single contest object or array of contests for merged view
+         * @returns {Array} Array of voter objects with calculated averages, sorted by average score (highest first)
+         */
+        function generateVoterStats(contests) {
+            // Normalize input to array for consistent processing
+            const contestList = Array.isArray(contests) ? contests : [contests];
+
+            // Accumulator for voter data across all contests
+            // Structure: { userId: { votes: [], totalScore: 0, totalImages: 0, username, avatar, etc. } }
+            const voterVotes = {};
+
+            contestList.forEach(contest => {
+                // Generate mock results for this contest if not cached
+                const userVotes = contest.id === state.currentContest.id ? state.votes : (state.userVotedContests[contest.id] || {});
+                const results = state.mockResultsCache[contest.id] || generateMockResults(contest, userVotes);
+
+                // Collect votes from all images
+                results.forEach(imageResult => {
+                    if (!imageResult.breakdown) return;
+
+                    imageResult.breakdown.forEach(vote => {
+                        if (vote.isBanned) return; // Skip banned users
+
+                        if (!voterVotes[vote.userId]) {
+                            voterVotes[vote.userId] = {
+                                userId: vote.userId,
+                                username: vote.username,
+                                avatar: vote.avatar,
+                                isCurrentUser: vote.isCurrentUser || false,
+                                votes: [],
+                                totalScore: 0,
+                                totalImages: 0
+                            };
+                        }
+
+                        voterVotes[vote.userId].votes.push(vote.score);
+                        voterVotes[vote.userId].totalScore += vote.score;
+                        voterVotes[vote.userId].totalImages++;
+                    });
+                });
+            });
+
+            // Calculate averages and sort by average score (highest to lowest)
+            return Object.values(voterVotes)
+                .map(voter => ({
+                    ...voter,
+                    averageScore: voter.totalImages > 0
+                        ? parseFloat((voter.totalScore / voter.totalImages).toFixed(2))
+                        : 0
+                }))
+                .sort((a, b) => b.averageScore - a.averageScore);
+        }
+
         function showModal(config) {
             if (state.modalProcessing) return;
             state.modal = config;
@@ -641,7 +720,7 @@
 
         function deleteContest(contestId) {
             showConfirm(
-                'Delete Contest\n\nThis will permanently delete the contest and all its data.\n\n⚠️ This action cannot be undone.',
+                'This will permanently delete the contest and all its data. This action cannot be undone.',
                 `confirmDeleteContest_${contestId}`,
                 '🗑️'
             );
@@ -722,7 +801,7 @@
 
         function cancelCreateContest() {
             showConfirm(
-                'Discard Progress\n\nYour progress will be lost if you proceed.\n\nAre you sure?',
+                'Your progress will be lost if you proceed. Are you sure?',
                 'confirmCancelCreate',
                 '⚠️'
             );
@@ -957,7 +1036,7 @@
             }
 
             contest.isLocked = !contest.isLocked;
-            showAlert(contest.isLocked ? 'Contest locked. Users cannot vote.' : 'Contest unlocked. Users can now vote.', contest.isLocked ? '🔒' : '🔓');
+            showAlert(contest.isLocked ? '🔒 Contest locked - Users cannot vote' : '🔓 Contest unlocked - Users can now vote', contest.isLocked ? '🚨' : '✅');
             render();
         }
 
@@ -1000,7 +1079,7 @@
 
         function cancelVoting() {
             showConfirm(
-                'Discard Progress\n\nYour progress will be lost if you proceed.\n\nAre you sure?',
+                'Your progress will be lost if you proceed. Are you sure?',
                 'confirmCancelVoting',
                 '⚠️'
             );
@@ -1013,9 +1092,9 @@
                 return;
             }
             showConfirm(
-                'Submit Votes\n\nYour votes will be locked and cannot be changed after submission.\n\n⚠️ This action cannot be undone.',
+                'Your votes will be locked and cannot be changed after submission.',
                 'confirmSubmitVotes',
-                '✅'
+                '🗳️'
             );
         }
 
@@ -1075,7 +1154,7 @@
         function backToHome() {
             if (state.view === 'vote' && !state.hasSubmitted) {
                 showConfirm(
-                    'Discard Progress\n\nYour progress will be lost if you proceed.\n\nAre you sure?',
+                    'Your progress will be lost if you proceed. Are you sure?',
                     'confirmBackToHome',
                     '⚠️'
                 );
@@ -1108,7 +1187,8 @@
         }
 
         function setResultsView(view) {
-            state.showMyVotes = view === 'myVotes';
+            state.resultsView = view;
+            state.showMyVotes = view === 'myVotes';  // Backwards compatibility
             render();
         }
 
@@ -1161,7 +1241,7 @@
 
         function confirmBanUser(userId) {
             showConfirm(
-                'Ban User\n\nThis user will not be able to create contests or vote.\n\n⚠️ This action can be undone later.',
+                'This user will not be able to create contests or vote. This action can be undone later.',
                 `executeBanUser_${userId}`,
                 '🚫'
             );
@@ -1292,7 +1372,7 @@
                             <div class="text-5xl mb-2">${state.modal.icon}</div>
                             ${isInput ? `
                                 <h3 class="text-xl font-bold text-gray-800 mb-2">${state.modal.title}</h3>
-                                <input type="text" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-fuchsia-500 focus:outline-none" placeholder="${state.modal.placeholder}" />
+                                <input type="text" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-mauve-400 focus:outline-none" placeholder="${state.modal.placeholder}" />
                             ` : `
                                 <p class="text-base font-bold text-gray-800 whitespace-pre-line">${state.modal.message}</p>
                             `}
@@ -1317,7 +1397,7 @@
                                         onclick="${onclick}"
                                         class="px-5 py-2 rounded-lg font-semibold transition text-sm ${
                                             btn.primary
-                                                ? 'bg-gradient-to-r from-fuchsia-500 to-fuchsia-700 text-white hover:from-fuchsia-600 hover:to-fuchsia-800'
+                                                ? 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700'
                                                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                         }"
                                     >
@@ -1336,10 +1416,10 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <header class="bg-gradient-to-r from-fuchsia-600 via-purple-400 to-green-700 text-white shadow-lg">
+                <header class="safe-header bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-2 sm:py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
-                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-fuchsia-400 to-fuchsia-600">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500">
                                 <span class="text-xl">🌺</span>
                             </div>
                             <h1 class="text-xl font-bold">Peony</h1>
@@ -1354,7 +1434,7 @@
                         </div>
                         
                         ${!state.isLoggedIn ? `
-                            <button onclick="login()" class="bg-white text-fuchsia-600 px-4 py-2 rounded-lg font-semibold hover:bg-fuchsia-50 transition text-sm min-h-[36px]">
+                            <button onclick="login()" class="bg-white text-mauve-500 px-4 py-2 rounded-lg font-semibold hover:bg-pink-50 transition text-sm min-h-[36px]">
                                 Login with Discord
                             </button>
                         ` : `
@@ -1389,7 +1469,7 @@
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
                     <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-gradient-to-br from-fuchsia-400 to-fuchsia-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <div class="w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌺</span>
                         </div>
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
@@ -1513,7 +1593,7 @@
                     <div class="bg-white rounded-lg shadow-md p-3 mb-4 flex gap-3 flex-wrap">
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
-                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-fuchsia-500 focus:outline-none">
+                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
                                 <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
                                 <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
                                 <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
@@ -1526,7 +1606,7 @@
                         </div>
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
-                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-fuchsia-500 focus:outline-none">
+                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
                                 <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
                                 ${uniqueCreators.map(creator => `
                                     <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
@@ -1620,7 +1700,7 @@
                                         ` : `
                                             <button
                                                 onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
-                                                class="flex-1 bg-gradient-to-r from-fuchsia-500 to-fuchsia-700 text-white py-2 rounded-lg font-semibold hover:from-fuchsia-600 hover:to-fuchsia-800 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                                             >
                                                 Start Voting
                                             </button>
@@ -1664,17 +1744,17 @@
                                 <span class="text-xl">📸</span>
                                 How to Add Images
                             </h3>
-                            <p class="text-xs text-blue-800 mb-2">
-                                Use image URLs to add images to your contest.
+                            <p class="text-xs text-blue-800 mb-1">
+                                💻 <strong>Desktop:</strong> Click image → Right-click → Copy image link → Paste below
                             </p>
                             <p class="text-xs text-blue-800">
-                                💡 <strong>Tip:</strong> Upload images to Discord, right-click → Copy Link, then paste the URL below!
+                                📱 <strong>Mobile:</strong> Open image → Share → Copy link → Paste below
                             </p>
                         </div>
 
                         <div class="mb-4">
                             <input type="url" id="contestUrlInput" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-sm mb-2" placeholder="Paste Discord image URL or any image URL...">
-                            <button onclick="addImageFromUrl('contestUrlInput')" class="w-full bg-gradient-to-r from-fuchsia-500 to-fuchsia-700 text-white py-2 rounded-lg font-semibold hover:from-fuchsia-600 hover:to-fuchsia-800 transition text-sm">
+                            <button onclick="addImageFromUrl('contestUrlInput')" class="w-full bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition text-sm">
                                 Add URL
                             </button>
                         </div>
@@ -1684,19 +1764,19 @@
                                 ${state.newContest.images.length} / 50 images added
                             </div>
                             <label class="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" ${state.newContest.labelsEnabled ? 'checked' : ''} onchange="toggleImageLabels()" class="w-4 h-4 text-fuchsia-600 rounded focus:ring-fuchsia-500">
+                                <input type="checkbox" ${state.newContest.labelsEnabled ? 'checked' : ''} onchange="toggleImageLabels()" class="w-4 h-4 text-mauve-500 rounded focus:ring-mauve-400">
                                 <span class="text-sm font-medium text-gray-700">Enable Image Labels</span>
                             </label>
                         </div>
 
-                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4 min-h-[100px]">
+                        <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 mb-4 min-h-[100px]">
                             ${state.newContest.images.length === 0 ? `
                                 <div class="col-span-full text-center text-gray-400 py-8 text-sm italic">
                                     No images added yet
                                 </div>
                             ` : state.newContest.images.map((img, index) => `
-                                <div class="relative group bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center" style="min-height: 120px;">
-                                    <img src="${img.url}" class="w-full h-auto max-h-32 object-contain" />
+                                <div class="relative group bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center" style="min-height: 100px;">
+                                    <img src="${img.url}" class="w-full h-auto max-h-24 object-contain" />
                                     <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-lg">
                                         ×
                                     </button>
@@ -1708,7 +1788,7 @@
                                                 onchange="updateImageLabel(${index}, this.value)"
                                                 maxlength="50"
                                                 placeholder="Image label..."
-                                                class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-fuchsia-500 focus:outline-none"
+                                                class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-mauve-400 focus:outline-none"
                                             />
                                         </div>
                                     ` : ''}
@@ -1758,7 +1838,7 @@
                                 // Determine color based on priority
                                 let bgColor;
                                 if (hasCurrentImage) {
-                                    bgColor = 'bg-fuchsia-500';
+                                    bgColor = 'bg-mauve-400';
                                 } else if (votedCount === totalCount) {
                                     bgColor = 'bg-green-500';
                                 } else if (votedCount > 0) {
@@ -1876,10 +1956,23 @@
                 state.mockResults = generateMockResults(state.currentContest, state.votes);
             }
 
-            let displayResults, grouped, sortedKeys;
+            let displayResults, grouped, sortedKeys, voterStats;
 
-            if (state.showMyVotes && Object.keys(state.votes).length > 0) {
-                // My Votes view - handle merged contests
+            // === BY VOTER VIEW ===
+            // Shows statistics for each voter, including their average score across all images
+            if (state.resultsView === 'byVoter') {
+                if (state.joinedContests.length > 0) {
+                    // Merged contests: Aggregate voter stats across all joined contests
+                    const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
+                    voterStats = generateVoterStats(allContests);
+                } else {
+                    // Single contest view
+                    voterStats = generateVoterStats(state.currentContest);
+                }
+            }
+            // === MY VOTES VIEW ===
+            // Shows images grouped by the current user's vote scores
+            else if (state.resultsView === 'myVotes' && Object.keys(state.votes).length > 0) {
                 if (state.joinedContests.length > 0) {
                     // For merged contests, combine votes from all contests
                     const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
@@ -1943,8 +2036,10 @@
 
                 grouped = groupMyVotesByScore(displayResults);
                 sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
-            } else {
-                // Average view
+            }
+            // === AVERAGE VIEW ===
+            // Shows images grouped by average score ranges (e.g., 4.5-5.0, 4.0-4.49, etc.)
+            else {
                 displayResults = state.mockResults;
                 grouped = groupByScoreRange(displayResults);
                 sortedKeys = Object.keys(grouped).sort((a, b) => {
@@ -1967,7 +2062,11 @@
                                 <span class="text-4xl">🎆</span>
                                 <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
                             </div>
-                            <p class="text-gray-600 text-sm mb-1">${state.showMyVotes ? 'Your votes only' : 'Average votes from all participants'}</p>
+                            <p class="text-gray-600 text-sm mb-1">${
+                                state.resultsView === 'byVoter' ? 'Voter statistics and average scores' :
+                                state.resultsView === 'myVotes' ? 'Your votes only' :
+                                'Average votes from all participants'
+                            }</p>
                             ${state.joinedContests.length > 0 ? `
                                 <p class="text-xs text-purple-600 font-semibold mb-2">🔗 Viewing ${state.joinedContests.length + 1} merged contests</p>
                                 <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2 max-w-2xl mx-auto">
@@ -1996,15 +2095,21 @@
                                 ` : ''}
                                 <button
                                     onclick="setResultsView('average')"
-                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes ? 'bg-fuchsia-500 text-white' : 'bg-gray-200'}"
+                                    class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
                                 >
                                     Average
                                 </button>
                                 <button
                                     onclick="setResultsView('myVotes')"
-                                    class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-fuchsia-500 text-white' : 'bg-gray-200'}"
+                                    class="px-3 py-1 rounded-lg ${state.resultsView === 'myVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
                                 >
                                     My Votes
+                                </button>
+                                <button
+                                    onclick="setResultsView('byVoter')"
+                                    class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
+                                >
+                                    By Voter
                                 </button>
                                 ${state.joinedContests.length === 0 ? `
                                     <button
@@ -2018,6 +2123,7 @@
                             </div>
                         </div>
 
+                        ${state.resultsView !== 'byVoter' ? `
                         <div class="mb-4 max-w-md mx-auto">
                             <div class="flex items-center gap-2">
                                 <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
@@ -2043,8 +2149,34 @@
                                 <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
                             </div>
                         </div>
+                        ` : ''}
 
-                        ${state.showMyVotes && Object.keys(state.votes).length === 0 ? `
+                        ${state.resultsView === 'byVoter' ? `
+                            ${voterStats && voterStats.length > 0 ? `
+                                <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                                    ${voterStats.map(voter => `
+                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
+                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">
+                                                ${voter.username}
+                                            </div>
+                                            <div class="text-xl font-bold text-mauve-500 score-text">
+                                                ${voter.averageScore}
+                                            </div>
+                                            <div class="text-xs text-gray-500">
+                                                ${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">👥</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Voters Yet</h3>
+                                    <p class="text-gray-600">No voting data available for this contest.</p>
+                                </div>
+                            `}
+                        ` : state.resultsView === 'myVotes' && Object.keys(state.votes).length === 0 ? `
                             <div class="text-center py-12">
                                 <div class="text-6xl mb-4">📭</div>
                                 <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
@@ -2053,7 +2185,7 @@
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
 
-                            if (state.showMyVotes) {
+                            if (state.resultsView === 'myVotes') {
                                 const score = group.score;
                                 const colorStyle = getScoreColor(score);
                                 return `
