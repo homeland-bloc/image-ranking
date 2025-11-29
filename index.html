@@ -26,7 +26,7 @@
     <link rel="manifest" href="/favicon/site.webmanifest">
 
     <!-- Theme color for mobile browsers -->
-    <meta name="theme-color" content="#EC4899">
+    <meta name="theme-color" content="#C026D3">
 
     <title>Peony</title>
 
@@ -65,16 +65,16 @@
             animation: modalSlideIn 0.3s ease-out;
         }
         .results-bg {
-            background: linear-gradient(to bottom, 
-                rgba(252, 231, 243, 0.3),
+            background: linear-gradient(to bottom,
+                rgba(250, 232, 255, 0.3),
                 rgba(220, 252, 231, 0.3)
             );
         }
         body {
-            background: linear-gradient(to bottom, 
-                rgba(252, 231, 243, 0.5),
+            background: linear-gradient(to bottom,
+                rgba(252, 231, 243, 0.15),
                 rgba(255, 255, 255, 1) 30%,
-                rgba(220, 252, 231, 0.5)
+                rgba(220, 252, 231, 0.15)
             );
         }
         body.modal-open {
@@ -88,6 +88,20 @@
         @keyframes loading {
             0% { background-position: 200% 0; }
             100% { background-position: -200% 0; }
+        }
+        @keyframes toastSlideIn {
+            from { transform: translateY(-100px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes toastFadeOut {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(-20px); opacity: 0; }
+        }
+        .toast-notification {
+            animation: toastSlideIn 0.3s ease-out;
+        }
+        .toast-notification.fade-out {
+            animation: toastFadeOut 0.3s ease-out;
         }
         input[type="range"] {
             -webkit-appearance: none;
@@ -327,7 +341,8 @@
             filters: {
                 createdBy: null,           // Username or null
                 sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
-            }
+            },
+            toast: null // Toast notification { message, icon }
         };
 
 
@@ -564,6 +579,23 @@
             });
         }
 
+        function showToast(message, icon = '✅') {
+            state.toast = { message, icon };
+            render();
+
+            // Auto-dismiss after 2.5 seconds
+            setTimeout(() => {
+                const toastEl = document.querySelector('.toast-notification');
+                if (toastEl) {
+                    toastEl.classList.add('fade-out');
+                }
+                setTimeout(() => {
+                    state.toast = null;
+                    render();
+                }, 300);
+            }, 2500);
+        }
+
         function showInputModal(title, placeholder, onConfirmAction, allowEmpty = false) {
             showModal({
                 type: 'input',
@@ -735,7 +767,7 @@
                     label: `${imageCount}`
                 });
                 input.value = '';
-                render();
+                showToast('Image added successfully!', '✅');
             } catch (error) {
                 showAlert(`Failed to load image: ${error.message}`, '❌');
             }
@@ -745,7 +777,7 @@
 
         function removeContestImage(index) {
             showConfirm(
-                'Remove Image\n\nAre you sure you want to remove this image from the contest?',
+                'Delete this image from the contest?',
                 `confirmRemoveImage_${index}`,
                 '⚠️'
             );
@@ -1235,6 +1267,19 @@
             }
         });
 
+        function renderToast() {
+            if (!state.toast) return '';
+
+            return `
+                <div class="fixed top-4 left-1/2 transform -translate-x-1/2 z-[70] toast-notification">
+                    <div class="bg-white rounded-lg shadow-2xl px-6 py-3 flex items-center gap-3 border-2 border-green-500">
+                        <span class="text-2xl">${state.toast.icon}</span>
+                        <span class="text-sm font-semibold text-gray-800">${state.toast.message}</span>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderModal() {
             if (!state.modal) return '';
 
@@ -1243,13 +1288,13 @@
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
-                        <div class="text-center mb-4">
-                            <div class="text-5xl mb-3">${state.modal.icon}</div>
+                        <div class="text-center mb-2">
+                            <div class="text-5xl mb-2">${state.modal.icon}</div>
                             ${isInput ? `
-                                <h3 class="text-xl font-bold text-gray-800 mb-3">${state.modal.title}</h3>
-                                <input type="text" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-pink-500 focus:outline-none" placeholder="${state.modal.placeholder}" />
+                                <h3 class="text-xl font-bold text-gray-800 mb-2">${state.modal.title}</h3>
+                                <input type="text" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-fuchsia-500 focus:outline-none" placeholder="${state.modal.placeholder}" />
                             ` : `
-                                <p class="text-base text-gray-700 whitespace-pre-line">${state.modal.message}</p>
+                                <p class="text-base font-bold text-gray-800 whitespace-pre-line">${state.modal.message}</p>
                             `}
                         </div>
                         <div class="flex gap-2 justify-center">
@@ -1272,7 +1317,7 @@
                                         onclick="${onclick}"
                                         class="px-5 py-2 rounded-lg font-semibold transition text-sm ${
                                             btn.primary
-                                                ? 'bg-gradient-to-r from-pink-500 to-rose-600 text-white hover:from-pink-600 hover:to-rose-700'
+                                                ? 'bg-gradient-to-r from-fuchsia-500 to-fuchsia-700 text-white hover:from-fuchsia-600 hover:to-fuchsia-800'
                                                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                         }"
                                     >
@@ -1291,15 +1336,15 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <header class="bg-gradient-to-r from-pink-600 via-rose-500 to-green-700 text-white shadow-lg">
-                    <div class="max-w-7xl mx-auto px-3 py-3 flex justify-between items-center gap-2">
+                <header class="bg-gradient-to-r from-fuchsia-600 via-purple-400 to-green-700 text-white shadow-lg">
+                    <div class="max-w-7xl mx-auto px-3 py-2 sm:py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
-                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-pink-400 to-pink-600">
-                                <span class="text-xl">🌸</span>
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-fuchsia-400 to-fuchsia-600">
+                                <span class="text-xl">🌺</span>
                             </div>
                             <h1 class="text-xl font-bold">Peony</h1>
                             ${showBackButton ? `
-                                <button onclick="backToHome()" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg font-semibold transition text-sm flex items-center gap-1">
+                                <button onclick="backToHome()" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 sm:py-1 rounded-lg font-semibold transition text-sm flex items-center gap-1 min-h-[36px] sm:min-h-0">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                                     </svg>
@@ -1309,7 +1354,7 @@
                         </div>
                         
                         ${!state.isLoggedIn ? `
-                            <button onclick="login()" class="bg-white text-pink-600 px-4 py-2 rounded-lg font-semibold hover:bg-pink-50 transition text-sm">
+                            <button onclick="login()" class="bg-white text-fuchsia-600 px-4 py-2 rounded-lg font-semibold hover:bg-fuchsia-50 transition text-sm min-h-[36px]">
                                 Login with Discord
                             </button>
                         ` : `
@@ -1344,8 +1389,8 @@
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
                     <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-gradient-to-br from-pink-400 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <span class="text-3xl">🌸</span>
+                        <div class="w-16 h-16 bg-gradient-to-br from-fuchsia-400 to-fuchsia-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span class="text-3xl">🌺</span>
                         </div>
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
                         <p class="text-gray-600 text-sm">Create and vote on image contests</p>
@@ -1468,7 +1513,7 @@
                     <div class="bg-white rounded-lg shadow-md p-3 mb-4 flex gap-3 flex-wrap">
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
-                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
+                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-fuchsia-500 focus:outline-none">
                                 <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
                                 <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
                                 <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
@@ -1481,7 +1526,7 @@
                         </div>
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
-                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-pink-500 focus:outline-none">
+                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-fuchsia-500 focus:outline-none">
                                 <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
                                 ${uniqueCreators.map(creator => `
                                     <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
@@ -1519,22 +1564,22 @@
                                     ${contest.createdBy === state.user.id ? `
                                         <button
                                             onclick='toggleContestLock("${contest.id}")'
-                                            class="absolute top-3 right-3 p-2 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'}"
+                                            class="absolute top-3 right-3 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-black hover:bg-gray-900' : 'bg-green-500 hover:bg-green-600'}"
                                             title="${contest.isLocked ? 'Click to unlock contest' : 'Click to lock contest'}"
                                         >
                                             ${contest.isLocked ? `
-                                                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                                 </svg>
                                             ` : `
-                                                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
                                                 </svg>
                                             `}
                                         </button>
                                     ` : contest.isLocked ? `
-                                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-2 rounded-full shadow-lg" title="Contest is locked">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                             </svg>
                                         </div>
@@ -1575,7 +1620,7 @@
                                         ` : `
                                             <button
                                                 onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
-                                                class="flex-1 bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r from-fuchsia-500 to-fuchsia-700 text-white py-2 rounded-lg font-semibold hover:from-fuchsia-600 hover:to-fuchsia-800 transition shadow-md text-sm"
                                             >
                                                 Start Voting
                                             </button>
@@ -1629,7 +1674,7 @@
 
                         <div class="mb-4">
                             <input type="url" id="contestUrlInput" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-sm mb-2" placeholder="Paste Discord image URL or any image URL...">
-                            <button onclick="addImageFromUrl('contestUrlInput')" class="w-full bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition text-sm">
+                            <button onclick="addImageFromUrl('contestUrlInput')" class="w-full bg-gradient-to-r from-fuchsia-500 to-fuchsia-700 text-white py-2 rounded-lg font-semibold hover:from-fuchsia-600 hover:to-fuchsia-800 transition text-sm">
                                 Add URL
                             </button>
                         </div>
@@ -1639,7 +1684,7 @@
                                 ${state.newContest.images.length} / 50 images added
                             </div>
                             <label class="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" ${state.newContest.labelsEnabled ? 'checked' : ''} onchange="toggleImageLabels()" class="w-4 h-4 text-pink-600 rounded focus:ring-pink-500">
+                                <input type="checkbox" ${state.newContest.labelsEnabled ? 'checked' : ''} onchange="toggleImageLabels()" class="w-4 h-4 text-fuchsia-600 rounded focus:ring-fuchsia-500">
                                 <span class="text-sm font-medium text-gray-700">Enable Image Labels</span>
                             </label>
                         </div>
@@ -1650,8 +1695,8 @@
                                     No images added yet
                                 </div>
                             ` : state.newContest.images.map((img, index) => `
-                                <div class="relative group bg-gray-100 rounded-lg overflow-hidden">
-                                    <img src="${img.url}" class="w-full h-32 object-cover" />
+                                <div class="relative group bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center" style="min-height: 120px;">
+                                    <img src="${img.url}" class="w-full h-auto max-h-32 object-contain" />
                                     <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-lg">
                                         ×
                                     </button>
@@ -1663,7 +1708,7 @@
                                                 onchange="updateImageLabel(${index}, this.value)"
                                                 maxlength="50"
                                                 placeholder="Image label..."
-                                                class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-pink-500 focus:outline-none"
+                                                class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:border-fuchsia-500 focus:outline-none"
                                             />
                                         </div>
                                     ` : ''}
@@ -1713,7 +1758,7 @@
                                 // Determine color based on priority
                                 let bgColor;
                                 if (hasCurrentImage) {
-                                    bgColor = 'bg-pink-500';
+                                    bgColor = 'bg-fuchsia-500';
                                 } else if (votedCount === totalCount) {
                                     bgColor = 'bg-green-500';
                                 } else if (votedCount > 0) {
@@ -1834,18 +1879,67 @@
             let displayResults, grouped, sortedKeys;
 
             if (state.showMyVotes && Object.keys(state.votes).length > 0) {
-                // My Votes view
-                displayResults = state.currentContest.images.map(img => ({
-                    ...img,
-                    averageScore: state.votes[img.id] || 0,
-                    totalVotes: 1,
-                    breakdown: [{
-                        username: state.user.username,
-                        avatar: state.user.avatar,
-                        score: state.votes[img.id] || 0,
-                        isCurrentUser: true
-                    }]
-                })).sort((a, b) => b.averageScore - a.averageScore);
+                // My Votes view - handle merged contests
+                if (state.joinedContests.length > 0) {
+                    // For merged contests, combine votes from all contests
+                    const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
+                    const contestNumberMap = {};
+                    allContests.forEach((contest, index) => {
+                        contestNumberMap[contest.id] = index + 1;
+                    });
+
+                    // Get votes from current contest
+                    const currentVotes = state.currentContest.images.map(img => ({
+                        ...img,
+                        averageScore: state.votes[img.id] || 0,
+                        totalVotes: 1,
+                        contestId: state.currentContest.id,
+                        contestTitle: state.currentContest.title,
+                        contestNumber: contestNumberMap[state.currentContest.id],
+                        breakdown: [{
+                            username: state.user.username,
+                            avatar: state.user.avatar,
+                            score: state.votes[img.id] || 0,
+                            isCurrentUser: true
+                        }]
+                    }));
+
+                    // Get votes from joined contests
+                    const joinedVotes = state.joinedContests.flatMap(contestId => {
+                        const contest = state.contests.find(c => c.id === contestId);
+                        if (!contest) return [];
+                        const userVotes = state.userVotedContests[contestId] || {};
+                        return contest.images.map(img => ({
+                            ...img,
+                            averageScore: userVotes[img.id] || 0,
+                            totalVotes: 1,
+                            contestId: contest.id,
+                            contestTitle: contest.title,
+                            contestNumber: contestNumberMap[contest.id],
+                            breakdown: [{
+                                username: state.user.username,
+                                avatar: state.user.avatar,
+                                score: userVotes[img.id] || 0,
+                                isCurrentUser: true
+                            }]
+                        }));
+                    });
+
+                    displayResults = [...currentVotes, ...joinedVotes].sort((a, b) => b.averageScore - a.averageScore);
+                } else {
+                    // Single contest view
+                    displayResults = state.currentContest.images.map(img => ({
+                        ...img,
+                        averageScore: state.votes[img.id] || 0,
+                        totalVotes: 1,
+                        breakdown: [{
+                            username: state.user.username,
+                            avatar: state.user.avatar,
+                            score: state.votes[img.id] || 0,
+                            isCurrentUser: true
+                        }]
+                    })).sort((a, b) => b.averageScore - a.averageScore);
+                }
 
                 grouped = groupMyVotesByScore(displayResults);
                 sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
@@ -1897,18 +1991,18 @@
                                         class="px-3 py-1 rounded-lg bg-gray-500 text-white hover:bg-gray-600 transition text-sm"
                                         title="Return to single contest view"
                                     >
-                                        ← Back
+                                        ← Unmerge
                                     </button>
                                 ` : ''}
                                 <button
                                     onclick="setResultsView('average')"
-                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                    class="px-3 py-1 rounded-lg ${!state.showMyVotes ? 'bg-fuchsia-500 text-white' : 'bg-gray-200'}"
                                 >
                                     Average
                                 </button>
                                 <button
                                     onclick="setResultsView('myVotes')"
-                                    class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-pink-500 text-white' : 'bg-gray-200'}"
+                                    class="px-3 py-1 rounded-lg ${state.showMyVotes ? 'bg-fuchsia-500 text-white' : 'bg-gray-200'}"
                                 >
                                     My Votes
                                 </button>
@@ -2201,33 +2295,11 @@
                                     </div>
                                 </div>
 
-                                <div class="bg-red-50 rounded-lg p-4 border border-red-200">
-                                    <h4 class="font-bold text-red-800 mb-3">Banned Users</h4>
-                                    ${bannedUsersInfo.length > 0 ? `
-                                        <div class="space-y-2">
-                                            ${bannedUsersInfo.map(user => `
-                                                <div class="flex items-center justify-between p-3 bg-white rounded-lg">
-                                                    <div class="flex items-center gap-3">
-                                                        <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
-                                                        <div>
-                                                            <div class="font-semibold text-gray-800">${user.username}</div>
-                                                            <div class="text-xs text-gray-500">${user.id}</div>
-                                                        </div>
-                                                    </div>
-                                                    <button onclick="unbanUser('${user.id}')" class="bg-green-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-green-600 transition text-sm">
-                                                        Unban
-                                                    </button>
-                                                </div>
-                                            `).join('')}
-                                        </div>
-                                    ` : '<p class="text-sm text-gray-500 italic">No banned users</p>'}
-                                </div>
-
                                 <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
                                     <h4 class="font-bold text-blue-800 mb-3">👥 All Users</h4>
                                     ${state.allUsers.length > 0 ? `
                                         <div class="space-y-2 max-h-96 overflow-y-auto">
-                                            ${state.allUsers.map(user => {
+                                            ${[...state.allUsers].sort((a, b) => a.username.localeCompare(b.username)).map(user => {
                                                 const isBanned = state.bannedUsers.includes(user.id);
                                                 return `
                                                     <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
@@ -2340,7 +2412,7 @@
             const app = document.getElementById('app');
             
             if (!state.isLoggedIn) {
-                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal();
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderToast();
                 return;
             }
 
@@ -2362,7 +2434,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showJoinModal ? renderJoinContestsModal() : '');
+            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showJoinModal ? renderJoinContestsModal() : '') + renderToast();
         }
 
         window.login = login;
