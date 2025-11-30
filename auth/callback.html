@@ -94,11 +94,31 @@
 
                 const discordUser = await userResponse.json();
 
-                // Create user session object
+                // Check if user is banned before creating session
+                const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${discordUser.id}&select=is_banned`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const existingUser = await banCheckResponse.json();
+
+                // If user exists and is banned, show error and redirect
+                if (existingUser && existingUser.length > 0 && existingUser[0].is_banned === true) {
+                    document.getElementById('status').textContent = 'Account Banned';
+                    document.getElementById('message').textContent = 'Your account has been banned from Peony.';
+                    document.getElementById('message').className = 'error';
+                    document.querySelector('.spinner').style.display = 'none';
+                    setTimeout(() => window.location.href = '../index.html', 3000);
+                    return;
+                }
+
+                // Create user session object (only if not banned)
                 const user = {
                     id: discordUser.id,
                     username: discordUser.global_name || discordUser.username,
-                    avatar: discordUser.avatar 
+                    avatar: discordUser.avatar
                         ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
                         : `https://api.dicebear.com/7.x/avataaars/svg?seed=${discordUser.id}`,
                     accessToken: accessToken,

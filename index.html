@@ -2713,12 +2713,29 @@
 
                     // Check if token is expired
                     if (user.expiresAt && Date.now() < user.expiresAt) {
-                        state.isLoggedIn = true;
-                        state.user = {
-                            id: user.id,
-                            username: user.username,
-                            avatar: user.avatar
-                        };
+                        // Check if user is banned
+                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                            }
+                        });
+
+                        const userData = await banCheckResponse.json();
+
+                        // If user is banned, log them out
+                        if (userData && userData.length > 0 && userData[0].is_banned === true) {
+                            localStorage.removeItem('peony_user');
+                            showAlert('Your account has been banned from Peony.', '🚫');
+                        } else {
+                            // User not banned, proceed with login
+                            state.isLoggedIn = true;
+                            state.user = {
+                                id: user.id,
+                                username: user.username,
+                                avatar: user.avatar
+                            };
+                        }
                     } else {
                         // Token expired, clear it
                         localStorage.removeItem('peony_user');
