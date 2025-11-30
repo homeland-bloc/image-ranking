@@ -94,10 +94,11 @@
         }
         body {
             background: linear-gradient(to bottom,
-                rgba(252, 231, 243, 0.15),
-                rgba(255, 255, 255, 1) 30%,
-                rgba(220, 252, 231, 0.15)
+                rgba(252, 231, 243, 0.3),
+                rgba(252, 231, 243, 0.1) 30%,
+                rgba(220, 252, 231, 0.3)
             );
+            min-height: 100vh;
         }
         body.modal-open {
             overflow: hidden;
@@ -326,7 +327,8 @@
             },
             toast: null, // Toast notification { message, icon }
             isLoading: false,
-            loadingMessage: ''
+            loadingMessage: '',
+            showUserDropdown: false  // User menu dropdown state
         };
 
 
@@ -682,7 +684,15 @@
                 console.log('🔍 DEBUG: Loading results for contest:', state.currentContest.id);
                 console.log('🔍 DEBUG: Current user:', state.user);
 
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
+                // Build array of all contest IDs (current + joined for merged contests)
+                const allContestIds = [state.currentContest.id, ...(state.joinedContests || [])];
+                const contestIdFilter = allContestIds.length > 1
+                    ? `contest_id=in.(${allContestIds.join(',')})`
+                    : `contest_id=eq.${state.currentContest.id}`;
+
+                console.log('🔍 DEBUG: Fetching votes for contest IDs:', allContestIds);
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
@@ -714,7 +724,18 @@
                 console.log('🔍 DEBUG: Image scores:', imageScores);
                 console.log('🔍 DEBUG: Contest images:', state.currentContest.images);
 
-                state.mockResults = state.currentContest.images.map(img => {
+                // Collect all images from current contest and joined contests
+                let allImages = [...state.currentContest.images];
+                if (state.joinedContests && state.joinedContests.length > 0) {
+                    state.joinedContests.forEach(contestId => {
+                        const joinedContest = state.contests.find(c => c.id === contestId);
+                        if (joinedContest && joinedContest.images) {
+                            allImages = [...allImages, ...joinedContest.images];
+                        }
+                    });
+                }
+
+                state.mockResults = allImages.map(img => {
                     const scores = imageScores[img.id]?.scores || [];
                     const sum = scores.reduce((acc, s) => acc + s, 0);
                     const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
@@ -805,13 +826,32 @@
             return grouped;
         }
 
-        function getVoterCount(contest) {
-            // Get cached results for this contest
-            const results = state.mockResultsCache[contest.id];
-            if (!results || !results[0]) return 0;
+        // Cache for voter counts to avoid repeated DB queries
+        const voterCountCache = {};
 
-            // Get breakdown from first image (all images have same voters)
-            return results[0].breakdown.length;
+        function getVoterCount(contest) {
+            // Use cached voter count if available
+            const contestId = typeof contest === 'string' ? contest : contest.id;
+            return voterCountCache[contestId] || 0;
+        }
+
+        async function updateVoterCountForContest(contestId) {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const votes = await response.json();
+                const uniqueVoters = new Set(votes.map(v => v.user_id));
+                voterCountCache[contestId] = uniqueVoters.size;
+                return uniqueVoters.size;
+            } catch (error) {
+                console.error('Error fetching voter count:', error);
+                return 0;
+            }
         }
 
         /**
@@ -982,6 +1022,10 @@
                 state.hasSubmitted = true;
                 state.view = 'results';
                 await loadResults();
+
+                // Update voter count for this contest
+                await updateVoterCountForContest(state.currentContest.id);
+
                 state.modalProcessing = false;
                 render();
             } catch (error) {
@@ -1183,6 +1227,117 @@
             render();
         }
 
+        function toggleUserDropdown() {
+            state.showUserDropdown = !state.showUserDropdown;
+            render();
+        }
+
+        async function shareContest(contestId) {
+            try {
+                const shareUrl = `${window.location.origin}${window.location.pathname}#contest=${contestId}`;
+
+                // Try to use modern clipboard API
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(shareUrl);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = shareUrl;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+
+                showToast('🔗 Contest link copied!', 'success');
+            } catch (error) {
+                console.error('Failed to copy link:', error);
+                showToast('Failed to copy link', 'error');
+            }
+        }
+
+        async function loadSharedContest(contestId) {
+            try {
+                console.log('Loading shared contest:', contestId);
+
+                // Fetch contest from database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const contests = await response.json();
+
+                if (!contests || contests.length === 0) {
+                    showAlert('Contest not found. It may have been deleted.', '❌');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                const contestData = contests[0];
+                const contest = {
+                    id: contestData.id,
+                    title: contestData.title,
+                    isLocked: contestData.is_locked,
+                    resultsPublic: contestData.results_public,
+                    createdBy: contestData.created_by,
+                    creatorName: contestData.creator.username,
+                    creatorAvatar: contestData.creator.avatar,
+                    createdAt: contestData.created_at,
+                    images: contestData.images
+                        .sort((a, b) => a.image_order - b.image_order)
+                        .map(img => ({
+                            id: img.id,
+                            url: img.url,
+                            author: img.author,
+                            isFileUpload: img.is_file_upload
+                        }))
+                };
+
+                // Check if user is banned
+                if (state.bannedUsers.includes(state.user?.id)) {
+                    showAlert('Your account has been restricted. You cannot access this contest.', '🚫');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                // Check if user has already voted
+                const hasVoted = state.userVotedContests[contest.id];
+
+                if (hasVoted || contest.isLocked) {
+                    // Show results
+                    await viewResults(contest);
+                } else {
+                    // Start voting
+                    startVoting(contest);
+                }
+            } catch (error) {
+                console.error('Error loading shared contest:', error);
+                showAlert('Failed to load contest: ' + error.message, '❌');
+                window.location.hash = '';
+                state.view = 'home';
+                render();
+            }
+        }
+
+        function handleHashChange() {
+            const hash = window.location.hash.slice(1); // Remove '#'
+            const params = new URLSearchParams(hash);
+            const contestId = params.get('contest');
+
+            if (contestId && state.isLoggedIn) {
+                loadSharedContest(contestId);
+            }
+        }
+
         function updateImageLabel(index, label) {
             if (state.newContest.images[index]) {
                 // Convert Discord CDN URLs to media.discordapp.net for compatibility
@@ -1380,6 +1535,7 @@
                     createdBy: contest.created_by,
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
+                    createdAt: contest.created_at,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -1390,11 +1546,46 @@
                         }))
                 }));
 
+                // Fetch voter counts for all contests in parallel
+                await loadAllVoterCounts();
+
                 render();
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
+            }
+        }
+
+        async function loadAllVoterCounts() {
+            try {
+                // Fetch all votes to calculate voter counts
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const votes = await response.json();
+
+                // Group votes by contest_id and count unique voters
+                const contestVoters = {};
+                votes.forEach(vote => {
+                    if (!contestVoters[vote.contest_id]) {
+                        contestVoters[vote.contest_id] = new Set();
+                    }
+                    contestVoters[vote.contest_id].add(vote.user_id);
+                });
+
+                // Update cache with voter counts
+                Object.keys(contestVoters).forEach(contestId => {
+                    voterCountCache[contestId] = contestVoters[contestId].size;
+                });
+
+                console.log('📊 Voter counts loaded:', voterCountCache);
+            } catch (error) {
+                console.error('Error loading voter counts:', error);
             }
         }
 
@@ -1489,6 +1680,10 @@
             state.hasSubmitted = false;
             state.mockResults = null;
             state.view = 'vote';
+
+            // Update URL hash for shareable link
+            window.location.hash = `contest=${contest.id}`;
+
             render();
         }
 
@@ -1522,6 +1717,9 @@
 
                 // Subscribe to live vote updates for this contest
                 subscribeToVoteChanges(contest.id);
+
+                // Update URL hash for shareable link
+                window.location.hash = `contest=${contest.id}`;
 
                 render();
             } catch (error) {
@@ -1637,7 +1835,7 @@
                 return;
             }
             showConfirm(
-                'Your votes cannot be changed after submission. Are you sure? Please double-check your votes to make sure you\'re satisfied.',
+                'Your votes cannot be changed after submission. If you made a mistake, you can contact me. Are you sure?',
                 'confirmSubmitVotes',
                 '🗳️'
             );
@@ -1716,6 +1914,10 @@
             state.showBreakdownModal = null;
             state.mockResults = null;
             state.showMyVotes = false;
+
+            // Clear URL hash
+            window.location.hash = '';
+
             render();
         }
 
@@ -2081,24 +2283,26 @@
                             </button>
                         ` : `
                             <div class="flex items-center gap-2">
-                                <div class="relative group">
-                                    <div class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                                <div class="relative">
+                                    <button onclick="toggleUserDropdown()" class="flex items-center gap-2 cursor-pointer hover:opacity-80 focus:outline-none">
                                         <img src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
                                         <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <svg class="w-4 h-4 transition-transform ${state.showUserDropdown ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                         </svg>
-                                    </div>
-                                    <div class="hidden group-hover:block absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
-                                        ${isAdmin ? `
-                                            <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                                ⚙️ Admin Dashboard
+                                    </button>
+                                    ${state.showUserDropdown ? `
+                                        <div class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
+                                            ${isAdmin ? `
+                                                <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                    ⚙️ Admin Dashboard
+                                                </button>
+                                            ` : ''}
+                                            <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
+                                                Logout
                                             </button>
-                                        ` : ''}
-                                        <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
-                                            Logout
-                                        </button>
-                                    </div>
+                                        </div>
+                                    ` : ''}
                                 </div>
                             </div>
                         `}
@@ -2279,7 +2483,12 @@
                             const hasVoted = state.userVotedContests[contest.id];
                             const voterCount = getVoterCount(contest);
                             const canDelete = canDeleteContest(contest);
-                            const createdDate = contest.createdAt ? new Date(contest.createdAt).toLocaleString() : '';
+                            // Format date as "day month year" (e.g., "30 Nov 2025")
+                            const createdDate = contest.createdAt ? (() => {
+                                const date = new Date(contest.createdAt);
+                                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+                            })() : '';
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
@@ -2313,8 +2522,7 @@
                                                 <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate">by ${contest.creatorName}</span>
-                                                ${createdDate ? `<span class="whitespace-nowrap">📅 ${createdDate}</span>` : ''}
+                                                <span class="truncate">by ${contest.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
                                                 <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
@@ -2347,6 +2555,15 @@
                                                 Start Voting
                                             </button>
                                         `}
+                                        <button
+                                            onclick='shareContest("${contest.id}")'
+                                            class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md text-sm flex items-center gap-1"
+                                            title="Share contest"
+                                        >
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                                            </svg>
+                                        </button>
                                         ${canDelete ? `
                                             <button 
                                                 onclick="deleteContest('${contest.id}')"
@@ -2513,8 +2730,8 @@
 
                             ${(() => {
                                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-                                const imageContainerMaxHeight = isMobile ? '50vh' : '70vh';
-                                const imageContainerMinHeight = '400px';
+                                const imageContainerMaxHeight = '70vh';
+                                const imageContainerMinHeight = '300px';
 
                                 return `
                                     <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
@@ -3234,6 +3451,8 @@
         window.startVoting = startVoting;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
+        window.toggleUserDropdown = toggleUserDropdown;
+        window.shareContest = shareContest;
         window.toggleContestLock = toggleContestLock;
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
@@ -3334,6 +3553,14 @@
                 await loadUserVotes();
             }
             render();
+
+            // Setup hash change listener for browser back/forward
+            window.addEventListener('hashchange', handleHashChange);
+
+            // Check for shared contest link on initial load
+            if (window.location.hash && state.isLoggedIn) {
+                handleHashChange();
+            }
         })();
     </script>
 </body>
