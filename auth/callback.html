@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logging in... - Peony</title>
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(to bottom, 
+                rgba(252, 231, 243, 0.5),
+                rgba(255, 255, 255, 1) 30%,
+                rgba(220, 252, 231, 0.5)
+            );
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 3rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #C77BA6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .flower { font-size: 3rem; margin-bottom: 1rem; }
+        h2 { color: #333; margin-bottom: 0.5rem; }
+        p { color: #666; }
+        .error { color: #dc2626; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="flower">🌺</div>
+        <div class="spinner"></div>
+        <h2 id="status">Logging you in...</h2>
+        <p id="message">Please wait a moment</p>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
+
+        async function handleCallback() {
+            // Get the auth fragment from URL
+            const fragment = window.location.hash.substring(1);
+            const params = new URLSearchParams(fragment);
+            
+            const accessToken = params.get('access_token');
+            const error = params.get('error');
+            const errorDescription = params.get('error_description');
+
+            if (error) {
+                document.getElementById('status').textContent = 'Login failed';
+                document.getElementById('message').textContent = errorDescription || error;
+                document.getElementById('message').className = 'error';
+                setTimeout(() => window.location.href = '../index.html', 3000);
+                return;
+            }
+
+            if (!accessToken) {
+                document.getElementById('status').textContent = 'No access token received';
+                document.getElementById('message').textContent = 'Redirecting...';
+                setTimeout(() => window.location.href = '../index.html', 2000);
+                return;
+            }
+
+            try {
+                // Get user info from Discord using the access token
+                const userResponse = await fetch('https://discord.com/api/users/@me', {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                });
+
+                if (!userResponse.ok) {
+                    throw new Error('Failed to fetch user data');
+                }
+
+                const discordUser = await userResponse.json();
+
+                // Create user session object
+                const user = {
+                    id: discordUser.id,
+                    username: discordUser.global_name || discordUser.username,
+                    avatar: discordUser.avatar 
+                        ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
+                        : `https://api.dicebear.com/7.x/avataaars/svg?seed=${discordUser.id}`,
+                    accessToken: accessToken,
+                    expiresAt: Date.now() + (604800 * 1000) // 7 days
+                };
+
+                // Store in localStorage
+                localStorage.setItem('peony_user', JSON.stringify(user));
+
+                // Create/update user in Supabase database
+                await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'resolution=merge-duplicates'
+                    },
+                    body: JSON.stringify({
+                        id: user.id,
+                        username: user.username,
+                        avatar: user.avatar
+                    })
+                });
+
+                // Redirect to main app
+                window.location.href = '../index.html';
+
+            } catch (err) {
+                console.error('Auth error:', err);
+                document.getElementById('status').textContent = 'Login failed';
+                document.getElementById('message').textContent = err.message;
+                document.getElementById('message').className = 'error';
+                setTimeout(() => window.location.href = '../index.html', 3000);
+            }
+        }
+
+        handleCallback();
+    </script>
+</body>
+</html>
