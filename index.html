@@ -1035,7 +1035,7 @@
             const { data, error } = await supabase.auth.signInWithOAuth({
                 provider: 'discord',
                 options: {
-                    redirectTo: 'https://homeland-bloc.github.io/peony',
+                    redirectTo: 'https://homeland-bloc.github.io/image-ranking/',
                     scopes: 'identify'  // Only request username, avatar, ID - NOT email
                 }
             });
