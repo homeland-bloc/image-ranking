@@ -2730,11 +2730,14 @@
 
                             ${(() => {
                                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-                                const imageContainerMaxHeight = '70vh';
+                                // Mobile: max-width ~95vw, max-height ~55vh
+                                // Desktop: max-width ~85vw, max-height ~50vh
+                                const imageContainerMaxWidth = isMobile ? '95vw' : '85vw';
+                                const imageContainerMaxHeight = isMobile ? '55vh' : '50vh';
                                 const imageContainerMinHeight = '300px';
 
                                 return `
-                                    <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
+                                    <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="max-width: ${imageContainerMaxWidth}; max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
                                         ${state.currentContest.labelsEnabled && currentImage.label ? `
                                             <div class="absolute top-0 left-0 right-0 bg-white px-4 py-2 text-center border-b border-gray-200 z-10">
                                                 <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
