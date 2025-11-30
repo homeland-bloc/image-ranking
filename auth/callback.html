@@ -129,6 +129,7 @@
                 localStorage.setItem('peony_user', JSON.stringify(user));
 
                 // Create/update user in Supabase database
+                console.log('👤 Creating/updating user in database:', user.id, user.username);
                 try {
                     const upsertResponse = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
                         method: 'POST',
@@ -147,10 +148,17 @@
                     });
 
                     if (!upsertResponse.ok) {
-                        console.error('Failed to upsert user:', await upsertResponse.text());
+                        const errorText = await upsertResponse.text();
+                        console.error('❌ Failed to upsert user to database:', errorText);
+                        console.error('❌ Response status:', upsertResponse.status);
+                        console.error('❌ User data:', { id: user.id, username: user.username, avatar: user.avatar });
+                        // Don't throw - allow login to continue even if database insert fails
+                    } else {
+                        console.log('✅ User successfully upserted to database');
                     }
                 } catch (error) {
-                    console.error('Error upserting user:', error);
+                    console.error('❌ Error upserting user to database:', error);
+                    // Don't throw - allow login to continue even if database insert fails
                 }
 
                 // Redirect to main app

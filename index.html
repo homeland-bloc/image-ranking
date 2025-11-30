@@ -1141,6 +1141,7 @@
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
         function ensureLocalUser(user) {
             // returns a Promise that resolves when the user exists (or after insertion)
+            console.log('👤 Ensuring user exists in database:', user.id, user.username);
             return fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`, {
                 headers: {
                     'apikey': SUPABASE_ANON_KEY,
@@ -1150,6 +1151,7 @@
             .then(r => r.json())
             .then(rows => {
                 if (rows.length === 0) {
+                    console.log('👤 User not found in database, creating new user');
                     // create the user row in public.users
                     return fetch(`${SUPABASE_URL}/rest/v1/users`, {
                         method: 'POST',
@@ -1167,18 +1169,24 @@
                         // If the insert fails, still let caller continue but log error
                         if (!resp.ok) {
                             return resp.text().then(t => {
-                                console.error('Failed to insert local user:', t);
+                                console.error('❌ Failed to insert local user:', t);
+                                console.error('❌ Response status:', resp.status);
+                                console.error('❌ User data:', { id: user.id, username: user.username, avatar: user.avatar });
                                 // swallow error to avoid locking login flow; caller can handle later
                                 return;
                             });
+                        } else {
+                            console.log('✅ User successfully created in database');
                         }
                     });
+                } else {
+                    console.log('✅ User already exists in database');
                 }
                 // user already exists: resolve immediately
                 return;
             })
             .catch(err => {
-                console.error('ensureLocalUser error:', err);
+                console.error('❌ ensureLocalUser error:', err);
                 // resolve anyway so login flow continues; caller may show an error later
                 return;
             });
@@ -1425,10 +1433,42 @@
             render();
         }
 
-        function showAdminDashboard() {
-            state.showAdminDashboard = true;
-            document.body.classList.add('modal-open');
-            render();
+        async function showAdminDashboard() {
+            try {
+                // Load all users from database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*&order=username.asc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Failed to load users:', errorData);
+                    throw new Error(errorData.message || 'Failed to load users');
+                }
+
+                const users = await response.json();
+                console.log('📊 Loaded users from database:', users);
+
+                // Update state with all users (including current user, banned users, etc.)
+                state.allUsers = users.map(user => ({
+                    id: user.id,
+                    username: user.username,
+                    avatar: user.avatar,
+                    isBanned: user.is_banned || false
+                }));
+
+                console.log('📊 All users in state:', state.allUsers);
+
+                state.showAdminDashboard = true;
+                document.body.classList.add('modal-open');
+                render();
+            } catch (error) {
+                console.error('Error loading admin dashboard:', error);
+                showAlert('Failed to load admin dashboard: ' + error.message, '❌');
+            }
         }
 
         function closeAdminDashboard() {
