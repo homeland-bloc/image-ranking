@@ -24,6 +24,9 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="favicon/site.webmanifest">
 
+    <!-- Canonical URL for GitHub Pages PWA -->
+    <link rel="canonical" href="https://bicipikay.github.io/peony/">
+
     <!-- Theme color for mobile browsers -->
     <meta name="theme-color" content="#C77BA6">
 
@@ -334,12 +337,16 @@
             return colors[score] || 'rgb(156, 163, 175)';
         }
 
-        function getCategoryLabel(min, max) {
+        function getCategoryLabel(min, max, isMissing) {
+            if (isMissing) return 'Votes Missing';
             if (min === 4.5) return '4.5 - 5.0';
             return `${min.toFixed(1)} - ${max.toFixed(2)}`;
         }
 
-        function getCategoryColor(min) {
+        function getCategoryColor(min, isMissing) {
+            // Special styling for missing votes - black text on dark gray background
+            if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
+
             // Bright green with cyan/blue undertone for top scores
             if (min >= 4.5) return { color: 'text-emerald-700', bg: 'bg-emerald-100', textColor: 'rgb(16, 185, 129)', bgColor: 'rgb(209, 250, 229)' };
             // Lime green
@@ -356,10 +363,8 @@
             if (min >= 1.5) return { color: 'text-red-500', bg: 'bg-red-100', textColor: 'rgb(239, 68, 68)', bgColor: 'rgb(254, 226, 226)' };
             // Red
             if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
-            // Dark red
-            if (min >= 0.5) return { color: 'text-red-700', bg: 'bg-red-300', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(252, 165, 165)' };
-            // Darkest red
-            return { color: 'text-red-800', bg: 'bg-red-400', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(248, 113, 113)' };
+            // Fallback for any edge cases
+            return { color: 'text-gray-600', bg: 'bg-gray-200', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(229, 231, 235)' };
         }
 
         // Seeded random number generator for consistent demo voters
@@ -484,16 +489,26 @@
                 { min: 2.5, max: 2.99 },
                 { min: 2.0, max: 2.49 },
                 { min: 1.5, max: 1.99 },
-                { min: 1.0, max: 1.49 },
-                { min: 0.5, max: 0.99 },
-                { min: 0.0, max: 0.49 }
+                { min: 1.0, max: 1.49 }
             ];
-            
+
             const grouped = {};
-            
+
+            // Check for images with missing votes (averageScore === 0 or null)
+            const missingVotes = results.filter(r => !r.averageScore || r.averageScore === 0);
+            if (missingVotes.length > 0) {
+                grouped['missing'] = {
+                    items: missingVotes,
+                    min: 0,
+                    max: 0,
+                    isMissing: true
+                };
+            }
+
+            // Group images by score ranges (only those with actual votes)
             ranges.forEach(range => {
                 const key = `${range.min}-${range.max}`;
-                const items = results.filter(r => r.averageScore >= range.min && r.averageScore <= range.max);
+                const items = results.filter(r => r.averageScore > 0 && r.averageScore >= range.min && r.averageScore <= range.max);
                 if (items.length > 0) {
                     grouped[key] = {
                         items: items.sort((a, b) => b.averageScore - a.averageScore),
@@ -502,7 +517,7 @@
                     };
                 }
             });
-            
+
             return grouped;
         }
 
@@ -547,9 +562,16 @@
             const voterVotes = {};
 
             contestList.forEach(contest => {
-                // Generate mock results for this contest if not cached
-                const userVotes = contest.id === state.currentContest.id ? state.votes : (state.userVotedContests[contest.id] || {});
-                const results = state.mockResultsCache[contest.id] || generateMockResults(contest, userVotes);
+                // Use actual loaded results if available for current contest, otherwise generate mock results
+                let results;
+                if (contest.id === state.currentContest?.id && state.mockResults) {
+                    // Use the actual loaded results from the database
+                    results = state.mockResults;
+                } else {
+                    // For other contests or when results not loaded, use cached or generate mock
+                    const userVotes = contest.id === state.currentContest?.id ? state.votes : (state.userVotedContests[contest.id] || {});
+                    results = state.mockResultsCache[contest.id] || generateMockResults(contest, userVotes);
+                }
 
                 // Collect votes from all images
                 results.forEach(imageResult => {
@@ -778,16 +800,10 @@
                 return;
             }
 
-            // Check for duplicate title
+            // Check for duplicate title - BLOCK creation entirely
             const existingContest = state.contests.find(c => c.title.toLowerCase() === title.toLowerCase());
             if (existingContest) {
-                showConfirm(
-                    'A contest with this title already exists. Create anyway?',
-                    'confirmCreateWithDuplicateTitle',
-                    '🚨'
-                );
-                // Store the title temporarily for the confirmation
-                state.tempContestTitle = title;
+                showAlert('A contest with this title already exists. Please choose a different title.', '❌');
                 return;
             }
 
@@ -994,7 +1010,7 @@
                 state.modalProcessing = false;
 
                 // Show success message
-                showAlert('Contest created successfully!', '✅');
+                showAlert('Contest created successfully!', '✨');
 
             } catch (error) {
                 console.error('Full contest creation error:', error);
@@ -1206,14 +1222,37 @@
         }
 
         async function viewResults(contest) {
-            state.currentContest = contest;
-            const userVotes = state.userVotedContests[contest.id] || {};
-            state.votes = userVotes;
-            await loadResults();
-            state.showMyVotes = false;
-            state.joinedContests = []; // Clear merged contests when viewing single contest
-            state.view = 'results';
-            render();
+            // Check if contest still exists in the database
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const contests = await response.json();
+
+                // If contest doesn't exist (deleted), refresh the page
+                if (!contests || contests.length === 0) {
+                    console.log('Contest no longer exists, refreshing...');
+                    showAlert('Contest was deleted. Refreshing...', '🔄');
+                    setTimeout(() => location.reload(), 1500);
+                    return;
+                }
+
+                state.currentContest = contest;
+                const userVotes = state.userVotedContests[contest.id] || {};
+                state.votes = userVotes;
+                await loadResults();
+                state.showMyVotes = false;
+                state.joinedContests = []; // Clear merged contests when viewing single contest
+                state.view = 'results';
+                render();
+            } catch (error) {
+                console.error('Error checking contest existence:', error);
+                showAlert('Error loading results: ' + error.message, '❌');
+            }
         }
 
         async function viewLockedResults(contest) {
@@ -1378,7 +1417,7 @@
         }
 
 
-        function backToHome() {
+        async function backToHome() {
             if (state.view === 'vote' && !state.hasSubmitted) {
                 showConfirm(
                     'Your progress will be lost if you proceed. Are you sure?',
@@ -1387,6 +1426,12 @@
                 );
                 return;
             }
+
+            // Refresh contest list when navigating back from results to ensure fresh data
+            if (state.view === 'results') {
+                await loadContests();
+            }
+
             state.view = 'home';
             state.currentContest = null;
             state.showBreakdownModal = null;
@@ -1413,7 +1458,12 @@
             render();
         }
 
-        function setResultsView(view) {
+        async function setResultsView(view) {
+            // Refresh results when switching tabs to ensure fresh data
+            if (state.currentContest) {
+                await loadResults();
+            }
+
             state.resultsView = view;
             state.showMyVotes = view === 'myVotes';  // Backwards compatibility
             render();
@@ -1484,18 +1534,76 @@
             render();
         }
 
-        function banUser(userId) {
-            if (!state.bannedUsers.includes(userId)) {
-                state.bannedUsers.push(userId);
+        async function banUser(userId) {
+            try {
+                // Update database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ is_banned: true })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to ban user in database');
+                }
+
+                // Update local state
+                if (!state.bannedUsers.includes(userId)) {
+                    state.bannedUsers.push(userId);
+                }
+
+                // Update allUsers state
+                const userIndex = state.allUsers.findIndex(u => u.id === userId);
+                if (userIndex !== -1) {
+                    state.allUsers[userIndex].isBanned = true;
+                }
+
+                showAlert('User has been banned.', '✅');
+                render();
+            } catch (error) {
+                console.error('Error banning user:', error);
+                showAlert('Failed to ban user: ' + error.message, '❌');
             }
-            showAlert('User has been banned.', '✅');
-            render();
         }
 
-        function unbanUser(userId) {
-            state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
-            showAlert('User has been unbanned.', '✅');
-            render();
+        async function unbanUser(userId) {
+            try {
+                // Update database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ is_banned: false })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to unban user in database');
+                }
+
+                // Update local state
+                state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
+
+                // Update allUsers state
+                const userIndex = state.allUsers.findIndex(u => u.id === userId);
+                if (userIndex !== -1) {
+                    state.allUsers[userIndex].isBanned = false;
+                }
+
+                showAlert('User has been unbanned.', '✅');
+                render();
+            } catch (error) {
+                console.error('Error unbanning user:', error);
+                showAlert('Failed to unban user: ' + error.message, '❌');
+            }
         }
 
         function confirmBanUser(userId) {
@@ -2130,11 +2238,11 @@
 
                             ${(() => {
                                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-                                const imageContainerHeight = isMobile ? '50vh' : '60vh';
-                                const maxImageHeight = isMobile ? 'none' : '600px';
+                                const imageContainerMaxHeight = isMobile ? '50vh' : '70vh';
+                                const imageContainerMinHeight = '400px';
 
                                 return `
-                                    <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="height: ${imageContainerHeight};">
+                                    <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
                                         ${state.currentContest.labelsEnabled && currentImage.label ? `
                                             <div class="absolute top-0 left-0 right-0 bg-white px-4 py-2 text-center border-b border-gray-200 z-10">
                                                 <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
@@ -2144,7 +2252,6 @@
                                             src="${currentImage.url}"
                                             alt="Image ${state.currentImageIndex + 1}"
                                             class="max-h-full max-w-full object-contain"
-                                            style="${maxImageHeight !== 'none' ? `max-height: ${maxImageHeight};` : ''}"
                                             onload="this.parentElement.classList.remove('image-loading')"
                                         />
                                         ${currentVote ? `
@@ -2485,11 +2592,11 @@
                                     </div>
                                 `;
                             } else {
-                                const colorStyle = getCategoryColor(group.min);
+                                const colorStyle = getCategoryColor(group.min, group.isMissing);
                                 return `
                                     <div class="mb-4">
                                         <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                            ${getCategoryLabel(group.min, group.max)}
+                                            ${getCategoryLabel(group.min, group.max, group.isMissing)}
                                         </h3>
                                         <div class="flex flex-wrap gap-1">
                                             ${group.items.map(item => `
