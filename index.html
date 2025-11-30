@@ -32,6 +32,9 @@
 
     <title>Peony</title>
 
+    <!-- Supabase JS Client for Realtime -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -222,6 +225,15 @@
         .safe-header {
             padding-top: env(safe-area-inset-top);
         }
+        /* Realtime toast notifications - slide in from right */
+        @keyframes slideInRight {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOutRight {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(400px); opacity: 0; }
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -263,6 +275,19 @@
 
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
+
+        // Initialize Supabase client for Realtime functionality
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Realtime subscription management - track active channels
+        let realtimeChannels = {
+            votes: null,        // Live vote updates for current contest
+            contests: null,     // Contest deletion detection (global)
+            merges: null        // Merge changes detection
+        };
+
+        // Fallback polling interval (only used if Realtime fails)
+        let pollingInterval = null;
 
         let state = {
             isLoggedIn: false,
@@ -325,6 +350,249 @@
             state.loadingMessage = '';
             render();
         }
+
+        // ==================== REALTIME & TOAST NOTIFICATIONS ====================
+
+        /**
+         * Show toast notification (lightweight, non-disruptive)
+         * Used for realtime updates, background operations
+         * @param {string} message - Message to display
+         * @param {string} type - 'info', 'success', 'error', or 'warning'
+         * @param {number} duration - Display duration in ms (default 3000)
+         */
+        function showToast(message, type = 'info', duration = 3000) {
+            const toast = document.createElement('div');
+            const bgColors = {
+                info: 'bg-blue-500',
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                warning: 'bg-yellow-500'
+            };
+
+            toast.className = `fixed top-20 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all transform translate-x-0 ${bgColors[type] || 'bg-gray-700'}`;
+            toast.textContent = message;
+            toast.style.animation = 'slideInRight 0.3s ease-out';
+
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideOutRight 0.3s ease-out';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        /**
+         * Refresh current results without full page reload
+         * Re-fetches votes from database and recalculates results
+         * Preserves scroll position for smooth UX
+         */
+        async function refreshCurrentResults() {
+            if (!state.currentContest || state.view !== 'results') return;
+
+            try {
+                console.log('🔄 Refreshing results for contest:', state.currentContest.id);
+
+                // Re-load results from database
+                await loadResults();
+
+                // Re-render without losing scroll position
+                const scrollPosition = window.scrollY;
+                render();
+                window.scrollTo(0, scrollPosition);
+
+                console.log('✅ Results refreshed successfully');
+            } catch (error) {
+                console.error('❌ Failed to refresh results:', error);
+                showToast('Failed to refresh results', 'error');
+            }
+        }
+
+        /**
+         * Subscribe to live vote updates for a specific contest
+         * Automatically refreshes results when new votes are submitted
+         * @param {string} contestId - UUID of contest to monitor
+         */
+        function subscribeToVoteChanges(contestId) {
+            // Remove old subscription if exists
+            if (realtimeChannels.votes) {
+                console.log('🔌 Removing old vote subscription');
+                supabase.removeChannel(realtimeChannels.votes);
+            }
+
+            console.log('📡 Subscribing to vote changes for contest:', contestId);
+
+            // Create new subscription
+            realtimeChannels.votes = supabase
+                .channel(`votes-contest-${contestId}`)
+                .on('postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'votes',
+                        filter: `contest_id=eq.${contestId}`
+                    },
+                    async (payload) => {
+                        console.log('✨ New vote detected:', payload.new);
+
+                        // Show toast notification
+                        showToast('✨ New vote received! Updating results...', 'info');
+
+                        // Re-fetch results smoothly (NO hard reload)
+                        await refreshCurrentResults();
+                    }
+                )
+                .on('postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'votes',
+                        filter: `contest_id=eq.${contestId}`
+                    },
+                    async (payload) => {
+                        console.log('🔄 Vote updated:', payload.new);
+                        showToast('🔄 Vote updated! Refreshing...', 'info');
+                        await refreshCurrentResults();
+                    }
+                )
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log('✅ Successfully subscribed to vote changes');
+                    } else if (status === 'CHANNEL_ERROR') {
+                        console.error('❌ Failed to subscribe to vote changes');
+                        handleRealtimeError(new Error('Vote subscription failed'));
+                    }
+                });
+        }
+
+        /**
+         * Subscribe to contest deletions (global - stays active during session)
+         * Redirects user to home if viewing a deleted contest
+         */
+        function subscribeToContestDeletions() {
+            if (realtimeChannels.contests) {
+                console.log('🔌 Removing old contest deletion subscription');
+                supabase.removeChannel(realtimeChannels.contests);
+            }
+
+            console.log('📡 Subscribing to contest deletions');
+
+            realtimeChannels.contests = supabase
+                .channel('contest-deletions')
+                .on('postgres_changes',
+                    {
+                        event: 'DELETE',
+                        schema: 'public',
+                        table: 'contests'
+                    },
+                    async (payload) => {
+                        const deletedId = payload.old.id;
+                        console.log('🗑️ Contest deleted:', deletedId);
+
+                        // If viewing deleted contest, go home
+                        if (state.currentContest?.id === deletedId) {
+                            showAlert('This contest was deleted by its creator.', '🗑️');
+                            state.view = 'home';
+                            state.currentContest = null;
+                            unsubscribeFromVotes();
+
+                            // Refresh contest list
+                            await loadContests();
+                            render();
+                        } else {
+                            // Just remove from local contests list
+                            state.contests = state.contests.filter(c => c.id !== deletedId);
+
+                            // Re-render if on home view
+                            if (state.view === 'home') {
+                                render();
+                            }
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log('✅ Successfully subscribed to contest deletions');
+                    } else if (status === 'CHANNEL_ERROR') {
+                        console.error('❌ Failed to subscribe to contest deletions');
+                    }
+                });
+        }
+
+        /**
+         * Unsubscribe from vote updates only
+         * Called when leaving results view
+         */
+        function unsubscribeFromVotes() {
+            if (realtimeChannels.votes) {
+                console.log('🔌 Unsubscribing from vote changes');
+                supabase.removeChannel(realtimeChannels.votes);
+                realtimeChannels.votes = null;
+            }
+        }
+
+        /**
+         * Unsubscribe from all realtime channels
+         * Called on logout or app cleanup
+         */
+        function unsubscribeAll() {
+            console.log('🔌 Unsubscribing from all realtime channels');
+
+            Object.keys(realtimeChannels).forEach(key => {
+                if (realtimeChannels[key]) {
+                    supabase.removeChannel(realtimeChannels[key]);
+                    realtimeChannels[key] = null;
+                }
+            });
+
+            // Clear polling fallback if active
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        /**
+         * Handle Realtime connection errors
+         * Falls back to polling if Realtime is unavailable
+         * @param {Error} error - The error that occurred
+         */
+        function handleRealtimeError(error) {
+            console.error('❌ Realtime error:', error);
+
+            // Fall back to polling if Realtime fails and we're viewing results
+            if (state.view === 'results' && state.currentContest) {
+                console.log('🔄 Falling back to polling...');
+                showToast('⚠️ Live updates unavailable, using backup sync', 'warning', 5000);
+                startPollingFallback();
+            }
+        }
+
+        /**
+         * Fallback polling (only used when Realtime fails)
+         * Polls for updates every 10 seconds
+         */
+        function startPollingFallback() {
+            // Clear existing interval if any
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+
+            console.log('🔄 Starting fallback polling (10s interval)');
+
+            pollingInterval = setInterval(async () => {
+                if (state.view === 'results' && state.currentContest) {
+                    console.log('🔄 Polling for updates...');
+                    await refreshCurrentResults();
+                } else {
+                    // Stop polling if no longer viewing results
+                    console.log('🛑 Stopping polling (not in results view)');
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+            }, 10000); // Poll every 10 seconds
+        }
+
+        // ==================== END REALTIME ====================
 
         function getScoreColor(score) {
             const colors = {
@@ -1083,6 +1351,9 @@
         }
 
         function logout() {
+            // Clean up all realtime subscriptions before logout
+            unsubscribeAll();
+
             localStorage.removeItem('peony_user');
             state.isLoggedIn = false;
             state.user = null;
@@ -1248,6 +1519,10 @@
                 state.showMyVotes = false;
                 state.joinedContests = []; // Clear merged contests when viewing single contest
                 state.view = 'results';
+
+                // Subscribe to live vote updates for this contest
+                subscribeToVoteChanges(contest.id);
+
                 render();
             } catch (error) {
                 console.error('Error checking contest existence:', error);
@@ -1260,6 +1535,9 @@
             state.votes = {};
             await loadResults();
             state.showMyVotes = false;
+
+            // Subscribe to live vote updates for this locked contest
+            subscribeToVoteChanges(contest.id);
             state.joinedContests = []; // Clear merged contests when viewing single contest
             state.view = 'results';
             render();
@@ -1427,9 +1705,10 @@
                 return;
             }
 
-            // Refresh contest list when navigating back from results to ensure fresh data
+            // Unsubscribe from vote updates when leaving results view
             if (state.view === 'results') {
-                await loadContests();
+                unsubscribeFromVotes();
+                await loadContests();  // Refresh contest list to ensure fresh data
             }
 
             state.view = 'home';
@@ -1458,12 +1737,8 @@
             render();
         }
 
-        async function setResultsView(view) {
-            // Refresh results when switching tabs to ensure fresh data
-            if (state.currentContest) {
-                await loadResults();
-            }
-
+        function setResultsView(view) {
+            // No need to refresh with Realtime - data is already live!
             state.resultsView = view;
             state.showMyVotes = view === 'myVotes';  // Backwards compatibility
             render();
@@ -3031,6 +3306,10 @@
                                 .then(() => {
                                     // proceed normally once the user row is present (or insertion attempted)
                                     loadContests();
+
+                                    // Subscribe to contest deletions (global, stays active during session)
+                                    subscribeToContestDeletions();
+
                                     render();
                                 })
                                 .catch((err) => {
