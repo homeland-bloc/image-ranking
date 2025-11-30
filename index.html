@@ -11,19 +11,18 @@
     <meta name="apple-mobile-web-app-title" content="Peony">
 
     <!-- Favicon for browsers -->
-    <link rel="icon" type="image/x-icon" href="/favicon/favicon.ico">
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png">
+    <link rel="icon" type="image/x-icon" href="favicon/favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png">
 
     <!-- Apple Touch Icon for iOS home screen -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
 
     <!-- Android Chrome Icons -->
-    <link rel="icon" type="image/png" sizes="192x192" href="/favicon/android-chrome-192x192.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="/favicon/android-chrome-512x512.png">
-
+    <link rel="icon" type="image/png" sizes="192x192" href="favicon/android-chrome-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="favicon/android-chrome-512x512.png">
     <!-- PWA Manifest -->
-    <link rel="manifest" href="/favicon/site.webmanifest">
+    <link rel="manifest" href="favicon/site.webmanifest">
 
     <!-- Theme color for mobile browsers -->
     <meta name="theme-color" content="#C77BA6">
@@ -257,7 +256,7 @@
 
         // Discord OAuth Configuration
         const DISCORD_CLIENT_ID = '1442282566810861568';  // Replace with your actual Discord Client ID
-        const DISCORD_REDIRECT_URI = 'https://homeland-bloc.github.io/image-ranking/auth/callback';  // Replace with YOUR actual GitHub Pages URL + /auth/callback
+        const DISCORD_REDIRECT_URI = 'https://bicipikay.github.io/peony/auth/callback';  // Replace with YOUR actual GitHub Pages URL + /auth/callback
 
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
@@ -883,35 +882,38 @@
         }
 
         async function finishCreateContest() {
+            if (state.modalProcessing) return;
+            state.modalProcessing = true;
+
             if (state.newContest.images.length === 0) {
                 showAlert('Add at least one image!', '❌');
+                state.modalProcessing = false;
                 return;
             }
 
-            const contestId = 'contest-' + Date.now();
-
             try {
-                // Insert contest
                 const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'return=representation'
                     },
                     body: JSON.stringify({
-                        id: contestId,
                         title: state.newContest.title,
                         created_by: state.user.id
                     })
                 });
 
                 if (!contestResponse.ok) {
-                    throw new Error('Failed to create contest');
+                    throw new Error(`status ${contestResponse.status}`);
                 }
 
-                // Insert images
+                const createdContest = await contestResponse.json();
+                const contestId = createdContest[0].id;
+
+                // Insert images...
                 const imagesToInsert = state.newContest.images.map((img, i) => ({
                     contest_id: contestId,
                     url: img.url,
@@ -932,16 +934,19 @@
                 });
 
                 if (!imagesResponse.ok) {
-                    throw new Error('Failed to add images');
+                    throw new Error(`status ${imagesResponse.status}`);
                 }
 
                 state.newContest = { title: '', images: [] };
                 await loadContests();
                 state.view = 'home';
+
                 showAlert('Contest created successfully!', '✅');
-            } catch (error) {
-                showAlert('Failed to create contest: ' + error.message, '❌');
+            } catch (err) {
+                showAlert('Failed to create contest: ' + err.message, '❌');
             }
+
+            state.modalProcessing = false;
         }
 
         async function loadImageFromUrl(url) {
@@ -1074,6 +1079,53 @@
                 console.error('Error loading votes:', error);
             }
         }
+
+        // --- ADD: ensureLocalUser (insert this near other helper functions) ---
+        function ensureLocalUser(user) {
+            // returns a Promise that resolves when the user exists (or after insertion)
+            return fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`, {
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                }
+            })
+            .then(r => r.json())
+            .then(rows => {
+                if (rows.length === 0) {
+                    // create the user row in public.users
+                    return fetch(`${SUPABASE_URL}/rest/v1/users`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        },
+                        body: JSON.stringify({
+                            id: user.id,
+                            username: user.username,
+                            avatar: user.avatar
+                        })
+                    }).then(resp => {
+                        // If the insert fails, still let caller continue but log error
+                        if (!resp.ok) {
+                            return resp.text().then(t => {
+                                console.error('Failed to insert local user:', t);
+                                // swallow error to avoid locking login flow; caller can handle later
+                                return;
+                            });
+                        }
+                    });
+                }
+                // user already exists: resolve immediately
+                return;
+            })
+            .catch(err => {
+                console.error('ensureLocalUser error:', err);
+                // resolve anyway so login flow continues; caller may show an error later
+                return;
+            });
+        }
+        // --- END ADD ---
 
 
         function startVoting(contest) {
@@ -2728,11 +2780,26 @@
                         } else {
                             // User not banned, proceed with login
                             state.isLoggedIn = true;
-                            state.user = {
-                                id: user.id,
-                                username: user.username,
-                                avatar: user.avatar
+                            // AFTER: ensure user exists, then continue
+                            state.user = { 
+                                id: user.id, 
+                                username: user.username, 
+                                avatar: user.avatar 
                             };
+
+                            // Ensure the row exists in public.users, then continue
+                            ensureLocalUser(state.user)
+                                .then(() => {
+                                    // proceed normally once the user row is present (or insertion attempted)
+                                    loadContests();
+                                    render();
+                                })
+                                .catch((err) => {
+                                    // should not happen because ensureLocalUser swallows errors, but safe fallback
+                                    console.error('ensureLocalUser unexpected error:', err);
+                                    loadContests();
+                                    render();
+                                });
                         }
                     } else {
                         // Token expired, clear it
