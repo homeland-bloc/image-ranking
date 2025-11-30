@@ -445,7 +445,9 @@
                     };
                 }).sort((a, b) => b.averageScore - a.averageScore);
             } catch (error) {
-                console.error('Error loading results:', error);
+                console.error('Full error details:', error);
+                console.error('Error message:', error.message);
+                showAlert('Error: ' + error.message, '❌');
             }
         }
 
@@ -680,6 +682,8 @@
                 state.modalProcessing = false;
                 render();
             } catch (error) {
+                console.error('Full error details:', error);
+                console.error('Error message:', error.message);
                 showAlert('Failed to submit votes: ' + error.message, '❌');
                 state.modalProcessing = false;
             }
@@ -736,6 +740,8 @@
                 state.modalProcessing = false;
                 showAlert('Contest deleted successfully!', '✅');
             } catch (error) {
+                console.error('Full error details:', error);
+                console.error('Error message:', error.message);
                 showAlert('Failed to delete contest: ' + error.message, '❌');
                 state.modalProcessing = false;
             }
@@ -892,6 +898,7 @@
             }
 
             try {
+                // Insert contest - database auto-generates UUID
                 const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
                     method: 'POST',
                     headers: {
@@ -907,13 +914,15 @@
                 });
 
                 if (!contestResponse.ok) {
-                    throw new Error(`status ${contestResponse.status}`);
+                    const errorData = await contestResponse.json();
+                    console.error('Contest creation failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to create contest');
                 }
 
-                const createdContest = await contestResponse.json();
-                const contestId = createdContest[0].id;
+                const createdContests = await contestResponse.json();
+                const contestId = createdContests[0].id;
 
-                // Insert images...
+                // Insert images
                 const imagesToInsert = state.newContest.images.map((img, i) => ({
                     contest_id: contestId,
                     url: img.url,
@@ -934,16 +943,19 @@
                 });
 
                 if (!imagesResponse.ok) {
-                    throw new Error(`status ${imagesResponse.status}`);
+                    const errorData = await imagesResponse.json();
+                    console.error('Image insertion failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to add images');
                 }
 
                 state.newContest = { title: '', images: [] };
                 await loadContests();
                 state.view = 'home';
-
                 showAlert('Contest created successfully!', '✅');
-            } catch (err) {
-                showAlert('Failed to create contest: ' + err.message, '❌');
+
+            } catch (error) {
+                console.error('Full contest creation error:', error);
+                showAlert('Failed to create contest: ' + error.message, '❌');
             }
 
             state.modalProcessing = false;
@@ -1051,7 +1063,9 @@
 
                 render();
             } catch (error) {
-                console.error('Error loading contests:', error);
+                console.error('Full error details:', error);
+                console.error('Error message:', error.message);
+                showAlert('Error: ' + error.message, '❌');
             }
         }
 
@@ -1076,7 +1090,9 @@
                     state.userVotedContests[vote.contest_id][vote.image_id] = vote.score;
                 });
             } catch (error) {
-                console.error('Error loading votes:', error);
+                console.error('Full error details:', error);
+                console.error('Error message:', error.message);
+                showAlert('Error: ' + error.message, '❌');
             }
         }
 
