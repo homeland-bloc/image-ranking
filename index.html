@@ -714,6 +714,7 @@
                     }
                     imageScores[vote.image_id].scores.push(vote.score);
                     imageScores[vote.image_id].breakdown.push({
+                        userId: vote.user_id,
                         username: vote.voter.username,
                         avatar: vote.voter.avatar,
                         score: vote.score,
