@@ -1010,7 +1010,7 @@
             const { data, error } = await supabase.auth.signInWithOAuth({
                 provider: 'discord',
                 options: {
-                    redirectTo: window.location.origin,
+                    redirectTo: 'https://homeland-bloc.github.io/YOUR-REPO-NAME'
                     scopes: 'identify'  // Only request username, avatar, ID - NOT email
                 }
             });
