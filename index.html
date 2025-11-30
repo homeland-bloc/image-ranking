@@ -406,6 +406,9 @@
 
         async function loadResults() {
             try {
+                console.log('🔍 DEBUG: Loading results for contest:', state.currentContest.id);
+                console.log('🔍 DEBUG: Current user:', state.user);
+
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
@@ -414,9 +417,12 @@
                 });
 
                 const votes = await response.json();
+                console.log('🔍 DEBUG: Fetched votes:', votes);
+                console.log('🔍 DEBUG: Number of votes:', votes.length);
 
                 const imageScores = {};
                 votes.forEach(vote => {
+                    console.log('🔍 DEBUG: Processing vote:', vote);
                     if (!imageScores[vote.image_id]) {
                         imageScores[vote.image_id] = {
                             scores: [],
@@ -432,10 +438,15 @@
                     });
                 });
 
+                console.log('🔍 DEBUG: Image scores:', imageScores);
+                console.log('🔍 DEBUG: Contest images:', state.currentContest.images);
+
                 state.mockResults = state.currentContest.images.map(img => {
                     const scores = imageScores[img.id]?.scores || [];
                     const sum = scores.reduce((acc, s) => acc + s, 0);
                     const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
+
+                    console.log(`🔍 DEBUG: Image ${img.id} - scores:`, scores, 'average:', average);
 
                     return {
                         ...img,
@@ -444,6 +455,8 @@
                         breakdown: imageScores[img.id]?.breakdown || []
                     };
                 }).sort((a, b) => b.averageScore - a.averageScore);
+
+                console.log('🔍 DEBUG: Final results:', state.mockResults);
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
@@ -854,7 +867,12 @@
             }
         }
 
-
+        function clearUrlInput() {
+            const input = document.getElementById('contestUrlInput');
+            if (input) {
+                input.value = '';
+            }
+        }
 
         function removeContestImage(index) {
             showConfirm(
@@ -871,6 +889,9 @@
             state.newContest.images.splice(index, 1);
             state.modalProcessing = false;
             render();
+
+            // Show success message
+            showAlert('Image successfully removed!', '✅');
         }
 
         function toggleImageLabels() {
@@ -887,15 +908,34 @@
             }
         }
 
-        async function finishCreateContest() {
-            if (state.modalProcessing) return;
-            state.modalProcessing = true;
-
+        function finishCreateContest() {
             if (state.newContest.images.length === 0) {
                 showAlert('Add at least one image!', '❌');
-                state.modalProcessing = false;
                 return;
             }
+
+            // Check for duplicate title
+            const duplicateTitle = state.contests.some(c =>
+                c.title.toLowerCase().trim() === state.newContest.title.toLowerCase().trim()
+            );
+
+            if (duplicateTitle) {
+                showAlert('A contest with this title already exists. Please choose a different title.', '❌');
+                return;
+            }
+
+            // Show confirmation popup
+            showConfirm(
+                `Create contest "${state.newContest.title}" with ${state.newContest.images.length} images?`,
+                'confirmFinishCreateContest',
+                '🚨'
+            );
+        }
+
+        async function confirmFinishCreateContest() {
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
 
             try {
                 // Insert contest - database auto-generates UUID
@@ -951,14 +991,16 @@
                 state.newContest = { title: '', images: [] };
                 await loadContests();
                 state.view = 'home';
+                state.modalProcessing = false;
+
+                // Show success message
                 showAlert('Contest created successfully!', '✅');
 
             } catch (error) {
                 console.error('Full contest creation error:', error);
+                state.modalProcessing = false;
                 showAlert('Failed to create contest: ' + error.message, '❌');
             }
-
-            state.modalProcessing = false;
         }
 
         async function loadImageFromUrl(url) {
@@ -1243,7 +1285,7 @@
                 return;
             }
             showConfirm(
-                'Your votes will be locked and cannot be changed after submission.',
+                'Your votes cannot be changed after submission. Are you sure? Please double-check your votes to make sure you\'re satisfied.',
                 'confirmSubmitVotes',
                 '🗳️'
             );
@@ -1904,9 +1946,14 @@
 
                         <div class="mb-4">
                             <input type="url" id="contestUrlInput" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-sm mb-2" placeholder="Paste Discord image URL or any image URL...">
-                            <button onclick="addImageFromUrl('contestUrlInput')" class="w-full bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition text-sm">
-                                Add URL
-                            </button>
+                            <div class="flex gap-2">
+                                <button onclick="clearUrlInput()" class="flex-1 bg-gray-500 text-white py-2 rounded-lg font-semibold hover:bg-gray-600 transition text-sm">
+                                    Clear Text Field
+                                </button>
+                                <button onclick="addImageFromUrl('contestUrlInput')" class="flex-1 bg-gradient-to-r from-pink-500 to-rose-600 text-white py-2 rounded-lg font-semibold hover:from-pink-600 hover:to-rose-700 transition text-sm">
+                                    Add URL
+                                </button>
+                            </div>
                         </div>
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
@@ -2730,9 +2777,11 @@
         window.cancelCreateContest = cancelCreateContest;
         window.confirmCancelCreate = confirmCancelCreate;
         window.addImageFromUrl = addImageFromUrl;
+        window.clearUrlInput = clearUrlInput;
         window.removeContestImage = removeContestImage;
         window.confirmRemoveImage = confirmRemoveImage;
         window.finishCreateContest = finishCreateContest;
+        window.confirmFinishCreateContest = confirmFinishCreateContest;
         window.startVoting = startVoting;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
