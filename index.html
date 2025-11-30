@@ -30,7 +30,6 @@
 
     <title>Peony</title>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -255,7 +254,10 @@
         // Supabase Configuration
         const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Discord OAuth Configuration
+        const DISCORD_CLIENT_ID = 'YOUR_DISCORD_CLIENT_ID';  // Replace with your actual Discord Client ID
+        const DISCORD_REDIRECT_URI = 'https://homeland-bloc.github.io/image-ranking/auth/callback';  // Replace with YOUR actual GitHub Pages URL + /auth/callback
 
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = 'YOUR_DISCORD_USER_ID_HERE';
@@ -404,59 +406,48 @@
         }
 
         async function loadResults() {
-            const { data: votes, error } = await supabase
-                .from('votes')
-                .select(`
-                    *,
-                    voter:users!votes_user_id_fkey (username, avatar)
-                `)
-                .eq('contest_id', state.currentContest.id);
-
-            if (error) {
-                console.error('Error loading results:', error);
-                return;
-            }
-
-            // Calculate averages
-            const imageScores = {};
-            votes.forEach(vote => {
-                if (!imageScores[vote.image_id]) {
-                    imageScores[vote.image_id] = {
-                        scores: [],
-                        breakdown: []
-                    };
-                }
-
-                // Mark banned users
-                const isBanned = state.bannedUsers.includes(vote.user_id);
-
-                imageScores[vote.image_id].scores.push(vote.score);
-                imageScores[vote.image_id].breakdown.push({
-                    username: vote.voter.username,
-                    avatar: vote.voter.avatar,
-                    score: vote.score,
-                    isCurrentUser: vote.user_id === state.user?.id,
-                    userId: vote.user_id,
-                    isBanned: isBanned
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
                 });
-            });
 
-            state.mockResults = state.currentContest.images.map(img => {
-                const imageData = imageScores[img.id] || { scores: [], breakdown: [] };
+                const votes = await response.json();
 
-                // Filter out banned votes for average calculation
-                const validBreakdown = imageData.breakdown.filter(vote => !vote.isBanned);
-                const validScores = validBreakdown.map(vote => vote.score);
-                const sum = validScores.reduce((acc, s) => acc + s, 0);
-                const average = validScores.length > 0 ? parseFloat((sum / validScores.length).toFixed(2)) : 0;
+                const imageScores = {};
+                votes.forEach(vote => {
+                    if (!imageScores[vote.image_id]) {
+                        imageScores[vote.image_id] = {
+                            scores: [],
+                            breakdown: []
+                        };
+                    }
+                    imageScores[vote.image_id].scores.push(vote.score);
+                    imageScores[vote.image_id].breakdown.push({
+                        username: vote.voter.username,
+                        avatar: vote.voter.avatar,
+                        score: vote.score,
+                        isCurrentUser: vote.user_id === state.user?.id
+                    });
+                });
 
-                return {
-                    ...img,
-                    averageScore: average,
-                    totalVotes: validScores.length,
-                    breakdown: imageData.breakdown
-                };
-            }).sort((a, b) => b.averageScore - a.averageScore);
+                state.mockResults = state.currentContest.images.map(img => {
+                    const scores = imageScores[img.id]?.scores || [];
+                    const sum = scores.reduce((acc, s) => acc + s, 0);
+                    const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
+
+                    return {
+                        ...img,
+                        averageScore: average,
+                        totalVotes: scores.length,
+                        breakdown: imageScores[img.id]?.breakdown || []
+                    };
+                }).sort((a, b) => b.averageScore - a.averageScore);
+            } catch (error) {
+                console.error('Error loading results:', error);
+            }
         }
 
         // Temporary stub for merge functionality - returns empty results
@@ -667,25 +658,32 @@
                 }
             });
 
-            const { error } = await supabase
-                .from('votes')
-                .upsert(votesToInsert, {
-                    onConflict: 'user_id,image_id'
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'resolution=merge-duplicates,return=minimal'
+                    },
+                    body: JSON.stringify(votesToInsert)
                 });
 
-            if (error) {
+                if (!response.ok) {
+                    throw new Error('Failed to submit votes');
+                }
+
+                await loadUserVotes();
+                state.hasSubmitted = true;
+                state.view = 'results';
+                await loadResults();
+                state.modalProcessing = false;
+                render();
+            } catch (error) {
                 showAlert('Failed to submit votes: ' + error.message, '❌');
                 state.modalProcessing = false;
-                return;
             }
-
-            await loadUserVotes();
-            state.hasSubmitted = true;
-            state.joinedContests = []; // Clear merged contests when viewing single contest results
-            state.view = 'results';
-            await loadResults();
-            state.modalProcessing = false;
-            render();
         }
 
         function confirmCancelVoting() {
@@ -721,38 +719,27 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            const contest = state.contests.find(c => c.id === contestId);
-
-            // Delete uploaded files from storage
-            if (contest) {
-                const uploadedImages = contest.images.filter(img => img.isFileUpload);
-                for (const img of uploadedImages) {
-                    // Extract file path from URL
-                    const urlParts = img.url.split('/contest-images/');
-                    if (urlParts.length > 1) {
-                        await supabase.storage
-                            .from('contest-images')
-                            .remove([urlParts[1]]);
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
                     }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to delete contest');
                 }
-            }
 
-            // Delete contest (cascades to images and votes)
-            const { error } = await supabase
-                .from('contests')
-                .delete()
-                .eq('id', contestId);
-
-            if (error) {
+                await loadContests();
+                delete state.userVotedContests[contestId];
+                state.modalProcessing = false;
+                showAlert('Contest deleted successfully!', '✅');
+            } catch (error) {
                 showAlert('Failed to delete contest: ' + error.message, '❌');
                 state.modalProcessing = false;
-                return;
             }
-
-            await loadContests();
-            delete state.userVotedContests[contestId];
-            state.modalProcessing = false;
-            showAlert('Contest deleted successfully!', '✅');
         }
 
         function startCreateContest() {
@@ -901,76 +888,60 @@
                 return;
             }
 
-            setLoading('Creating contest...');
-
             const contestId = 'contest-' + Date.now();
 
-            // Insert contest
-            const { error: contestError } = await supabase
-                .from('contests')
-                .insert({
-                    id: contestId,
-                    title: state.newContest.title,
-                    created_by: state.user.id
+            try {
+                // Insert contest
+                const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({
+                        id: contestId,
+                        title: state.newContest.title,
+                        created_by: state.user.id
+                    })
                 });
 
-            if (contestError) {
-                clearLoading();
-                showAlert('Failed to create contest: ' + contestError.message, '❌');
-                return;
-            }
-
-            // Upload files and insert images
-            const imagesToInsert = [];
-            for (let i = 0; i < state.newContest.images.length; i++) {
-                const img = state.newContest.images[i];
-                let finalUrl = img.url;
-
-                if (img.isFileUpload) {
-                    // Upload to Supabase storage
-                    const blob = await fetch(img.url).then(r => r.blob());
-                    const fileName = `${state.user.id}/${contestId}/${Date.now()}-${i}.jpg`;
-
-                    const { data: uploadData, error: uploadError } = await supabase.storage
-                        .from('contest-images')
-                        .upload(fileName, blob);
-
-                    if (uploadError) {
-                        console.error('Upload error:', uploadError);
-                        continue;
-                    }
-
-                    const { data: { publicUrl } } = supabase.storage
-                        .from('contest-images')
-                        .getPublicUrl(fileName);
-
-                    finalUrl = publicUrl;
+                if (!contestResponse.ok) {
+                    throw new Error('Failed to create contest');
                 }
 
-                imagesToInsert.push({
+                // Insert images
+                const imagesToInsert = state.newContest.images.map((img, i) => ({
                     contest_id: contestId,
-                    url: finalUrl,
+                    url: img.url,
                     is_file_upload: img.isFileUpload,
                     author: img.author,
                     image_order: i
+                }));
+
+                const imagesResponse = await fetch(`${SUPABASE_URL}/rest/v1/images`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify(imagesToInsert)
                 });
+
+                if (!imagesResponse.ok) {
+                    throw new Error('Failed to add images');
+                }
+
+                state.newContest = { title: '', images: [] };
+                await loadContests();
+                state.view = 'home';
+                showAlert('Contest created successfully!', '✅');
+            } catch (error) {
+                showAlert('Failed to create contest: ' + error.message, '❌');
             }
-
-            const { error: imagesError } = await supabase
-                .from('images')
-                .insert(imagesToInsert);
-
-            if (imagesError) {
-                clearLoading();
-                showAlert('Failed to add images: ' + imagesError.message, '❌');
-                return;
-            }
-
-            state.newContest = { title: '', images: [] };
-            await loadContests();
-            state.view = 'home';
-            clearLoading();
-            showAlert('Contest created successfully!', '✅');
         }
 
         async function loadImageFromUrl(url) {
@@ -1031,117 +1002,77 @@
             });
         }
 
-        async function login() {
-            const { data, error } = await supabase.auth.signInWithOAuth({
-                provider: 'discord',
-                options: {
-                    redirectTo: 'https://homeland-bloc.github.io/image-ranking/',
-                    scopes: 'identify'  // Only request username, avatar, ID - NOT email
-                }
-            });
-            if (error) {
-                showAlert('Login failed: ' + error.message, '❌');
-            }
+        function login() {
+            const authUrl = `https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=token&scope=identify`;
+            window.location.href = authUrl;
         }
 
-        async function logout() {
-            await supabase.auth.signOut();
+        function logout() {
+            localStorage.removeItem('peony_user');
             state.isLoggedIn = false;
             state.user = null;
             state.view = 'home';
             render();
         }
 
-        async function handleAuthSession(session) {
-            const discordUser = session.user.user_metadata;
-
-            // Upsert user in database
-            const { error } = await supabase
-                .from('users')
-                .upsert({
-                    id: session.user.id,
-                    username: discordUser.custom_claims?.global_name || discordUser.name || 'User',
-                    avatar: discordUser.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.id}`
+        async function loadContests() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
                 });
 
-            if (!error) {
-                state.isLoggedIn = true;
-                state.user = {
-                    id: session.user.id,
-                    username: discordUser.custom_claims?.global_name || discordUser.name || 'User',
-                    avatar: discordUser.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.id}`
-                };
+                const contests = await response.json();
 
-                // Track user in allUsers if not already there
-                if (!state.allUsers.find(u => u.id === session.user.id)) {
-                    state.allUsers.push({
-                        id: session.user.id,
-                        username: state.user.username,
-                        avatar: state.user.avatar
-                    });
-                }
+                state.contests = contests.map(contest => ({
+                    id: contest.id,
+                    title: contest.title,
+                    isLocked: contest.is_locked,
+                    resultsPublic: contest.results_public,
+                    createdBy: contest.created_by,
+                    creatorName: contest.creator.username,
+                    creatorAvatar: contest.creator.avatar,
+                    images: contest.images
+                        .sort((a, b) => a.image_order - b.image_order)
+                        .map(img => ({
+                            id: img.id,
+                            url: img.url,
+                            author: img.author,
+                            isFileUpload: img.is_file_upload
+                        }))
+                }));
 
                 render();
-            }
-        }
-
-        async function loadContests() {
-            const { data: contests, error } = await supabase
-                .from('contests')
-                .select(`
-                    *,
-                    images (*),
-                    creator:users!contests_created_by_fkey (username, avatar)
-                `)
-                .order('created_at', { ascending: false });
-
-            if (error) {
+            } catch (error) {
                 console.error('Error loading contests:', error);
-                return;
             }
-
-            state.contests = contests.map(contest => ({
-                id: contest.id,
-                title: contest.title,
-                isLocked: contest.is_locked,
-                resultsPublic: contest.results_public,
-                createdBy: contest.created_by,
-                creatorName: contest.creator.username,
-                creatorAvatar: contest.creator.avatar,
-                images: contest.images
-                    .sort((a, b) => a.image_order - b.image_order)
-                    .map(img => ({
-                        id: img.id,
-                        url: img.url,
-                        author: img.author,
-                        isFileUpload: img.is_file_upload
-                    }))
-            }));
-
-            render();
         }
 
         async function loadUserVotes() {
             if (!state.user) return;
 
-            const { data: votes, error } = await supabase
-                .from('votes')
-                .select('*')
-                .eq('user_id', state.user.id);
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
 
-            if (error) {
+                const votes = await response.json();
+
+                state.userVotedContests = {};
+                votes.forEach(vote => {
+                    if (!state.userVotedContests[vote.contest_id]) {
+                        state.userVotedContests[vote.contest_id] = {};
+                    }
+                    state.userVotedContests[vote.contest_id][vote.image_id] = vote.score;
+                });
+            } catch (error) {
                 console.error('Error loading votes:', error);
-                return;
             }
-
-            // Group votes by contest
-            state.userVotedContests = {};
-            votes.forEach(vote => {
-                if (!state.userVotedContests[vote.contest_id]) {
-                    state.userVotedContests[vote.contest_id] = {};
-                }
-                state.userVotedContests[vote.contest_id][vote.image_id] = vote.score;
-            });
         }
 
 
@@ -2773,32 +2704,37 @@
         window.unbanUser = unbanUser;
 
         // Initialize app
+        // Check for existing session on load
         (async function init() {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session) {
-                await handleAuthSession(session);
+            const storedUser = localStorage.getItem('peony_user');
+            if (storedUser) {
+                try {
+                    const user = JSON.parse(storedUser);
+
+                    // Check if token is expired
+                    if (user.expiresAt && Date.now() < user.expiresAt) {
+                        state.isLoggedIn = true;
+                        state.user = {
+                            id: user.id,
+                            username: user.username,
+                            avatar: user.avatar
+                        };
+                    } else {
+                        // Token expired, clear it
+                        localStorage.removeItem('peony_user');
+                    }
+                } catch (e) {
+                    console.error('Error loading user session:', e);
+                    localStorage.removeItem('peony_user');
+                }
             }
+
             await loadContests();
             if (state.user) {
                 await loadUserVotes();
             }
             render();
         })();
-
-        // Listen for auth changes
-        supabase.auth.onAuthStateChange(async (event, session) => {
-            if (event === 'SIGNED_IN' && session) {
-                await handleAuthSession(session);
-                await loadContests();
-                await loadUserVotes();
-                render();
-            } else if (event === 'SIGNED_OUT') {
-                state.isLoggedIn = false;
-                state.user = null;
-                state.view = 'home';
-                render();
-            }
-        });
     </script>
 </body>
 </html>
