@@ -24,10 +24,16 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="favicon/site.webmanifest">
 
+    <!-- Canonical URL for GitHub Pages PWA -->
+    <link rel="canonical" href="https://bicipikay.github.io/peony/">
+
     <!-- Theme color for mobile browsers -->
     <meta name="theme-color" content="#C77BA6">
 
     <title>Peony</title>
+
+    <!-- Supabase JS Client for Realtime -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -219,6 +225,15 @@
         .safe-header {
             padding-top: env(safe-area-inset-top);
         }
+        /* Realtime toast notifications - slide in from right */
+        @keyframes slideInRight {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOutRight {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(400px); opacity: 0; }
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -260,6 +275,19 @@
 
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
+
+        // Initialize Supabase client for Realtime functionality
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Realtime subscription management - track active channels
+        let realtimeChannels = {
+            votes: null,        // Live vote updates for current contest
+            contests: null,     // Contest deletion detection (global)
+            merges: null        // Merge changes detection
+        };
+
+        // Fallback polling interval (only used if Realtime fails)
+        let pollingInterval = null;
 
         let state = {
             isLoggedIn: false,
@@ -323,6 +351,249 @@
             render();
         }
 
+        // ==================== REALTIME & TOAST NOTIFICATIONS ====================
+
+        /**
+         * Show toast notification (lightweight, non-disruptive)
+         * Used for realtime updates, background operations
+         * @param {string} message - Message to display
+         * @param {string} type - 'info', 'success', 'error', or 'warning'
+         * @param {number} duration - Display duration in ms (default 3000)
+         */
+        function showToast(message, type = 'info', duration = 3000) {
+            const toast = document.createElement('div');
+            const bgColors = {
+                info: 'bg-blue-500',
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                warning: 'bg-yellow-500'
+            };
+
+            toast.className = `fixed top-20 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all transform translate-x-0 ${bgColors[type] || 'bg-gray-700'}`;
+            toast.textContent = message;
+            toast.style.animation = 'slideInRight 0.3s ease-out';
+
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideOutRight 0.3s ease-out';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        /**
+         * Refresh current results without full page reload
+         * Re-fetches votes from database and recalculates results
+         * Preserves scroll position for smooth UX
+         */
+        async function refreshCurrentResults() {
+            if (!state.currentContest || state.view !== 'results') return;
+
+            try {
+                console.log('🔄 Refreshing results for contest:', state.currentContest.id);
+
+                // Re-load results from database
+                await loadResults();
+
+                // Re-render without losing scroll position
+                const scrollPosition = window.scrollY;
+                render();
+                window.scrollTo(0, scrollPosition);
+
+                console.log('✅ Results refreshed successfully');
+            } catch (error) {
+                console.error('❌ Failed to refresh results:', error);
+                showToast('Failed to refresh results', 'error');
+            }
+        }
+
+        /**
+         * Subscribe to live vote updates for a specific contest
+         * Automatically refreshes results when new votes are submitted
+         * @param {string} contestId - UUID of contest to monitor
+         */
+        function subscribeToVoteChanges(contestId) {
+            // Remove old subscription if exists
+            if (realtimeChannels.votes) {
+                console.log('🔌 Removing old vote subscription');
+                supabase.removeChannel(realtimeChannels.votes);
+            }
+
+            console.log('📡 Subscribing to vote changes for contest:', contestId);
+
+            // Create new subscription
+            realtimeChannels.votes = supabase
+                .channel(`votes-contest-${contestId}`)
+                .on('postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'votes',
+                        filter: `contest_id=eq.${contestId}`
+                    },
+                    async (payload) => {
+                        console.log('✨ New vote detected:', payload.new);
+
+                        // Show toast notification
+                        showToast('✨ New vote received! Updating results...', 'info');
+
+                        // Re-fetch results smoothly (NO hard reload)
+                        await refreshCurrentResults();
+                    }
+                )
+                .on('postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'votes',
+                        filter: `contest_id=eq.${contestId}`
+                    },
+                    async (payload) => {
+                        console.log('🔄 Vote updated:', payload.new);
+                        showToast('🔄 Vote updated! Refreshing...', 'info');
+                        await refreshCurrentResults();
+                    }
+                )
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log('✅ Successfully subscribed to vote changes');
+                    } else if (status === 'CHANNEL_ERROR') {
+                        console.error('❌ Failed to subscribe to vote changes');
+                        handleRealtimeError(new Error('Vote subscription failed'));
+                    }
+                });
+        }
+
+        /**
+         * Subscribe to contest deletions (global - stays active during session)
+         * Redirects user to home if viewing a deleted contest
+         */
+        function subscribeToContestDeletions() {
+            if (realtimeChannels.contests) {
+                console.log('🔌 Removing old contest deletion subscription');
+                supabase.removeChannel(realtimeChannels.contests);
+            }
+
+            console.log('📡 Subscribing to contest deletions');
+
+            realtimeChannels.contests = supabase
+                .channel('contest-deletions')
+                .on('postgres_changes',
+                    {
+                        event: 'DELETE',
+                        schema: 'public',
+                        table: 'contests'
+                    },
+                    async (payload) => {
+                        const deletedId = payload.old.id;
+                        console.log('🗑️ Contest deleted:', deletedId);
+
+                        // If viewing deleted contest, go home
+                        if (state.currentContest?.id === deletedId) {
+                            showAlert('This contest was deleted by its creator.', '🗑️');
+                            state.view = 'home';
+                            state.currentContest = null;
+                            unsubscribeFromVotes();
+
+                            // Refresh contest list
+                            await loadContests();
+                            render();
+                        } else {
+                            // Just remove from local contests list
+                            state.contests = state.contests.filter(c => c.id !== deletedId);
+
+                            // Re-render if on home view
+                            if (state.view === 'home') {
+                                render();
+                            }
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log('✅ Successfully subscribed to contest deletions');
+                    } else if (status === 'CHANNEL_ERROR') {
+                        console.error('❌ Failed to subscribe to contest deletions');
+                    }
+                });
+        }
+
+        /**
+         * Unsubscribe from vote updates only
+         * Called when leaving results view
+         */
+        function unsubscribeFromVotes() {
+            if (realtimeChannels.votes) {
+                console.log('🔌 Unsubscribing from vote changes');
+                supabase.removeChannel(realtimeChannels.votes);
+                realtimeChannels.votes = null;
+            }
+        }
+
+        /**
+         * Unsubscribe from all realtime channels
+         * Called on logout or app cleanup
+         */
+        function unsubscribeAll() {
+            console.log('🔌 Unsubscribing from all realtime channels');
+
+            Object.keys(realtimeChannels).forEach(key => {
+                if (realtimeChannels[key]) {
+                    supabase.removeChannel(realtimeChannels[key]);
+                    realtimeChannels[key] = null;
+                }
+            });
+
+            // Clear polling fallback if active
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        /**
+         * Handle Realtime connection errors
+         * Falls back to polling if Realtime is unavailable
+         * @param {Error} error - The error that occurred
+         */
+        function handleRealtimeError(error) {
+            console.error('❌ Realtime error:', error);
+
+            // Fall back to polling if Realtime fails and we're viewing results
+            if (state.view === 'results' && state.currentContest) {
+                console.log('🔄 Falling back to polling...');
+                showToast('⚠️ Live updates unavailable, using backup sync', 'warning', 5000);
+                startPollingFallback();
+            }
+        }
+
+        /**
+         * Fallback polling (only used when Realtime fails)
+         * Polls for updates every 10 seconds
+         */
+        function startPollingFallback() {
+            // Clear existing interval if any
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+
+            console.log('🔄 Starting fallback polling (10s interval)');
+
+            pollingInterval = setInterval(async () => {
+                if (state.view === 'results' && state.currentContest) {
+                    console.log('🔄 Polling for updates...');
+                    await refreshCurrentResults();
+                } else {
+                    // Stop polling if no longer viewing results
+                    console.log('🛑 Stopping polling (not in results view)');
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+            }, 10000); // Poll every 10 seconds
+        }
+
+        // ==================== END REALTIME ====================
+
         function getScoreColor(score) {
             const colors = {
                 1: 'rgb(220, 38, 38)',
@@ -334,12 +605,16 @@
             return colors[score] || 'rgb(156, 163, 175)';
         }
 
-        function getCategoryLabel(min, max) {
+        function getCategoryLabel(min, max, isMissing) {
+            if (isMissing) return 'Votes Missing';
             if (min === 4.5) return '4.5 - 5.0';
             return `${min.toFixed(1)} - ${max.toFixed(2)}`;
         }
 
-        function getCategoryColor(min) {
+        function getCategoryColor(min, isMissing) {
+            // Special styling for missing votes - black text on dark gray background
+            if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
+
             // Bright green with cyan/blue undertone for top scores
             if (min >= 4.5) return { color: 'text-emerald-700', bg: 'bg-emerald-100', textColor: 'rgb(16, 185, 129)', bgColor: 'rgb(209, 250, 229)' };
             // Lime green
@@ -356,10 +631,8 @@
             if (min >= 1.5) return { color: 'text-red-500', bg: 'bg-red-100', textColor: 'rgb(239, 68, 68)', bgColor: 'rgb(254, 226, 226)' };
             // Red
             if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
-            // Dark red
-            if (min >= 0.5) return { color: 'text-red-700', bg: 'bg-red-300', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(252, 165, 165)' };
-            // Darkest red
-            return { color: 'text-red-800', bg: 'bg-red-400', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(248, 113, 113)' };
+            // Fallback for any edge cases
+            return { color: 'text-gray-600', bg: 'bg-gray-200', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(229, 231, 235)' };
         }
 
         // Seeded random number generator for consistent demo voters
@@ -484,16 +757,26 @@
                 { min: 2.5, max: 2.99 },
                 { min: 2.0, max: 2.49 },
                 { min: 1.5, max: 1.99 },
-                { min: 1.0, max: 1.49 },
-                { min: 0.5, max: 0.99 },
-                { min: 0.0, max: 0.49 }
+                { min: 1.0, max: 1.49 }
             ];
-            
+
             const grouped = {};
-            
+
+            // Check for images with missing votes (averageScore === 0 or null)
+            const missingVotes = results.filter(r => !r.averageScore || r.averageScore === 0);
+            if (missingVotes.length > 0) {
+                grouped['missing'] = {
+                    items: missingVotes,
+                    min: 0,
+                    max: 0,
+                    isMissing: true
+                };
+            }
+
+            // Group images by score ranges (only those with actual votes)
             ranges.forEach(range => {
                 const key = `${range.min}-${range.max}`;
-                const items = results.filter(r => r.averageScore >= range.min && r.averageScore <= range.max);
+                const items = results.filter(r => r.averageScore > 0 && r.averageScore >= range.min && r.averageScore <= range.max);
                 if (items.length > 0) {
                     grouped[key] = {
                         items: items.sort((a, b) => b.averageScore - a.averageScore),
@@ -502,7 +785,7 @@
                     };
                 }
             });
-            
+
             return grouped;
         }
 
@@ -547,9 +830,16 @@
             const voterVotes = {};
 
             contestList.forEach(contest => {
-                // Generate mock results for this contest if not cached
-                const userVotes = contest.id === state.currentContest.id ? state.votes : (state.userVotedContests[contest.id] || {});
-                const results = state.mockResultsCache[contest.id] || generateMockResults(contest, userVotes);
+                // Use actual loaded results if available for current contest, otherwise generate mock results
+                let results;
+                if (contest.id === state.currentContest?.id && state.mockResults) {
+                    // Use the actual loaded results from the database
+                    results = state.mockResults;
+                } else {
+                    // For other contests or when results not loaded, use cached or generate mock
+                    const userVotes = contest.id === state.currentContest?.id ? state.votes : (state.userVotedContests[contest.id] || {});
+                    results = state.mockResultsCache[contest.id] || generateMockResults(contest, userVotes);
+                }
 
                 // Collect votes from all images
                 results.forEach(imageResult => {
@@ -778,16 +1068,10 @@
                 return;
             }
 
-            // Check for duplicate title
+            // Check for duplicate title - BLOCK creation entirely
             const existingContest = state.contests.find(c => c.title.toLowerCase() === title.toLowerCase());
             if (existingContest) {
-                showConfirm(
-                    'A contest with this title already exists. Create anyway?',
-                    'confirmCreateWithDuplicateTitle',
-                    '🚨'
-                );
-                // Store the title temporarily for the confirmation
-                state.tempContestTitle = title;
+                showAlert('A contest with this title already exists. Please choose a different title.', '❌');
                 return;
             }
 
@@ -994,7 +1278,7 @@
                 state.modalProcessing = false;
 
                 // Show success message
-                showAlert('Contest created successfully!', '✅');
+                showAlert('Contest created successfully!', '✨');
 
             } catch (error) {
                 console.error('Full contest creation error:', error);
@@ -1067,6 +1351,9 @@
         }
 
         function logout() {
+            // Clean up all realtime subscriptions before logout
+            unsubscribeAll();
+
             localStorage.removeItem('peony_user');
             state.isLoggedIn = false;
             state.user = null;
@@ -1206,14 +1493,41 @@
         }
 
         async function viewResults(contest) {
-            state.currentContest = contest;
-            const userVotes = state.userVotedContests[contest.id] || {};
-            state.votes = userVotes;
-            await loadResults();
-            state.showMyVotes = false;
-            state.joinedContests = []; // Clear merged contests when viewing single contest
-            state.view = 'results';
-            render();
+            // Check if contest still exists in the database
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const contests = await response.json();
+
+                // If contest doesn't exist (deleted), refresh the page
+                if (!contests || contests.length === 0) {
+                    console.log('Contest no longer exists, refreshing...');
+                    showAlert('Contest was deleted. Refreshing...', '🔄');
+                    setTimeout(() => location.reload(), 1500);
+                    return;
+                }
+
+                state.currentContest = contest;
+                const userVotes = state.userVotedContests[contest.id] || {};
+                state.votes = userVotes;
+                await loadResults();
+                state.showMyVotes = false;
+                state.joinedContests = []; // Clear merged contests when viewing single contest
+                state.view = 'results';
+
+                // Subscribe to live vote updates for this contest
+                subscribeToVoteChanges(contest.id);
+
+                render();
+            } catch (error) {
+                console.error('Error checking contest existence:', error);
+                showAlert('Error loading results: ' + error.message, '❌');
+            }
         }
 
         async function viewLockedResults(contest) {
@@ -1221,6 +1535,9 @@
             state.votes = {};
             await loadResults();
             state.showMyVotes = false;
+
+            // Subscribe to live vote updates for this locked contest
+            subscribeToVoteChanges(contest.id);
             state.joinedContests = []; // Clear merged contests when viewing single contest
             state.view = 'results';
             render();
@@ -1378,7 +1695,7 @@
         }
 
 
-        function backToHome() {
+        async function backToHome() {
             if (state.view === 'vote' && !state.hasSubmitted) {
                 showConfirm(
                     'Your progress will be lost if you proceed. Are you sure?',
@@ -1387,6 +1704,13 @@
                 );
                 return;
             }
+
+            // Unsubscribe from vote updates when leaving results view
+            if (state.view === 'results') {
+                unsubscribeFromVotes();
+                await loadContests();  // Refresh contest list to ensure fresh data
+            }
+
             state.view = 'home';
             state.currentContest = null;
             state.showBreakdownModal = null;
@@ -1414,6 +1738,7 @@
         }
 
         function setResultsView(view) {
+            // No need to refresh with Realtime - data is already live!
             state.resultsView = view;
             state.showMyVotes = view === 'myVotes';  // Backwards compatibility
             render();
@@ -1484,18 +1809,76 @@
             render();
         }
 
-        function banUser(userId) {
-            if (!state.bannedUsers.includes(userId)) {
-                state.bannedUsers.push(userId);
+        async function banUser(userId) {
+            try {
+                // Update database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ is_banned: true })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to ban user in database');
+                }
+
+                // Update local state
+                if (!state.bannedUsers.includes(userId)) {
+                    state.bannedUsers.push(userId);
+                }
+
+                // Update allUsers state
+                const userIndex = state.allUsers.findIndex(u => u.id === userId);
+                if (userIndex !== -1) {
+                    state.allUsers[userIndex].isBanned = true;
+                }
+
+                showAlert('User has been banned.', '✅');
+                render();
+            } catch (error) {
+                console.error('Error banning user:', error);
+                showAlert('Failed to ban user: ' + error.message, '❌');
             }
-            showAlert('User has been banned.', '✅');
-            render();
         }
 
-        function unbanUser(userId) {
-            state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
-            showAlert('User has been unbanned.', '✅');
-            render();
+        async function unbanUser(userId) {
+            try {
+                // Update database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ is_banned: false })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to unban user in database');
+                }
+
+                // Update local state
+                state.bannedUsers = state.bannedUsers.filter(id => id !== userId);
+
+                // Update allUsers state
+                const userIndex = state.allUsers.findIndex(u => u.id === userId);
+                if (userIndex !== -1) {
+                    state.allUsers[userIndex].isBanned = false;
+                }
+
+                showAlert('User has been unbanned.', '✅');
+                render();
+            } catch (error) {
+                console.error('Error unbanning user:', error);
+                showAlert('Failed to unban user: ' + error.message, '❌');
+            }
         }
 
         function confirmBanUser(userId) {
@@ -2130,11 +2513,11 @@
 
                             ${(() => {
                                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-                                const imageContainerHeight = isMobile ? '50vh' : '60vh';
-                                const maxImageHeight = isMobile ? 'none' : '600px';
+                                const imageContainerMaxHeight = isMobile ? '50vh' : '70vh';
+                                const imageContainerMinHeight = '400px';
 
                                 return `
-                                    <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="height: ${imageContainerHeight};">
+                                    <div class="relative mb-3 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center" style="max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
                                         ${state.currentContest.labelsEnabled && currentImage.label ? `
                                             <div class="absolute top-0 left-0 right-0 bg-white px-4 py-2 text-center border-b border-gray-200 z-10">
                                                 <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
@@ -2144,7 +2527,6 @@
                                             src="${currentImage.url}"
                                             alt="Image ${state.currentImageIndex + 1}"
                                             class="max-h-full max-w-full object-contain"
-                                            style="${maxImageHeight !== 'none' ? `max-height: ${maxImageHeight};` : ''}"
                                             onload="this.parentElement.classList.remove('image-loading')"
                                         />
                                         ${currentVote ? `
@@ -2485,11 +2867,11 @@
                                     </div>
                                 `;
                             } else {
-                                const colorStyle = getCategoryColor(group.min);
+                                const colorStyle = getCategoryColor(group.min, group.isMissing);
                                 return `
                                     <div class="mb-4">
                                         <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
-                                            ${getCategoryLabel(group.min, group.max)}
+                                            ${getCategoryLabel(group.min, group.max, group.isMissing)}
                                         </h3>
                                         <div class="flex flex-wrap gap-1">
                                             ${group.items.map(item => `
@@ -2924,6 +3306,10 @@
                                 .then(() => {
                                     // proceed normally once the user row is present (or insertion attempted)
                                     loadContests();
+
+                                    // Subscribe to contest deletions (global, stays active during session)
+                                    subscribeToContestDeletions();
+
                                     render();
                                 })
                                 .catch((err) => {
