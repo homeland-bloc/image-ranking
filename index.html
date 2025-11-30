@@ -227,6 +227,31 @@
     <div id="app"></div>
 
     <script>
+        // Emergency error handler to catch JavaScript errors
+        window.addEventListener('error', function(e) {
+            console.error('Global error caught:', e);
+            const app = document.getElementById('app');
+            if (app && !app.innerHTML) {
+                app.innerHTML = `
+                    <div style="padding: 2rem; font-family: sans-serif; max-width: 800px; margin: 0 auto;">
+                        <h1 style="color: #ef4444; margin-bottom: 1rem;">⚠️ Error Loading App</h1>
+                        <div style="background: #fee; border: 1px solid #fcc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                            <p><strong>Error:</strong> ${e.message || 'Unknown error'}</p>
+                            <p><strong>File:</strong> ${e.filename || 'Unknown'}</p>
+                            <p><strong>Line:</strong> ${e.lineno || 'Unknown'}:${e.colno || 'Unknown'}</p>
+                        </div>
+                        <p style="margin-bottom: 0.5rem;"><strong>What to do:</strong></p>
+                        <ol style="line-height: 1.6;">
+                            <li>Open browser console (F12) for detailed error information</li>
+                            <li>Check for JavaScript syntax errors in index.html</li>
+                            <li>Verify Supabase is loading correctly</li>
+                            <li>Clear browser cache and reload the page</li>
+                        </ol>
+                    </div>
+                `;
+            }
+        });
+
         // Supabase Configuration
         const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
@@ -1010,7 +1035,7 @@
             const { data, error } = await supabase.auth.signInWithOAuth({
                 provider: 'discord',
                 options: {
-                    redirectTo: 'https://homeland-bloc.github.io/YOUR-REPO-NAME'
+                    redirectTo: 'https://homeland-bloc.github.io/YOUR-REPO-NAME',
                     scopes: 'identify'  // Only request username, avatar, ID - NOT email
                 }
             });
