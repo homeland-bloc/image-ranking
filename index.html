@@ -1218,7 +1218,7 @@
             render();
         }
 
-        function toggleContestLock(contestId) {
+        async function toggleContestLock(contestId) {
             const contest = state.contests.find(c => c.id === contestId);
             if (!contest) return;
 
@@ -1228,9 +1228,36 @@
                 return;
             }
 
-            contest.isLocked = !contest.isLocked;
-            showAlert(contest.isLocked ? '🔒 Contest locked - Users cannot vote' : '🔓 Contest unlocked - Users can now vote', contest.isLocked ? '🚨' : '✅');
-            render();
+            const newLockStatus = !contest.isLocked;
+
+            try {
+                // Update database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        is_locked: newLockStatus
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Lock status update failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to update lock status');
+                }
+
+                // Update local state only if database update succeeded
+                contest.isLocked = newLockStatus;
+                showAlert(contest.isLocked ? '🔒 Contest locked - Users cannot vote' : '🔓 Contest unlocked - Users can now vote', contest.isLocked ? '🚨' : '✅');
+                render();
+            } catch (error) {
+                console.error('Full lock toggle error:', error);
+                showAlert('Failed to update lock status: ' + error.message, '❌');
+            }
         }
 
         function handleVote(score) {
