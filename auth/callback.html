@@ -129,20 +129,29 @@
                 localStorage.setItem('peony_user', JSON.stringify(user));
 
                 // Create/update user in Supabase database
-                await fetch(`${SUPABASE_URL}/rest/v1/users`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'resolution=merge-duplicates'
-                    },
-                    body: JSON.stringify({
-                        id: user.id,
-                        username: user.username,
-                        avatar: user.avatar
-                    })
-                });
+                try {
+                    const upsertResponse = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Prefer': 'resolution=merge-duplicates'
+                        },
+                        body: JSON.stringify({
+                            id: user.id,
+                            username: user.username,
+                            avatar: user.avatar,
+                            is_banned: false
+                        })
+                    });
+
+                    if (!upsertResponse.ok) {
+                        console.error('Failed to upsert user:', await upsertResponse.text());
+                    }
+                } catch (error) {
+                    console.error('Error upserting user:', error);
+                }
 
                 // Redirect to main app
                 window.location.href = '../index.html';
