@@ -1416,7 +1416,7 @@
             try {
                 // Upload to Supabase Storage
                 const { data, error } = await supabase.storage
-                    .from('peony-images')
+                    .from('contest-images')
                     .upload(fileName, file, {
                         cacheControl: '3600',
                         upsert: false
@@ -1429,7 +1429,7 @@
 
                 // Get public URL
                 const { data: urlData } = supabase.storage
-                    .from('peony-images')
+                    .from('contest-images')
                     .getPublicUrl(fileName);
 
                 if (!urlData || !urlData.publicUrl) {
@@ -1440,6 +1440,47 @@
             } catch (error) {
                 console.error('Upload error:', error);
                 throw error;
+            }
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('dropZone');
+            if (dropZone) {
+                dropZone.classList.add('border-blue-500', 'bg-blue-100');
+                dropZone.classList.remove('border-gray-300', 'bg-gray-50');
+            }
+        }
+
+        function handleDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('dropZone');
+            if (dropZone) {
+                dropZone.classList.remove('border-blue-500', 'bg-blue-100');
+                dropZone.classList.add('border-gray-300', 'bg-gray-50');
+            }
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const dropZone = document.getElementById('dropZone');
+            if (dropZone) {
+                dropZone.classList.remove('border-blue-500', 'bg-blue-100');
+                dropZone.classList.add('border-gray-300', 'bg-gray-50');
+            }
+
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                // Create a mock file input object to reuse handleFileSelect logic
+                const mockInput = {
+                    files: files,
+                    value: ''
+                };
+                handleFileSelect(mockInput);
             }
         }
 
@@ -3096,7 +3137,7 @@
                                 📱 <strong>Mobile:</strong> Open image → Share → Copy link → Paste below
                             </p>
                             <p class="text-xs text-blue-800">
-                                📁 <strong>Or:</strong> Click "Upload Image Files" to upload from your device (max 5MB each, multiple files supported)
+                                📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 5MB each, multiple files supported)
                             </p>
                         </div>
 
@@ -3110,7 +3151,7 @@
                                     Add URL
                                 </button>
                             </div>
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 mb-3">
                                 <span class="text-sm text-gray-600 font-medium">or</span>
                                 <input type="file" id="contestFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple class="hidden" onchange="handleFileSelect(this)">
                                 <button onclick="document.getElementById('contestFileInput').click()" class="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 transition text-sm flex items-center justify-center gap-2">
@@ -3119,6 +3160,20 @@
                                     </svg>
                                     Upload Image Files
                                 </button>
+                            </div>
+                            <div
+                                id="dropZone"
+                                class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center bg-gray-50 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer"
+                                ondragover="handleDragOver(event)"
+                                ondragleave="handleDragLeave(event)"
+                                ondrop="handleDrop(event)"
+                                onclick="document.getElementById('contestFileInput').click()"
+                            >
+                                <svg class="w-12 h-12 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                </svg>
+                                <p class="text-sm text-gray-600 font-medium mb-1">Drag & drop images here</p>
+                                <p class="text-xs text-gray-500">or click to browse files</p>
                             </div>
                         </div>
 
@@ -3944,6 +3999,9 @@
         window.addImageFromUrl = addImageFromUrl;
         window.clearUrlInput = clearUrlInput;
         window.handleFileSelect = handleFileSelect;
+        window.handleDragOver = handleDragOver;
+        window.handleDragLeave = handleDragLeave;
+        window.handleDrop = handleDrop;
         window.removeContestImage = removeContestImage;
         window.confirmRemoveImage = confirmRemoveImage;
         window.finishCreateContest = finishCreateContest;
