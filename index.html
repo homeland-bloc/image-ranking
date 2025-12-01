@@ -1174,6 +1174,21 @@
             url = url.replace(/cdn\.discordapp\.com/g, 'media.discordapp.net');
             url = url.replace(/images-ext-\d+\.discordapp\.net/g, 'media.discordapp.net');
 
+            // Check for duplicate URL
+            const isDuplicate = state.newContest.images.some(img => img.url === url);
+
+            if (isDuplicate) {
+                console.log('⚠️ Duplicate image URL detected:', url);
+                state.tempDuplicateUrl = url;
+                state.tempDuplicateUrlInputId = urlInputId;
+                showConfirm(
+                    '⚠️ This image URL already exists in the contest. Do you want to add it anyway?',
+                    'confirmAddDuplicateImage',
+                    '⚠️'
+                );
+                return;
+            }
+
             if (state.newContest.images.length >= 50) {
                 showAlert('Maximum 50 images per contest!', '❌');
                 return;
@@ -1191,9 +1206,60 @@
                 });
                 input.value = '';
                 showToast('Image added successfully!', '✅');
+                render();
             } catch (error) {
                 showAlert(`Failed to load image: ${error.message}`, '❌');
             }
+        }
+
+        async function confirmAddDuplicateImage() {
+            const url = state.tempDuplicateUrl;
+            const urlInputId = state.tempDuplicateUrlInputId;
+
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            if (!url) {
+                state.modalProcessing = false;
+                return;
+            }
+
+            console.log('✅ User confirmed adding duplicate URL:', url);
+
+            if (state.newContest.images.length >= 50) {
+                showAlert('Maximum 50 images per contest!', '❌');
+                state.tempDuplicateUrl = null;
+                state.tempDuplicateUrlInputId = null;
+                state.modalProcessing = false;
+                return;
+            }
+
+            try {
+                const img = await loadImageFromUrl(url);
+                const imageCount = state.newContest.images.length + 1;
+                state.newContest.images.push({
+                    id: Date.now() + Math.random(),
+                    url,
+                    author: null,
+                    isFileUpload: false,
+                    label: `${imageCount}`
+                });
+
+                const input = document.getElementById(urlInputId);
+                if (input) {
+                    input.value = '';
+                }
+
+                showToast('Duplicate image added!', '✅');
+            } catch (error) {
+                showAlert(`Failed to load image: ${error.message}`, '❌');
+            }
+
+            state.tempDuplicateUrl = null;
+            state.tempDuplicateUrlInputId = null;
+            state.modalProcessing = false;
+            render();
         }
 
         function clearUrlInput() {
@@ -1329,13 +1395,122 @@
             }
         }
 
+        async function loadSharedMerge(mergeId) {
+            try {
+                console.log('📦 Loading shared merge:', mergeId);
+
+                // Fetch merge configuration from database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_merges?merge_id=eq.${mergeId}`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const merges = await response.json();
+
+                if (!merges || merges.length === 0) {
+                    showAlert('Merged contest view not found. It may have been deleted.', '❌');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                const mergeData = merges[0];
+                console.log('📦 Merge data:', mergeData);
+
+                // Load the main contest
+                await loadSharedContest(mergeData.main_contest_id);
+
+                // Wait for contest to load, then apply joined contests
+                // Use setTimeout to ensure loadSharedContest completes
+                setTimeout(async () => {
+                    if (state.currentContest && state.currentContest.id === mergeData.main_contest_id) {
+                        state.joinedContests = mergeData.joined_contest_ids || [];
+                        console.log('📦 Applied joined contests:', state.joinedContests);
+
+                        // Load merged results
+                        await applyJoinedContests();
+                    }
+                }, 100);
+
+            } catch (error) {
+                console.error('Error loading shared merge:', error);
+                showAlert('Failed to load merged view: ' + error.message, '❌');
+                window.location.hash = '';
+                state.view = 'home';
+                render();
+            }
+        }
+
+        async function saveMergedContest() {
+            try {
+                console.log('💾 Saving merged contest configuration');
+
+                // Generate unique merge ID
+                const mergeId = `merge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+                // Save to database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_merges`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${state.session.access_token}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        merge_id: mergeId,
+                        main_contest_id: state.currentContest.id,
+                        joined_contest_ids: state.joinedContests,
+                        created_by: state.user.id
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to save merged contest');
+                }
+
+                const result = await response.json();
+                console.log('💾 Merge saved:', result);
+
+                // Generate and copy shareable link
+                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${mergeId}`;
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(shareUrl);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = shareUrl;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+
+                showToast('🔗 Merged view link copied!', 'success');
+            } catch (error) {
+                console.error('Error saving merged contest:', error);
+                showAlert('Failed to save merged view: ' + error.message, '❌');
+            }
+        }
+
         function handleHashChange() {
             const hash = window.location.hash.slice(1); // Remove '#'
             const params = new URLSearchParams(hash);
             const contestId = params.get('contest');
+            const mergeId = params.get('merge');
 
-            if (contestId && state.isLoggedIn) {
-                loadSharedContest(contestId);
+            if (state.isLoggedIn) {
+                if (mergeId) {
+                    loadSharedMerge(mergeId);
+                } else if (contestId) {
+                    loadSharedContest(contestId);
+                }
             }
         }
 
@@ -1836,7 +2011,7 @@
                 return;
             }
             showConfirm(
-                'Your votes cannot be changed after submission. If you made a mistake, you can contact me. Are you sure?',
+                'Your votes cannot be changed after submission. If you made a mistake, you can contact me.',
                 'confirmSubmitVotes',
                 '🗳️'
             );
@@ -2122,20 +2297,36 @@
             render();
         }
 
-        function applyJoinedContests() {
+        async function applyJoinedContests() {
             if (state.joinedContests.length === 0) return;
 
             state.showJoinModal = false;
             document.body.classList.remove('modal-open');
 
-            // Generate merged results
-            state.mockResults = generateMergedResults();
+            console.log('🔗 Applying joined contests:', state.joinedContests);
+            console.log('🔗 Main contest:', state.currentContest.id);
+
+            // Load merged results from database
+            await loadResults();
+
+            // Create contest numbering map for display
+            const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
+            state.mergedContestMap = allContests.map((contest, index) => ({
+                number: index + 1,
+                title: contest.title,
+                id: contest.id
+            }));
+
             render();
         }
 
-        function clearJoinedContests() {
+        async function clearJoinedContests() {
+            console.log('🔗 Clearing joined contests');
             state.joinedContests = [];
-            state.mockResults = generateMockResults(state.currentContest, state.votes);
+            state.mergedContestMap = null;
+
+            // Reload results for single contest
+            await loadResults();
             render();
         }
 
@@ -2731,14 +2922,14 @@
 
                             ${(() => {
                                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-                                // Mobile: max-width ~95vw, max-height ~55vh
-                                // Desktop: max-width ~85vw, max-height ~50vh
-                                const imageContainerMaxWidth = isMobile ? '95vw' : '85vw';
+                                // Mobile: max-width 90vw, max-height 55vh
+                                // Desktop: max-width 80vw, max-height 50vh
+                                const imageContainerMaxWidth = isMobile ? '90vw' : '80vw';
                                 const imageContainerMaxHeight = isMobile ? '55vh' : '50vh';
                                 const imageContainerMinHeight = '300px';
 
                                 return `
-                                    <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="max-width: ${imageContainerMaxWidth}; max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
+                                    <div class="relative mb-3 bg-gray-100 flex items-center justify-center" style="max-width: ${imageContainerMaxWidth}; max-height: ${imageContainerMaxHeight}; min-height: ${imageContainerMinHeight};">
                                         ${state.currentContest.labelsEnabled && currentImage.label ? `
                                             <div class="absolute top-0 left-0 right-0 bg-white px-4 py-2 text-center border-b border-gray-200 z-10">
                                                 <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
@@ -2747,7 +2938,7 @@
                                         <img
                                             src="${currentImage.url}"
                                             alt="Image ${state.currentImageIndex + 1}"
-                                            class="max-h-full max-w-full object-contain"
+                                            style="max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain;"
                                             onload="this.parentElement.classList.remove('image-loading')"
                                         />
                                         ${currentVote ? `
@@ -2970,8 +3161,8 @@
                                         By Voter
                                     </button>
                                 </div>
-                                <!-- Second row: Action button (Join Contest or Unmerge) -->
-                                <div class="flex items-center justify-center">
+                                <!-- Second row: Action buttons (Join Contest, Unmerge, Share Merged View) -->
+                                <div class="flex items-center justify-center gap-2">
                                     ${state.joinedContests.length > 0 ? `
                                         <button
                                             onclick="clearJoinedContests()"
@@ -2979,6 +3170,13 @@
                                             title="Return to single contest view"
                                         >
                                             ← Unmerge
+                                        </button>
+                                        <button
+                                            onclick="saveMergedContest()"
+                                            class="px-3 py-1 rounded-lg bg-green-500 text-white hover:bg-green-600 transition text-sm"
+                                            title="Save and share this merged view"
+                                        >
+                                            📤 Share Merged View
                                         </button>
                                     ` : `
                                         <button
