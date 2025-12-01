@@ -290,6 +290,9 @@
         // Fallback polling interval (only used if Realtime fails)
         let pollingInterval = null;
 
+        // Guard flag to prevent concurrent refresh operations
+        let isRefreshing = false;
+
         let state = {
             isLoggedIn: false,
             user: null,
@@ -389,10 +392,19 @@
          * Preserves scroll position for smooth UX
          */
         async function refreshCurrentResults() {
-            if (!state.currentContest || state.view !== 'results') return;
+            if (!state.currentContest || state.view !== 'results') {
+                console.log('⏭️ [REFRESH] Skipping refresh - not in results view');
+                return;
+            }
+
+            if (isRefreshing) {
+                console.log('⏭️ [REFRESH] Already refreshing, skipping duplicate call');
+                return;
+            }
 
             try {
-                console.log('🔄 Refreshing results for contest:', state.currentContest.id);
+                isRefreshing = true;
+                console.log('🔄 [REFRESH] Refreshing results for contest:', state.currentContest.id);
 
                 // Re-load results from database
                 await loadResults();
@@ -402,10 +414,12 @@
                 render();
                 window.scrollTo(0, scrollPosition);
 
-                console.log('✅ Results refreshed successfully');
+                console.log('✅ [REFRESH] Results refreshed successfully');
             } catch (error) {
-                console.error('❌ Failed to refresh results:', error);
+                console.error('❌ [REFRESH] Failed to refresh results:', error);
                 showToast('Failed to refresh results', 'error');
+            } finally {
+                isRefreshing = false;
             }
         }
 
@@ -415,13 +429,15 @@
          * @param {string} contestId - UUID of contest to monitor
          */
         function subscribeToVoteChanges(contestId) {
+            console.log('🔔 [SUBSCRIPTION] Setting up vote subscription for contest:', contestId);
+
             // Remove old subscription if exists
             if (realtimeChannels.votes) {
-                console.log('🔌 Removing old vote subscription');
+                console.log('🔌 [SUBSCRIPTION] Removing old vote subscription');
                 supabase.removeChannel(realtimeChannels.votes);
             }
 
-            console.log('📡 Subscribing to vote changes for contest:', contestId);
+            console.log('📡 [SUBSCRIPTION] Creating new subscription channel');
 
             // Create new subscription
             realtimeChannels.votes = supabase
@@ -434,7 +450,8 @@
                         filter: `contest_id=eq.${contestId}`
                     },
                     async (payload) => {
-                        console.log('✨ New vote detected:', payload.new);
+                        console.log('📥 [SUBSCRIPTION] New vote INSERT detected:', payload.new);
+                        console.log('📥 [SUBSCRIPTION] Vote details - image_id:', payload.new.image_id, 'score:', payload.new.score);
 
                         // Show toast notification
                         showToast('✨ New vote received! Updating results...', 'info');
@@ -451,17 +468,75 @@
                         filter: `contest_id=eq.${contestId}`
                     },
                     async (payload) => {
-                        console.log('🔄 Vote updated:', payload.new);
+                        console.log('🔄 [SUBSCRIPTION] Vote UPDATE detected:', payload.new);
+                        console.log('🔄 [SUBSCRIPTION] Vote details - image_id:', payload.new.image_id, 'score:', payload.new.score);
                         showToast('🔄 Vote updated! Refreshing...', 'info');
                         await refreshCurrentResults();
                     }
                 )
                 .subscribe((status) => {
+                    console.log('📡 [SUBSCRIPTION] Status changed to:', status);
                     if (status === 'SUBSCRIBED') {
-                        console.log('✅ Successfully subscribed to vote changes');
+                        console.log('✅ [SUBSCRIPTION] Successfully subscribed to vote changes');
                     } else if (status === 'CHANNEL_ERROR') {
-                        console.error('❌ Failed to subscribe to vote changes');
+                        console.error('❌ [SUBSCRIPTION] Failed to subscribe');
                         handleRealtimeError(new Error('Vote subscription failed'));
+                    }
+                });
+        }
+
+        /**
+         * Subscribe to vote updates for multiple merged contests
+         * Automatically refreshes results when new votes are submitted to any of the merged contests
+         * @param {string[]} contestIds - Array of contest UUIDs to monitor
+         */
+        function subscribeToMergedVoteChanges(contestIds) {
+            // Remove old subscription if exists
+            if (realtimeChannels.votes) {
+                console.log('🔌 [SUBSCRIPTION] Removing old vote subscription');
+                supabase.removeChannel(realtimeChannels.votes);
+            }
+
+            console.log('🔔 [SUBSCRIPTION] Setting up merged vote subscription for contests:', contestIds);
+
+            // Subscribe to changes for ALL merged contests
+            const filter = `contest_id=in.(${contestIds.join(',')})`;
+
+            realtimeChannels.votes = supabase
+                .channel(`votes-merged-${contestIds.join('-')}`)
+                .on('postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'votes',
+                        filter: filter
+                    },
+                    async (payload) => {
+                        console.log('📥 [SUBSCRIPTION] New vote in merged view:', payload.new);
+                        showToast('✨ New vote received! Updating results...', 'info');
+                        await refreshCurrentResults();
+                    }
+                )
+                .on('postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'votes',
+                        filter: filter
+                    },
+                    async (payload) => {
+                        console.log('🔄 [SUBSCRIPTION] Vote updated in merged view:', payload.new);
+                        showToast('🔄 Vote updated! Refreshing...', 'info');
+                        await refreshCurrentResults();
+                    }
+                )
+                .subscribe((status) => {
+                    console.log('📡 [SUBSCRIPTION] Status changed to:', status);
+                    if (status === 'SUBSCRIBED') {
+                        console.log('✅ [SUBSCRIPTION] Successfully subscribed to merged vote changes');
+                    } else if (status === 'CHANNEL_ERROR') {
+                        console.error('❌ [SUBSCRIPTION] Failed to subscribe to merged votes');
+                        handleRealtimeError(new Error('Merged vote subscription failed'));
                     }
                 });
         }
@@ -574,20 +649,21 @@
          * Polls for updates every 10 seconds
          */
         function startPollingFallback() {
-            // Clear existing interval if any
             if (pollingInterval) {
+                console.warn('⚠️ [POLLING] Polling already active, clearing old interval');
                 clearInterval(pollingInterval);
             }
 
-            console.log('🔄 Starting fallback polling (10s interval)');
+            console.log('🔄 [POLLING] Starting fallback polling (10s interval)');
 
             pollingInterval = setInterval(async () => {
+                console.log('🔄 [POLLING] Polling tick - checking state...');
                 if (state.view === 'results' && state.currentContest) {
-                    console.log('🔄 Polling for updates...');
+                    console.log('🔄 [POLLING] Polling for updates...');
                     await refreshCurrentResults();
                 } else {
                     // Stop polling if no longer viewing results
-                    console.log('🛑 Stopping polling (not in results view)');
+                    console.log('🛑 [POLLING] Stopping polling (not in results view)');
                     clearInterval(pollingInterval);
                     pollingInterval = null;
                 }
@@ -1444,93 +1520,129 @@
             }
         }
 
-        async function saveMergedContest() {
+        async function loadMergedContestsFromNumbers(contestNumbers) {
             try {
-                console.log('💾 Saving merged contest configuration');
-                console.log('Current state:', {
-                    currentContest: state.currentContest?.id,
-                    joinedContests: state.joinedContests,
-                    userId: state.user?.id
-                });
+                console.log('🔗 [MERGE] Loading merged contests from numbers:', contestNumbers);
+
+                if (contestNumbers.length < 2) {
+                    showAlert('Invalid merge link. Must have at least 2 contests.', '❌');
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                // Find contests by their contest_numbers
+                const mainNumber = contestNumbers[0];
+                const joinedNumbers = contestNumbers.slice(1);
+
+                console.log('🔗 [MERGE] Main contest number:', mainNumber);
+                console.log('🔗 [MERGE] Joined contest numbers:', joinedNumbers);
+
+                const mainContest = state.contests.find(c => c.contestNumber === mainNumber);
+                if (!mainContest) {
+                    showAlert(`Contest #${mainNumber} not found.`, '❌');
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                console.log('🔗 [MERGE] Found main contest:', mainContest.title);
+
+                // Set up merged view
+                state.currentContest = mainContest;
+                state.joinedContests = joinedNumbers
+                    .map(num => {
+                        const contest = state.contests.find(c => c.contestNumber === num);
+                        if (contest) {
+                            console.log(`🔗 [MERGE] Found joined contest #${num}:`, contest.title);
+                            return contest.id;
+                        } else {
+                            console.warn(`⚠️ [MERGE] Contest #${num} not found`);
+                            return null;
+                        }
+                    })
+                    .filter(Boolean);
+
+                if (state.joinedContests.length === 0) {
+                    showAlert('No valid joined contests found in merge link.', '❌');
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                console.log('🔗 [MERGE] Joined contest IDs:', state.joinedContests);
+
+                // Load user votes for the main contest
+                const userVotes = state.userVotedContests[mainContest.id] || {};
+                state.votes = userVotes;
+
+                // Load merged results
+                await loadResults();
+                state.view = 'results';
+                state.resultsView = 'average';
+
+                // Create contest numbering map for display (using contest_number from database)
+                const allContests = [mainContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
+                state.mergedContestMap = allContests.map(contest => ({
+                    number: contest.contestNumber,  // Use actual contest_number from database
+                    title: contest.title,
+                    id: contest.id
+                }));
+
+                console.log('🔗 [MERGE] Contest map:', state.mergedContestMap);
+
+                // Subscribe to vote changes for merged contests
+                const allContestIds = [mainContest.id, ...state.joinedContests];
+                subscribeToMergedVoteChanges(allContestIds);
+
+                render();
+
+                console.log('✅ [MERGE] Successfully loaded merged view');
+
+            } catch (error) {
+                console.error('❌ [MERGE] Failed to load merged contests:', error);
+                showAlert('Failed to load merged contests.', '❌');
+                state.view = 'home';
+                render();
+            }
+        }
+
+        async function shareMergedView() {
+            try {
+                console.log('🔗 [MERGE] Generating shareable merge link');
 
                 // Validate required data
-                if (!state.currentContest || !state.currentContest.id) {
-                    throw new Error('No contest is currently loaded');
-                }
-                if (!state.user || !state.user.id) {
-                    throw new Error('User is not logged in');
+                if (!state.currentContest || !state.currentContest.contestNumber) {
+                    throw new Error('No contest is currently loaded or contest number is missing');
                 }
                 if (!state.joinedContests || state.joinedContests.length === 0) {
                     throw new Error('No contests have been joined to merge');
                 }
 
-                // Generate unique merge ID
-                const mergeId = `merge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-                console.log('Generated merge ID:', mergeId);
+                // Get contest numbers for current + joined contests
+                const currentNumber = state.currentContest.contestNumber;
+                const joinedNumbers = state.joinedContests
+                    .map(id => state.contests.find(c => c.id === id)?.contestNumber)
+                    .filter(Boolean);
 
-                // Prepare the data to send
-                const mergeData = {
-                    merge_id: mergeId,
-                    main_contest_id: state.currentContest.id,
-                    joined_contest_ids: state.joinedContests,
-                    created_by: state.user.id
-                };
-                console.log('Sending merge data:', mergeData);
-
-                // Save to database using anonymous access (no auth token needed)
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_merges`, {
-                    method: 'POST',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=representation'
-                    },
-                    body: JSON.stringify(mergeData)
-                });
-
-                console.log('Response status:', response.status);
-                console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('Database insert failed:', {
-                        status: response.status,
-                        statusText: response.statusText,
-                        errorText: errorText
-                    });
-
-                    let errorMessage = 'Failed to save merged contest';
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        if (errorJson.message) {
-                            errorMessage = errorJson.message;
-                        } else if (errorJson.hint) {
-                            errorMessage = errorJson.hint;
-                        }
-                    } catch (e) {
-                        // If not JSON, use the text as is
-                        if (errorText) {
-                            errorMessage = errorText;
-                        }
-                    }
-
-                    throw new Error(`${errorMessage} (Status: ${response.status})`);
+                if (joinedNumbers.length !== state.joinedContests.length) {
+                    console.warn('⚠️ [MERGE] Some joined contests are missing contest numbers');
                 }
 
-                const result = await response.json();
-                console.log('💾 Merge saved successfully:', result);
+                // Create merge URL: #merge=1,2,3
+                const allNumbers = [currentNumber, ...joinedNumbers].sort((a, b) => a - b);
+                const mergeUrl = `${window.location.origin}${window.location.pathname}#merge=${allNumbers.join(',')}`;
 
-                // Generate and copy shareable link
-                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${mergeId}`;
-                console.log('Generated share URL:', shareUrl);
+                console.log('🔗 [MERGE] Generated merge URL:', mergeUrl);
+                console.log('🔗 [MERGE] Contest numbers:', allNumbers);
 
+                // Copy to clipboard
                 if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(shareUrl);
+                    await navigator.clipboard.writeText(mergeUrl);
                 } else {
                     // Fallback for older browsers
                     const textArea = document.createElement('textarea');
-                    textArea.value = shareUrl;
+                    textArea.value = mergeUrl;
                     textArea.style.position = 'fixed';
                     textArea.style.left = '-9999px';
                     document.body.appendChild(textArea);
@@ -1539,26 +1651,46 @@
                     document.body.removeChild(textArea);
                 }
 
-                showToast('🔗 Merged view link copied!', 'success');
+                showToast('🔗 Merge link copied to clipboard!', 'success');
+
             } catch (error) {
-                console.error('Full error:', error);
-                console.error('Error stack:', error.stack);
-                showAlert('Failed to save merged view: ' + error.message, '❌');
+                console.error('❌ [MERGE] Failed to share merge:', error);
+                showAlert('Failed to copy merge link. Please try again.', '❌');
             }
         }
 
         function handleHashChange() {
             const hash = window.location.hash.slice(1); // Remove '#'
+
+            console.log('🔗 [NAVIGATION] Hash changed:', hash);
+
+            // Check for merge link: #merge=1,2,3
+            if (hash.startsWith('merge=')) {
+                const mergeValue = hash.replace('merge=', '');
+
+                // Check if it's a new-style merge (comma-separated numbers)
+                if (/^\d+(,\d+)*$/.test(mergeValue)) {
+                    console.log('🔗 [NAVIGATION] Detected new-style merge link');
+                    const contestNumbers = mergeValue.split(',').map(n => parseInt(n.trim()));
+                    loadMergedContestsFromNumbers(contestNumbers);
+                    return;
+                }
+                // Old-style merge (UUID) - kept for backward compatibility
+                else {
+                    console.log('🔗 [NAVIGATION] Detected old-style merge link');
+                    if (state.isLoggedIn) {
+                        loadSharedMerge(mergeValue);
+                    }
+                    return;
+                }
+            }
+
+            // Check for single contest share: #contest={uuid}
             const params = new URLSearchParams(hash);
             const contestId = params.get('contest');
-            const mergeId = params.get('merge');
-
-            if (state.isLoggedIn) {
-                if (mergeId) {
-                    loadSharedMerge(mergeId);
-                } else if (contestId) {
-                    loadSharedContest(contestId);
-                }
+            if (contestId && state.isLoggedIn) {
+                console.log('🔗 [NAVIGATION] Detected contest share link');
+                loadSharedContest(contestId);
             }
         }
 
@@ -1742,7 +1874,7 @@
 
         async function loadContests() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,contest_number,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
@@ -1754,6 +1886,7 @@
                 state.contests = contests.map(contest => ({
                     id: contest.id,
                     title: contest.title,
+                    contestNumber: contest.contest_number,
                     isLocked: contest.is_locked,
                     resultsPublic: contest.results_public,
                     createdBy: contest.created_by,
@@ -2118,6 +2251,8 @@
 
 
         async function backToHome() {
+            console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
+
             if (state.view === 'vote' && !state.hasSubmitted) {
                 showConfirm(
                     'Your progress will be lost if you proceed. Are you sure?',
@@ -2129,18 +2264,22 @@
 
             // Unsubscribe from vote updates when leaving results view
             if (state.view === 'results') {
+                console.log('🔌 [CLEANUP] Unsubscribing from vote updates');
                 unsubscribeFromVotes();
                 await loadContests();  // Refresh contest list to ensure fresh data
             }
 
             state.view = 'home';
             state.currentContest = null;
+            state.joinedContests = [];
             state.showBreakdownModal = null;
             state.mockResults = null;
             state.showMyVotes = false;
 
             // Clear URL hash
             window.location.hash = '';
+
+            console.log('✅ [NAVIGATION] Successfully returned to home');
 
             render();
         }
@@ -2351,27 +2490,36 @@
             state.showJoinModal = false;
             document.body.classList.remove('modal-open');
 
-            console.log('🔗 Applying joined contests:', state.joinedContests);
-            console.log('🔗 Main contest:', state.currentContest.id);
+            console.log('🔗 [MERGE] Applying joined contests:', state.joinedContests);
+            console.log('🔗 [MERGE] Main contest:', state.currentContest.id);
 
             // Load merged results from database
             await loadResults();
 
-            // Create contest numbering map for display
+            // Create contest numbering map for display (using contest_number from database)
             const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-            state.mergedContestMap = allContests.map((contest, index) => ({
-                number: index + 1,
+            state.mergedContestMap = allContests.map(contest => ({
+                number: contest.contestNumber,  // Use actual contest_number from database
                 title: contest.title,
                 id: contest.id
             }));
+
+            // Update subscription to track all merged contests
+            const allContestIds = [state.currentContest.id, ...state.joinedContests];
+            console.log('🔗 [MERGE] Setting up subscriptions for merged contests');
+            subscribeToMergedVoteChanges(allContestIds);
 
             render();
         }
 
         async function clearJoinedContests() {
-            console.log('🔗 Clearing joined contests');
+            console.log('🔗 [MERGE] Clearing joined contests');
             state.joinedContests = [];
             state.mergedContestMap = null;
+
+            // Revert to single contest subscription
+            console.log('🔗 [MERGE] Reverting to single contest subscription');
+            subscribeToVoteChanges(state.currentContest.id);
 
             // Reload results for single contest
             await loadResults();
@@ -2379,16 +2527,16 @@
         }
 
         function generateMergedResults() {
-            // Create contest numbering map
+            // Create contest numbering map using actual contest_number from database
             const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
             const contestNumberMap = {};
-            allContests.forEach((contest, index) => {
-                contestNumberMap[contest.id] = index + 1;
+            allContests.forEach(contest => {
+                contestNumberMap[contest.id] = contest.contestNumber;  // Use actual contest_number
             });
 
             // Store the contest map for display in results
-            state.mergedContestMap = allContests.map((contest, index) => ({
-                number: index + 1,
+            state.mergedContestMap = allContests.map(contest => ({
+                number: contest.contestNumber,  // Use actual contest_number from database
                 title: contest.title,
                 id: contest.id
             }));
@@ -3210,9 +3358,9 @@
                                             ← Unmerge
                                         </button>
                                         <button
-                                            onclick="saveMergedContest()"
+                                            onclick="shareMergedView()"
                                             class="px-3 py-1 rounded-lg bg-green-500 text-white hover:bg-green-600 transition text-sm"
-                                            title="Save and share this merged view"
+                                            title="Share this merged view"
                                         >
                                             📤 Share Merged View
                                         </button>
