@@ -1447,9 +1447,35 @@
         async function saveMergedContest() {
             try {
                 console.log('💾 Saving merged contest configuration');
+                console.log('Current state:', {
+                    currentContest: state.currentContest?.id,
+                    joinedContests: state.joinedContests,
+                    userId: state.user?.id
+                });
+
+                // Validate required data
+                if (!state.currentContest || !state.currentContest.id) {
+                    throw new Error('No contest is currently loaded');
+                }
+                if (!state.user || !state.user.id) {
+                    throw new Error('User is not logged in');
+                }
+                if (!state.joinedContests || state.joinedContests.length === 0) {
+                    throw new Error('No contests have been joined to merge');
+                }
 
                 // Generate unique merge ID
                 const mergeId = `merge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                console.log('Generated merge ID:', mergeId);
+
+                // Prepare the data to send
+                const mergeData = {
+                    merge_id: mergeId,
+                    main_contest_id: state.currentContest.id,
+                    joined_contest_ids: state.joinedContests,
+                    created_by: state.user.id
+                };
+                console.log('Sending merge data:', mergeData);
 
                 // Save to database using anonymous access (no auth token needed)
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_merges`, {
@@ -1460,23 +1486,44 @@
                         'Content-Type': 'application/json',
                         'Prefer': 'return=representation'
                     },
-                    body: JSON.stringify({
-                        merge_id: mergeId,
-                        main_contest_id: state.currentContest.id,
-                        joined_contest_ids: state.joinedContests,
-                        created_by: state.user.id
-                    })
+                    body: JSON.stringify(mergeData)
                 });
 
+                console.log('Response status:', response.status);
+                console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+
                 if (!response.ok) {
-                    throw new Error('Failed to save merged contest');
+                    const errorText = await response.text();
+                    console.error('Database insert failed:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        errorText: errorText
+                    });
+
+                    let errorMessage = 'Failed to save merged contest';
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.message) {
+                            errorMessage = errorJson.message;
+                        } else if (errorJson.hint) {
+                            errorMessage = errorJson.hint;
+                        }
+                    } catch (e) {
+                        // If not JSON, use the text as is
+                        if (errorText) {
+                            errorMessage = errorText;
+                        }
+                    }
+
+                    throw new Error(`${errorMessage} (Status: ${response.status})`);
                 }
 
                 const result = await response.json();
-                console.log('💾 Merge saved:', result);
+                console.log('💾 Merge saved successfully:', result);
 
                 // Generate and copy shareable link
                 const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${mergeId}`;
+                console.log('Generated share URL:', shareUrl);
 
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     await navigator.clipboard.writeText(shareUrl);
@@ -1494,7 +1541,8 @@
 
                 showToast('🔗 Merged view link copied!', 'success');
             } catch (error) {
-                console.error('Error saving merged contest:', error);
+                console.error('Full error:', error);
+                console.error('Error stack:', error.stack);
                 showAlert('Failed to save merged view: ' + error.message, '❌');
             }
         }
