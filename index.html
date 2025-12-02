@@ -2242,6 +2242,10 @@
             if (state.view === 'results') {
                 console.log('🔄 [CLEANUP] Refreshing contest list');
                 await loadContests();  // Refresh contest list to ensure fresh data
+            } else {
+                // Refresh voter counts when returning from other views (like vote view)
+                console.log('🔄 [CLEANUP] Refreshing voter counts');
+                await loadAllVoterCounts();
             }
 
             // Reset all contest-related state
@@ -3913,16 +3917,16 @@
 
                             // Ensure the row exists in public.users, then continue
                             ensureLocalUser(state.user)
-                                .then(() => {
+                                .then(async () => {
                                     // proceed normally once the user row is present (or insertion attempted)
-                                    loadContests();
+                                    await loadContests();
 
                                     render();
                                 })
-                                .catch((err) => {
+                                .catch(async (err) => {
                                     // should not happen because ensureLocalUser swallows errors, but safe fallback
                                     console.error('ensureLocalUser unexpected error:', err);
-                                    loadContests();
+                                    await loadContests();
                                     render();
                                 });
                         }
