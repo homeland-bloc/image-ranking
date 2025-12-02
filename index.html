@@ -277,21 +277,8 @@
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
 
-        // Initialize Supabase client for Realtime functionality
+        // Initialize Supabase client
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-        // Realtime subscription management - track active channels
-        let realtimeChannels = {
-            votes: null,        // Live vote updates for current contest
-            contests: null,     // Contest deletion detection (global)
-            merges: null        // Merge changes detection
-        };
-
-        // Fallback polling interval (only used if Realtime fails)
-        let pollingInterval = null;
-
-        // Guard flag to prevent concurrent refresh operations
-        let isRefreshing = false;
 
         let state = {
             isLoggedIn: false,
@@ -310,11 +297,12 @@
             modalProcessing: false,
             imageScale: 100,
             mockResults: null,
-            mockResultsCache: {}, // Format: { contestId: generatedResults }
             scaleUpdateTimeout: null,
             newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,  // Deprecated, use resultsView
-            resultsView: 'average',  // 'average', 'myVotes', or 'byVoter'
+            resultsView: 'average',  // 'average', 'userVotes', or 'byVoter'
+            selectedVoterUserId: null,  // For user votes dropdown (null = current user)
+            contestVoters: [],  // List of all users who voted in current contest(s)
             shuffledImages: [],
             nextContestId: 1,
             bannedUsers: [], // Array of user IDs who are banned from app
@@ -356,11 +344,11 @@
             render();
         }
 
-        // ==================== REALTIME & TOAST NOTIFICATIONS ====================
+        // ==================== TOAST NOTIFICATIONS ====================
 
         /**
          * Show toast notification (lightweight, non-disruptive)
-         * Used for realtime updates, background operations
+         * Used for user actions (ban/unban, vote submission, etc.)
          * @param {string} message - Message to display
          * @param {string} type - 'info', 'success', 'error', or 'warning'
          * @param {number} duration - Display duration in ms (default 3000)
@@ -386,291 +374,7 @@
             }, duration);
         }
 
-        /**
-         * Refresh current results without full page reload
-         * Re-fetches votes from database and recalculates results
-         * Preserves scroll position for smooth UX
-         */
-        async function refreshCurrentResults() {
-            if (!state.currentContest || state.view !== 'results') {
-                console.log('⏭️ [REFRESH] Skipping refresh - not in results view');
-                return;
-            }
-
-            if (isRefreshing) {
-                console.log('⏭️ [REFRESH] Already refreshing, skipping duplicate call');
-                return;
-            }
-
-            try {
-                isRefreshing = true;
-                console.log('🔄 [REFRESH] Refreshing results for contest:', state.currentContest.id);
-
-                // Re-load results from database
-                await loadResults();
-
-                // Re-render without losing scroll position
-                const scrollPosition = window.scrollY;
-                render();
-                window.scrollTo(0, scrollPosition);
-
-                console.log('✅ [REFRESH] Results refreshed successfully');
-            } catch (error) {
-                console.error('❌ [REFRESH] Failed to refresh results:', error);
-                showToast('Failed to refresh results', 'error');
-            } finally {
-                isRefreshing = false;
-            }
-        }
-
-        /**
-         * Subscribe to live vote updates for a specific contest
-         * Automatically refreshes results when new votes are submitted
-         * @param {string} contestId - UUID of contest to monitor
-         */
-        function subscribeToVoteChanges(contestId) {
-            console.log('🔔 [SUBSCRIPTION] Setting up vote subscription for contest:', contestId);
-
-            // Remove old subscription if exists
-            if (realtimeChannels.votes) {
-                console.log('🔌 [SUBSCRIPTION] Removing old vote subscription');
-                supabase.removeChannel(realtimeChannels.votes);
-            }
-
-            console.log('📡 [SUBSCRIPTION] Creating new subscription channel');
-
-            // Create new subscription
-            realtimeChannels.votes = supabase
-                .channel(`votes-contest-${contestId}`)
-                .on('postgres_changes',
-                    {
-                        event: 'INSERT',
-                        schema: 'public',
-                        table: 'votes',
-                        filter: `contest_id=eq.${contestId}`
-                    },
-                    async (payload) => {
-                        console.log('📥 [SUBSCRIPTION] New vote INSERT detected:', payload.new);
-                        console.log('📥 [SUBSCRIPTION] Vote details - image_id:', payload.new.image_id, 'score:', payload.new.score);
-
-                        // Show toast notification
-                        showToast('✨ New vote received! Updating results...', 'info');
-
-                        // Re-fetch results smoothly (NO hard reload)
-                        await refreshCurrentResults();
-                    }
-                )
-                .on('postgres_changes',
-                    {
-                        event: 'UPDATE',
-                        schema: 'public',
-                        table: 'votes',
-                        filter: `contest_id=eq.${contestId}`
-                    },
-                    async (payload) => {
-                        console.log('🔄 [SUBSCRIPTION] Vote UPDATE detected:', payload.new);
-                        console.log('🔄 [SUBSCRIPTION] Vote details - image_id:', payload.new.image_id, 'score:', payload.new.score);
-                        showToast('🔄 Vote updated! Refreshing...', 'info');
-                        await refreshCurrentResults();
-                    }
-                )
-                .subscribe((status) => {
-                    console.log('📡 [SUBSCRIPTION] Status changed to:', status);
-                    if (status === 'SUBSCRIBED') {
-                        console.log('✅ [SUBSCRIPTION] Successfully subscribed to vote changes');
-                    } else if (status === 'CHANNEL_ERROR') {
-                        console.error('❌ [SUBSCRIPTION] Failed to subscribe');
-                        handleRealtimeError(new Error('Vote subscription failed'));
-                    }
-                });
-        }
-
-        /**
-         * Subscribe to vote updates for multiple merged contests
-         * Automatically refreshes results when new votes are submitted to any of the merged contests
-         * @param {string[]} contestIds - Array of contest UUIDs to monitor
-         */
-        function subscribeToMergedVoteChanges(contestIds) {
-            // Remove old subscription if exists
-            if (realtimeChannels.votes) {
-                console.log('🔌 [SUBSCRIPTION] Removing old vote subscription');
-                supabase.removeChannel(realtimeChannels.votes);
-            }
-
-            console.log('🔔 [SUBSCRIPTION] Setting up merged vote subscription for contests:', contestIds);
-
-            // Subscribe to changes for ALL merged contests
-            const filter = `contest_id=in.(${contestIds.join(',')})`;
-
-            realtimeChannels.votes = supabase
-                .channel(`votes-merged-${contestIds.join('-')}`)
-                .on('postgres_changes',
-                    {
-                        event: 'INSERT',
-                        schema: 'public',
-                        table: 'votes',
-                        filter: filter
-                    },
-                    async (payload) => {
-                        console.log('📥 [SUBSCRIPTION] New vote in merged view:', payload.new);
-                        showToast('✨ New vote received! Updating results...', 'info');
-                        await refreshCurrentResults();
-                    }
-                )
-                .on('postgres_changes',
-                    {
-                        event: 'UPDATE',
-                        schema: 'public',
-                        table: 'votes',
-                        filter: filter
-                    },
-                    async (payload) => {
-                        console.log('🔄 [SUBSCRIPTION] Vote updated in merged view:', payload.new);
-                        showToast('🔄 Vote updated! Refreshing...', 'info');
-                        await refreshCurrentResults();
-                    }
-                )
-                .subscribe((status) => {
-                    console.log('📡 [SUBSCRIPTION] Status changed to:', status);
-                    if (status === 'SUBSCRIBED') {
-                        console.log('✅ [SUBSCRIPTION] Successfully subscribed to merged vote changes');
-                    } else if (status === 'CHANNEL_ERROR') {
-                        console.error('❌ [SUBSCRIPTION] Failed to subscribe to merged votes');
-                        handleRealtimeError(new Error('Merged vote subscription failed'));
-                    }
-                });
-        }
-
-        /**
-         * Subscribe to contest deletions (global - stays active during session)
-         * Redirects user to home if viewing a deleted contest
-         */
-        function subscribeToContestDeletions() {
-            if (realtimeChannels.contests) {
-                console.log('🔌 Removing old contest deletion subscription');
-                supabase.removeChannel(realtimeChannels.contests);
-            }
-
-            console.log('📡 Subscribing to contest deletions');
-
-            realtimeChannels.contests = supabase
-                .channel('contest-deletions')
-                .on('postgres_changes',
-                    {
-                        event: 'DELETE',
-                        schema: 'public',
-                        table: 'contests'
-                    },
-                    async (payload) => {
-                        const deletedId = payload.old.id;
-                        console.log('🗑️ Contest deleted:', deletedId);
-
-                        // If viewing deleted contest, go home
-                        if (state.currentContest?.id === deletedId) {
-                            showAlert('This contest was deleted by its creator.', '🗑️');
-                            state.view = 'home';
-                            state.currentContest = null;
-                            unsubscribeFromVotes();
-
-                            // Refresh contest list
-                            await loadContests();
-                            render();
-                        } else {
-                            // Just remove from local contests list
-                            state.contests = state.contests.filter(c => c.id !== deletedId);
-
-                            // Re-render if on home view
-                            if (state.view === 'home') {
-                                render();
-                            }
-                        }
-                    }
-                )
-                .subscribe((status) => {
-                    if (status === 'SUBSCRIBED') {
-                        console.log('✅ Successfully subscribed to contest deletions');
-                    } else if (status === 'CHANNEL_ERROR') {
-                        console.error('❌ Failed to subscribe to contest deletions');
-                    }
-                });
-        }
-
-        /**
-         * Unsubscribe from vote updates only
-         * Called when leaving results view
-         */
-        function unsubscribeFromVotes() {
-            if (realtimeChannels.votes) {
-                console.log('🔌 Unsubscribing from vote changes');
-                supabase.removeChannel(realtimeChannels.votes);
-                realtimeChannels.votes = null;
-            }
-        }
-
-        /**
-         * Unsubscribe from all realtime channels
-         * Called on logout or app cleanup
-         */
-        function unsubscribeAll() {
-            console.log('🔌 Unsubscribing from all realtime channels');
-
-            Object.keys(realtimeChannels).forEach(key => {
-                if (realtimeChannels[key]) {
-                    supabase.removeChannel(realtimeChannels[key]);
-                    realtimeChannels[key] = null;
-                }
-            });
-
-            // Clear polling fallback if active
-            if (pollingInterval) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
-            }
-        }
-
-        /**
-         * Handle Realtime connection errors
-         * Falls back to polling if Realtime is unavailable
-         * @param {Error} error - The error that occurred
-         */
-        function handleRealtimeError(error) {
-            console.error('❌ Realtime error:', error);
-
-            // Fall back to polling if Realtime fails and we're viewing results
-            if (state.view === 'results' && state.currentContest) {
-                console.log('🔄 Falling back to polling...');
-                showToast('⚠️ Live updates unavailable, using backup sync', 'warning', 5000);
-                startPollingFallback();
-            }
-        }
-
-        /**
-         * Fallback polling (only used when Realtime fails)
-         * Polls for updates every 10 seconds
-         */
-        function startPollingFallback() {
-            if (pollingInterval) {
-                console.warn('⚠️ [POLLING] Polling already active, clearing old interval');
-                clearInterval(pollingInterval);
-            }
-
-            console.log('🔄 [POLLING] Starting fallback polling (10s interval)');
-
-            pollingInterval = setInterval(async () => {
-                console.log('🔄 [POLLING] Polling tick - checking state...');
-                if (state.view === 'results' && state.currentContest) {
-                    console.log('🔄 [POLLING] Polling for updates...');
-                    await refreshCurrentResults();
-                } else {
-                    // Stop polling if no longer viewing results
-                    console.log('🛑 [POLLING] Stopping polling (not in results view)');
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
-                }
-            }, 10000); // Poll every 10 seconds
-        }
-
-        // ==================== END REALTIME ====================
+        // ==================== END TOAST NOTIFICATIONS ====================
 
         function getScoreColor(score) {
             const colors = {
@@ -768,6 +472,7 @@
 
                 console.log('🔍 DEBUG: Fetching votes for contest IDs:', allContestIds);
 
+                // Fetch ALL votes (including blocked ones) for breakdown display
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
@@ -775,12 +480,34 @@
                     }
                 });
 
-                const votes = await response.json();
-                console.log('🔍 DEBUG: Fetched votes:', votes);
-                console.log('🔍 DEBUG: Number of votes:', votes.length);
+                const allVotes = await response.json();
+                console.log('🔍 DEBUG: Fetched votes:', allVotes);
+                console.log('🔍 DEBUG: Number of votes:', allVotes.length);
+
+                // Build list of unique voters for dropdown
+                const votersMap = new Map();
+                allVotes.forEach(vote => {
+                    if (!votersMap.has(vote.user_id)) {
+                        votersMap.set(vote.user_id, {
+                            userId: vote.user_id,
+                            username: vote.voter.username,
+                            avatar: vote.voter.avatar
+                        });
+                    }
+                });
+                state.contestVoters = Array.from(votersMap.values()).sort((a, b) =>
+                    a.username.localeCompare(b.username)
+                );
+
+                // Update voter count cache
+                allContestIds.forEach(contestId => {
+                    const contestVotes = allVotes.filter(v => v.contest_id === contestId);
+                    const uniqueVoters = new Set(contestVotes.map(v => v.user_id));
+                    voterCountCache[contestId] = uniqueVoters.size;
+                });
 
                 const imageScores = {};
-                votes.forEach(vote => {
+                allVotes.forEach(vote => {
                     console.log('🔍 DEBUG: Processing vote:', vote);
                     if (!imageScores[vote.image_id]) {
                         imageScores[vote.image_id] = {
@@ -788,13 +515,21 @@
                             breakdown: []
                         };
                     }
-                    imageScores[vote.image_id].scores.push(vote.score);
+
+                    // Only include non-blocked votes in score calculations
+                    const isBlocked = vote.is_blocked || false;
+                    if (!isBlocked) {
+                        imageScores[vote.image_id].scores.push(vote.score);
+                    }
+
+                    // Include ALL votes in breakdown (blocked and non-blocked)
                     imageScores[vote.image_id].breakdown.push({
                         userId: vote.user_id,
                         username: vote.voter.username,
                         avatar: vote.voter.avatar,
                         score: vote.score,
-                        isCurrentUser: vote.user_id === state.user?.id
+                        isCurrentUser: vote.user_id === state.user?.id,
+                        isBlocked: isBlocked
                     });
                 });
 
@@ -819,11 +554,19 @@
 
                     console.log(`🔍 DEBUG: Image ${img.id} - scores:`, scores, 'average:', average);
 
+                    // Find contest number if in merged view
+                    let contestNumber = null;
+                    if (state.mergedContestMap && state.mergedContestMap.length > 0) {
+                        const contestEntry = state.mergedContestMap.find(c => c.id === img.contestId);
+                        contestNumber = contestEntry ? contestEntry.number : null;
+                    }
+
                     return {
                         ...img,
                         averageScore: average,
                         totalVotes: scores.length,
-                        breakdown: imageScores[img.id]?.breakdown || []
+                        breakdown: imageScores[img.id]?.breakdown || [],
+                        contestNumber: contestNumber
                     };
                 }).sort((a, b) => b.averageScore - a.averageScore);
 
@@ -932,55 +675,42 @@
         }
 
         /**
-         * Generate voter statistics across one or more contests
+         * Generate voter statistics from loaded results
          * Calculates each voter's average score across all images they voted on
+         * Uses only data from state.mockResults (already loaded from database)
          *
-         * @param {Object|Array} contests - Single contest object or array of contests for merged view
          * @returns {Array} Array of voter objects with calculated averages, sorted by average score (highest first)
          */
-        function generateVoterStats(contests) {
-            // Normalize input to array for consistent processing
-            const contestList = Array.isArray(contests) ? contests : [contests];
+        function generateVoterStats() {
+            if (!state.mockResults) return [];
 
-            // Accumulator for voter data across all contests
+            // Accumulator for voter data
             // Structure: { userId: { votes: [], totalScore: 0, totalImages: 0, username, avatar, etc. } }
             const voterVotes = {};
 
-            contestList.forEach(contest => {
-                // Use actual loaded results if available for current contest, otherwise generate mock results
-                let results;
-                if (contest.id === state.currentContest?.id && state.mockResults) {
-                    // Use the actual loaded results from the database
-                    results = state.mockResults;
-                } else {
-                    // For other contests or when results not loaded, use cached or generate mock
-                    const userVotes = contest.id === state.currentContest?.id ? state.votes : (state.userVotedContests[contest.id] || {});
-                    results = state.mockResultsCache[contest.id] || generateMockResults(contest, userVotes);
-                }
+            // Collect votes from all images in loaded results
+            state.mockResults.forEach(imageResult => {
+                if (!imageResult.breakdown) return;
 
-                // Collect votes from all images
-                results.forEach(imageResult => {
-                    if (!imageResult.breakdown) return;
+                imageResult.breakdown.forEach(vote => {
+                    // Skip blocked votes
+                    if (vote.isBlocked) return;
 
-                    imageResult.breakdown.forEach(vote => {
-                        if (vote.isBanned) return; // Skip banned users
+                    if (!voterVotes[vote.userId]) {
+                        voterVotes[vote.userId] = {
+                            userId: vote.userId,
+                            username: vote.username,
+                            avatar: vote.avatar,
+                            isCurrentUser: vote.isCurrentUser || false,
+                            votes: [],
+                            totalScore: 0,
+                            totalImages: 0
+                        };
+                    }
 
-                        if (!voterVotes[vote.userId]) {
-                            voterVotes[vote.userId] = {
-                                userId: vote.userId,
-                                username: vote.username,
-                                avatar: vote.avatar,
-                                isCurrentUser: vote.isCurrentUser || false,
-                                votes: [],
-                                totalScore: 0,
-                                totalImages: 0
-                            };
-                        }
-
-                        voterVotes[vote.userId].votes.push(vote.score);
-                        voterVotes[vote.userId].totalScore += vote.score;
-                        voterVotes[vote.userId].totalImages++;
-                    });
+                    voterVotes[vote.userId].votes.push(vote.score);
+                    voterVotes[vote.userId].totalScore += vote.score;
+                    voterVotes[vote.userId].totalImages++;
                 });
             });
 
@@ -1720,19 +1450,15 @@
                 state.view = 'results';
                 state.resultsView = 'average';
 
-                // Create contest numbering map for display (using contest_number from database)
+                // Create contest numbering map for display (simple sequential 1, 2, 3...)
                 const allContests = [mainContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-                state.mergedContestMap = allContests.map(contest => ({
-                    number: contest.contestNumber,  // Use actual contest_number from database
+                state.mergedContestMap = allContests.map((contest, index) => ({
+                    number: index + 1,  // Simple sequential numbering (main contest = 1)
                     title: contest.title,
                     id: contest.id
                 }));
 
                 console.log('🔗 [MERGE] Contest map:', state.mergedContestMap);
-
-                // Subscribe to vote changes for merged contests
-                const allContestIds = [mainContest.id, ...state.joinedContests];
-                subscribeToMergedVoteChanges(allContestIds);
 
                 render();
 
@@ -1751,29 +1477,19 @@
                 console.log('🔗 [MERGE] Generating shareable merge link');
 
                 // Validate required data
-                if (!state.currentContest || !state.currentContest.contestNumber) {
-                    throw new Error('No contest is currently loaded or contest number is missing');
+                if (!state.currentContest) {
+                    throw new Error('No contest is currently loaded');
                 }
                 if (!state.joinedContests || state.joinedContests.length === 0) {
                     throw new Error('No contests have been joined to merge');
                 }
 
-                // Get contest numbers for current + joined contests
-                const currentNumber = state.currentContest.contestNumber;
-                const joinedNumbers = state.joinedContests
-                    .map(id => state.contests.find(c => c.id === id)?.contestNumber)
-                    .filter(Boolean);
-
-                if (joinedNumbers.length !== state.joinedContests.length) {
-                    console.warn('⚠️ [MERGE] Some joined contests are missing contest numbers');
-                }
-
-                // Create merge URL: #merge=1,2,3
-                const allNumbers = [currentNumber, ...joinedNumbers].sort((a, b) => a - b);
-                const mergeUrl = `${window.location.origin}${window.location.pathname}#merge=${allNumbers.join(',')}`;
+                // Create merge URL using contest IDs: #merge=id1,id2,id3
+                const allContestIds = [state.currentContest.id, ...state.joinedContests];
+                const mergeUrl = `${window.location.origin}${window.location.pathname}#merge=${allContestIds.join(',')}`;
 
                 console.log('🔗 [MERGE] Generated merge URL:', mergeUrl);
-                console.log('🔗 [MERGE] Contest numbers:', allNumbers);
+                console.log('🔗 [MERGE] Contest IDs:', allContestIds);
 
                 // Copy to clipboard
                 if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2211,9 +1927,6 @@
                 state.joinedContests = []; // Clear merged contests when viewing single contest
                 state.view = 'results';
 
-                // Subscribe to live vote updates for this contest
-                subscribeToVoteChanges(contest.id);
-
                 // Update URL hash for shareable link
                 window.location.hash = `contest=${contest.id}`;
 
@@ -2229,9 +1942,6 @@
             state.votes = {};
             await loadResults();
             state.showMyVotes = false;
-
-            // Subscribe to live vote updates for this locked contest
-            subscribeToVoteChanges(contest.id);
             state.joinedContests = []; // Clear merged contests when viewing single contest
             state.view = 'results';
             render();
@@ -2388,11 +2098,139 @@
             render();
         }
 
+        // Admin vote editing
+        async function adminEditVote(userId, imageId, currentScore) {
+            if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
+                showAlert('Admin access required', '🔒');
+                return;
+            }
+
+            // Show modal with score buttons
+            const voteData = state.mockResults.find(r => r.id === imageId)?.breakdown.find(v => v.userId === userId);
+            if (!voteData) return;
+
+            showModal({
+                type: 'custom',
+                title: `Edit ${voteData.username}'s Vote`,
+                icon: '✏️',
+                message: `Current score: ${currentScore}\nSelect new score:`,
+                buttons: [1, 2, 3, 4, 5].map(score => ({
+                    text: score.toString(),
+                    primary: false,
+                    action: `confirmEditVote_${userId}_${imageId}_${currentScore}_${score}`
+                })).concat([{
+                    text: 'Cancel',
+                    primary: false,
+                    action: 'closeModal'
+                }])
+            });
+        }
+
+        async function confirmEditVote(userId, imageId, oldScore, newScore) {
+            try {
+                state.modalProcessing = true;
+                closeModal();
+
+                setLoading('Updating vote...');
+
+                // Find the contest ID for this image
+                const contestId = state.currentContest.id;
+
+                // Update vote in database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ score: parseInt(newScore) })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update vote');
+                }
+
+                showToast(`Vote updated from ${oldScore} to ${newScore}`, 'success');
+
+                // Reload results to get fresh data
+                await loadResults();
+                clearLoading();
+                render();
+
+            } catch (error) {
+                console.error('Error updating vote:', error);
+                clearLoading();
+                showAlert('Failed to update vote: ' + error.message, '❌');
+                state.modalProcessing = false;
+            }
+        }
+
+        // Admin vote blocking
+        async function adminToggleBlockVote(userId, imageId, currentlyBlocked) {
+            if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
+                showAlert('Admin access required', '🔒');
+                return;
+            }
+
+            const voteData = state.mockResults.find(r => r.id === imageId)?.breakdown.find(v => v.userId === userId);
+            if (!voteData) return;
+
+            const action = currentlyBlocked ? 'unblock' : 'block';
+            showConfirm(
+                `Are you sure you want to ${action} ${voteData.username}'s vote?`,
+                `executeToggleBlockVote_${userId}_${imageId}_${!currentlyBlocked}`,
+                '🚫'
+            );
+        }
+
+        async function executeToggleBlockVote(userId, imageId, shouldBlock) {
+            try {
+                state.modalProcessing = true;
+                closeModal();
+
+                setLoading(shouldBlock ? 'Blocking vote...' : 'Unblocking vote...');
+
+                // Find the contest ID for this image
+                const contestId = state.currentContest.id;
+
+                // Update vote in database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ is_blocked: shouldBlock })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update vote block status');
+                }
+
+                showToast(`Vote ${shouldBlock ? 'blocked' : 'unblocked'}`, 'success');
+
+                // Reload results to get fresh data
+                await loadResults();
+                clearLoading();
+                render();
+
+            } catch (error) {
+                console.error('Error toggling vote block:', error);
+                clearLoading();
+                showAlert('Failed to toggle vote block: ' + error.message, '❌');
+                state.modalProcessing = false;
+            }
+        }
+
 
         async function backToHome() {
             console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
 
-            if (state.view === 'vote' && !state.hasSubmitted) {
+            if (state.view === 'vote' && !state.hasSubmitted && state.currentContest && state.currentContest.images) {
                 showConfirm(
                     'Your progress will be lost if you proceed. Are you sure?',
                     'confirmBackToHome',
@@ -2401,19 +2239,22 @@
                 return;
             }
 
-            // Unsubscribe from vote updates when leaving results view
+            // Refresh contest list when leaving results view
             if (state.view === 'results') {
-                console.log('🔌 [CLEANUP] Unsubscribing from vote updates');
-                unsubscribeFromVotes();
+                console.log('🔄 [CLEANUP] Refreshing contest list');
                 await loadContests();  // Refresh contest list to ensure fresh data
             }
 
+            // Reset all contest-related state
             state.view = 'home';
             state.currentContest = null;
             state.joinedContests = [];
             state.showBreakdownModal = null;
             state.mockResults = null;
             state.showMyVotes = false;
+            state.resultsView = 'average';
+            state.selectedVoterUserId = null;
+            state.contestVoters = [];
 
             // Clear URL hash
             window.location.hash = '';
@@ -2427,11 +2268,18 @@
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
+
+            // Reset all contest-related state with null checks
             state.view = 'home';
             state.currentContest = null;
+            state.joinedContests = [];
             state.showBreakdownModal = null;
             state.mockResults = null;
             state.showMyVotes = false;
+            state.resultsView = 'average';
+            state.selectedVoterUserId = null;
+            state.contestVoters = [];
+
             state.modalProcessing = false;
             render();
         }
@@ -2441,10 +2289,21 @@
             render();
         }
 
-        function setResultsView(view) {
-            // No need to refresh with Realtime - data is already live!
+        function setResultsView(view, userId = null) {
             state.resultsView = view;
-            state.showMyVotes = view === 'myVotes';  // Backwards compatibility
+            state.showMyVotes = view === 'userVotes';  // Backwards compatibility
+
+            // Reset selected voter when changing views
+            if (view !== 'userVotes') {
+                state.selectedVoterUserId = null;
+            } else if (userId !== null) {
+                // If userId provided, select that user
+                state.selectedVoterUserId = userId;
+            } else if (state.selectedVoterUserId === null) {
+                // Default to current user if not already selected
+                state.selectedVoterUserId = state.user?.id || null;
+            }
+
             render();
         }
 
@@ -2635,18 +2494,15 @@
             // Load merged results from database
             await loadResults();
 
-            // Create contest numbering map for display (using contest_number from database)
+            // Create contest numbering map for display (simple sequential 1, 2, 3...)
             const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-            state.mergedContestMap = allContests.map(contest => ({
-                number: contest.contestNumber,  // Use actual contest_number from database
+            state.mergedContestMap = allContests.map((contest, index) => ({
+                number: index + 1,  // Simple sequential numbering (main contest = 1)
                 title: contest.title,
                 id: contest.id
             }));
 
-            // Update subscription to track all merged contests
-            const allContestIds = [state.currentContest.id, ...state.joinedContests];
-            console.log('🔗 [MERGE] Setting up subscriptions for merged contests');
-            subscribeToMergedVoteChanges(allContestIds);
+            console.log('🔗 [MERGE] Contest map updated:', state.mergedContestMap);
 
             render();
         }
@@ -2656,57 +2512,10 @@
             state.joinedContests = [];
             state.mergedContestMap = null;
 
-            // Revert to single contest subscription
-            console.log('🔗 [MERGE] Reverting to single contest subscription');
-            subscribeToVoteChanges(state.currentContest.id);
-
             // Reload results for single contest
             await loadResults();
             render();
         }
-
-        function generateMergedResults() {
-            // Create contest numbering map using actual contest_number from database
-            const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-            const contestNumberMap = {};
-            allContests.forEach(contest => {
-                contestNumberMap[contest.id] = contest.contestNumber;  // Use actual contest_number
-            });
-
-            // Store the contest map for display in results
-            state.mergedContestMap = allContests.map(contest => ({
-                number: contest.contestNumber,  // Use actual contest_number from database
-                title: contest.title,
-                id: contest.id
-            }));
-
-            // Get results from current contest
-            const currentResults = generateMockResults(state.currentContest, state.votes).map(img => ({
-                ...img,
-                contestId: state.currentContest.id,
-                contestTitle: state.currentContest.title,
-                contestNumber: contestNumberMap[state.currentContest.id]
-            }));
-
-            // Get results from joined contests
-            const joinedResults = state.joinedContests.flatMap(contestId => {
-                const contest = state.contests.find(c => c.id === contestId);
-                if (!contest) return [];
-
-                const userVotes = state.userVotedContests[contestId] || {};
-                return generateMockResults(contest, userVotes).map(img => ({
-                    ...img,
-                    contestId: contest.id,
-                    contestTitle: contest.title,
-                    contestNumber: contestNumberMap[contest.id]
-                }));
-            });
-
-            // Combine and sort by average score
-            return [...currentResults, ...joinedResults].sort((a, b) => b.averageScore - a.averageScore);
-        }
-
-
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -2753,6 +2562,8 @@
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
                                 const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
                                 const removeImageMatch = btn.action.match(/confirmRemoveImage_(.+)/);
+                                const editVoteMatch = btn.action.match(/confirmEditVote_(.+)_(.+)_(.+)_(.+)/);
+                                const toggleBlockMatch = btn.action.match(/executeToggleBlockVote_(.+)_(.+)_(true|false)/);
                                 let onclick;
                                 if (deleteContestMatch) {
                                     onclick = `confirmDeleteContest('${deleteContestMatch[1]}')`;
@@ -2760,6 +2571,10 @@
                                     onclick = `executeBanUser('${banUserMatch[1]}')`;
                                 } else if (removeImageMatch) {
                                     onclick = `confirmRemoveImage(${removeImageMatch[1]})`;
+                                } else if (editVoteMatch) {
+                                    onclick = `confirmEditVote('${editVoteMatch[1]}', ${editVoteMatch[2]}, ${editVoteMatch[3]}, ${editVoteMatch[4]})`;
+                                } else if (toggleBlockMatch) {
+                                    onclick = `executeToggleBlockVote('${toggleBlockMatch[1]}', ${toggleBlockMatch[2]}, ${toggleBlockMatch[3]})`;
                                 } else {
                                     onclick = `${btn.action}()`;
                                 }
@@ -3369,78 +3184,30 @@
             // === BY VOTER VIEW ===
             // Shows statistics for each voter, including their average score across all images
             if (state.resultsView === 'byVoter') {
-                if (state.joinedContests.length > 0) {
-                    // Merged contests: Aggregate voter stats across all joined contests
-                    const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-                    voterStats = generateVoterStats(allContests);
-                } else {
-                    // Single contest view
-                    voterStats = generateVoterStats(state.currentContest);
-                }
+                voterStats = generateVoterStats();
             }
-            // === MY VOTES VIEW ===
-            // Shows images grouped by the current user's vote scores
-            else if (state.resultsView === 'myVotes' && Object.keys(state.votes).length > 0) {
-                if (state.joinedContests.length > 0) {
-                    // For merged contests, combine votes from all contests
-                    const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-                    const contestNumberMap = {};
-                    allContests.forEach((contest, index) => {
-                        contestNumberMap[contest.id] = index + 1;
-                    });
+            // === USER VOTES VIEW ===
+            // Shows images grouped by a selected user's vote scores
+            else if (state.resultsView === 'userVotes') {
+                const selectedUserId = state.selectedVoterUserId || state.user?.id;
 
-                    // Get votes from current contest
-                    const currentVotes = state.currentContest.images.map(img => ({
-                        ...img,
-                        averageScore: state.votes[img.id] || 0,
-                        totalVotes: 1,
-                        contestId: state.currentContest.id,
-                        contestTitle: state.currentContest.title,
-                        contestNumber: contestNumberMap[state.currentContest.id],
-                        breakdown: [{
-                            username: state.user.username,
-                            avatar: state.user.avatar,
-                            score: state.votes[img.id] || 0,
-                            isCurrentUser: true
-                        }]
-                    }));
+                // Find all votes by the selected user from the loaded results
+                const userVotesMap = {};
+                state.mockResults.forEach(imageResult => {
+                    const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId && !v.isBlocked);
+                    if (userVote) {
+                        userVotesMap[imageResult.id] = userVote.score;
+                    }
+                });
 
-                    // Get votes from joined contests
-                    const joinedVotes = state.joinedContests.flatMap(contestId => {
-                        const contest = state.contests.find(c => c.id === contestId);
-                        if (!contest) return [];
-                        const userVotes = state.userVotedContests[contestId] || {};
-                        return contest.images.map(img => ({
-                            ...img,
-                            averageScore: userVotes[img.id] || 0,
-                            totalVotes: 1,
-                            contestId: contest.id,
-                            contestTitle: contest.title,
-                            contestNumber: contestNumberMap[contest.id],
-                            breakdown: [{
-                                username: state.user.username,
-                                avatar: state.user.avatar,
-                                score: userVotes[img.id] || 0,
-                                isCurrentUser: true
-                            }]
-                        }));
-                    });
+                const hasVotes = Object.keys(userVotesMap).length > 0;
 
-                    displayResults = [...currentVotes, ...joinedVotes].sort((a, b) => b.averageScore - a.averageScore);
-                } else {
-                    // Single contest view
-                    displayResults = state.currentContest.images.map(img => ({
-                        ...img,
-                        averageScore: state.votes[img.id] || 0,
-                        totalVotes: 1,
-                        breakdown: [{
-                            username: state.user.username,
-                            avatar: state.user.avatar,
-                            score: state.votes[img.id] || 0,
-                            isCurrentUser: true
-                        }]
-                    })).sort((a, b) => b.averageScore - a.averageScore);
-                }
+                // Map the selected user's votes onto the images
+                displayResults = state.mockResults.map(img => ({
+                    ...img,
+                    averageScore: userVotesMap[img.id] || 0,
+                    userVoteScore: userVotesMap[img.id]
+                })).filter(img => img.userVoteScore); // Only show images the user voted on
 
                 grouped = groupMyVotesByScore(displayResults);
                 sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
@@ -3472,7 +3239,7 @@
                             </div>
                             <p class="text-gray-600 text-sm mb-1">${
                                 state.resultsView === 'byVoter' ? 'Voter statistics and average scores' :
-                                state.resultsView === 'myVotes' ? 'Your votes only' :
+                                state.resultsView === 'userVotes' ? 'Individual user votes' :
                                 'Average votes from all participants'
                             }</p>
                             ${state.joinedContests.length > 0 ? `
@@ -3501,10 +3268,10 @@
                                         Average
                                     </button>
                                     <button
-                                        onclick="setResultsView('myVotes')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'myVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
+                                        onclick="setResultsView('userVotes')"
+                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
                                     >
-                                        My Votes
+                                        User Votes
                                     </button>
                                     <button
                                         onclick="setResultsView('byVoter')"
@@ -3513,6 +3280,26 @@
                                         By Voter
                                     </button>
                                 </div>
+                                <!-- User selector dropdown for User Votes view -->
+                                ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? `
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-xs font-medium text-gray-700">Select User:</label>
+                                        <select
+                                            onchange="setResultsView('userVotes', this.value)"
+                                            class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                        >
+                                            ${state.contestVoters.map(voter => {
+                                                const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
+                                                const isCurrent = voter.userId === state.user?.id;
+                                                return `
+                                                    <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
+                                                        ${voter.username}${isCurrent ? ' (You)' : ''}
+                                                    </option>
+                                                `;
+                                            }).join('')}
+                                        </select>
+                                    </div>
+                                ` : ''}
                                 <!-- Second row: Action buttons (Join Contest, Unmerge, Share Merged View) -->
                                 <div class="flex items-center justify-center gap-2">
                                     ${state.joinedContests.length > 0 ? `
@@ -3574,6 +3361,35 @@
                         ${state.resultsView === 'byVoter' ? `
                             ${voterStats && voterStats.length > 0 ? `
                                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                                    ${(() => {
+                                        // Calculate contest average from all non-blocked votes
+                                        let totalVotes = 0;
+                                        let totalScore = 0;
+                                        state.mockResults.forEach(img => {
+                                            img.breakdown.forEach(vote => {
+                                                if (!vote.isBlocked) {
+                                                    totalVotes++;
+                                                    totalScore += vote.score;
+                                                }
+                                            });
+                                        });
+                                        const contestAverage = totalVotes > 0 ? (totalScore / totalVotes).toFixed(2) : 0;
+
+                                        return `
+                                            <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
+                                                <div class="text-2xl mb-2">🏆</div>
+                                                <div class="text-xs font-semibold text-gray-800 text-center mb-1">
+                                                    Contest Average
+                                                </div>
+                                                <div class="text-xl font-bold text-white score-text">
+                                                    ${contestAverage}
+                                                </div>
+                                                <div class="text-xs text-gray-500">
+                                                    ${totalVotes} vote${totalVotes !== 1 ? 's' : ''}
+                                                </div>
+                                            </div>
+                                        `;
+                                    })()}
                                     ${voterStats.map(voter => `
                                         <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
                                             <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
@@ -3596,16 +3412,16 @@
                                     <p class="text-gray-600">No voting data available for this contest.</p>
                                 </div>
                             `}
-                        ` : state.resultsView === 'myVotes' && Object.keys(state.votes).length === 0 ? `
+                        ` : state.resultsView === 'userVotes' && (!displayResults || displayResults.length === 0) ? `
                             <div class="text-center py-12">
                                 <div class="text-6xl mb-4">📭</div>
                                 <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
-                                <p class="text-gray-600">You haven't voted on this contest yet.</p>
+                                <p class="text-gray-600">This user hasn't voted on this contest yet.</p>
                             </div>
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
 
-                            if (state.resultsView === 'myVotes') {
+                            if (state.resultsView === 'userVotes') {
                                 const score = group.score;
                                 const colorStyle = getScoreColor(score);
                                 return `
@@ -3732,18 +3548,36 @@
                                             Score ${score} (${votesByScore[score].length} ${votesByScore[score].length === 1 ? 'vote' : 'votes'})
                                         </h4>
                                         ${votesByScore[score].length > 0 ? `
-                                            <div class="grid grid-cols-2 gap-2 mt-2">
-                                                ${votesByScore[score].map(vote => `
+                                            <div class="grid grid-cols-1 gap-2 mt-2">
+                                                ${votesByScore[score].map(vote => {
+                                                    const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                                                    return `
                                                     <div class="flex items-center gap-2 p-2 rounded-lg ${
-                                                        vote.isBanned ? 'bg-gray-200 opacity-50' :
+                                                        vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
                                                         <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                        <span class="text-sm text-gray-700 truncate ${vote.isBanned ? 'opacity-50 line-through' : ''}">
+                                                        <span class="text-sm text-gray-700 flex-1 truncate ${vote.isBlocked ? 'line-through' : ''}">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}
                                                         </span>
+                                                        ${isAdmin ? `
+                                                            <button
+                                                                onclick="adminEditVote('${vote.userId}', ${item.id}, ${score})"
+                                                                class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
+                                                                title="Edit vote"
+                                                            >
+                                                                ✏️
+                                                            </button>
+                                                            <button
+                                                                onclick="adminToggleBlockVote('${vote.userId}', ${item.id}, ${vote.isBlocked || false})"
+                                                                class="px-2 py-1 ${vote.isBlocked ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'} text-white rounded text-xs"
+                                                                title="${vote.isBlocked ? 'Unblock vote' : 'Block vote'}"
+                                                            >
+                                                                ${vote.isBlocked ? '✓' : '🚫'}
+                                                            </button>
+                                                        ` : ''}
                                                     </div>
-                                                `).join('')}
+                                                `}).join('')}
                                             </div>
                                         ` : `
                                             <div class="text-gray-400 italic text-sm mt-2 ml-3">No votes</div>
@@ -4083,9 +3917,6 @@
                                 .then(() => {
                                     // proceed normally once the user row is present (or insertion attempted)
                                     loadContests();
-
-                                    // Subscribe to contest deletions (global, stays active during session)
-                                    subscribeToContestDeletions();
 
                                     render();
                                 })
