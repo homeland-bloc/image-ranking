@@ -322,6 +322,8 @@
             showUserDropdown: false  // User menu dropdown state
         };
 
+        // Cache for voter counts to avoid repeated DB queries
+        const voterCountCache = {};
 
         function shuffleArray(array) {
             const newArray = [...array];
@@ -646,13 +648,10 @@
             return grouped;
         }
 
-        // Cache for voter counts to avoid repeated DB queries
-        const voterCountCache = {};
-
         function getVoterCount(contest) {
             // Use cached voter count if available
             const contestId = typeof contest === 'string' ? contest : contest.id;
-            return voterCountCache[contestId] || 0;
+            return (voterCountCache && voterCountCache[contestId]) || 0;
         }
 
         async function updateVoterCountForContest(contestId) {
