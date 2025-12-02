@@ -297,6 +297,7 @@
             modalProcessing: false,
             imageScale: 100,
             mockResults: null,
+            mockResultsCache: {},  // Temporary: to be removed after cleaning dead code
             scaleUpdateTimeout: null,
             newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,  // Deprecated, use resultsView
@@ -582,15 +583,6 @@
 
         // Temporary stub for merge functionality - returns empty results
         // TODO: Implement proper async merge functionality with database queries
-        function generateMockResults(contest, userVotes) {
-            return contest.images.map(img => ({
-                ...img,
-                averageScore: 0,
-                totalVotes: 0,
-                breakdown: []
-            }));
-        }
-
         function groupByScoreRange(results) {
             const ranges = [
                 { min: 4.5, max: 5.0 },
@@ -650,6 +642,7 @@
 
         function getVoterCount(contest) {
             // Use cached voter count if available
+            if (!contest) return 0;
             const contestId = typeof contest === 'string' ? contest : contest.id;
             return (voterCountCache && voterCountCache[contestId]) || 0;
         }
@@ -1716,9 +1709,6 @@
         }
 
         function logout() {
-            // Clean up all realtime subscriptions before logout
-            unsubscribeAll();
-
             localStorage.removeItem('peony_user');
             state.isLoggedIn = false;
             state.user = null;
@@ -2700,30 +2690,9 @@
         }
 
         function renderHome() {
-            // Ensure all contests have results generated for voter count
-            state.contests.forEach(contest => {
-                if (!state.mockResultsCache[contest.id]) {
-                    const userVotes = state.userVotedContests[contest.id] || {};
-                    state.mockResultsCache[contest.id] = generateMockResults(contest, userVotes);
-                }
-            });
-
             // Get unique creators
             const creators = [...new Set(state.contests.map(c => ({ id: c.createdBy, name: c.creatorName })))];
             const uniqueCreators = Array.from(new Map(creators.map(c => [c.id, c])).values());
-
-            // Get unique voters (users who have voted on contests)
-            const voters = [];
-            state.contests.forEach(contest => {
-                const results = state.mockResultsCache[contest.id];
-                if (results && results.voters) {
-                    results.voters.forEach(voter => {
-                        if (!voters.find(v => v.id === voter.id)) {
-                            voters.push({ id: voter.id, name: voter.name });
-                        }
-                    });
-                }
-            });
 
             // Filter contests
             let filteredContests = state.contests;
@@ -2825,8 +2794,9 @@
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         ${filteredContests.map(contest => {
-                            const hasVoted = state.userVotedContests[contest.id];
-                            const voterCount = getVoterCount(contest);
+                            try {
+                                const hasVoted = state.userVotedContests[contest.id];
+                                const voterCount = getVoterCount(contest);
                             const canDelete = canDeleteContest(contest);
                             // Format date as "day month year" (e.g., "30 Nov 2025")
                             const createdDate = contest.createdAt ? (() => {
@@ -2921,6 +2891,10 @@
                                     </div>
                                 </div>
                             `;
+                            } catch (error) {
+                                console.error('Error rendering contest:', contest?.id, error);
+                                return ''; // Skip this contest and continue
+                            }
                         }).join('')}
                     </div>
                 </div>
@@ -3612,20 +3586,6 @@
                         avatar: contest.creatorAvatar
                     };
                 }
-                // Try to find from votes
-                for (const contestId in state.mockResultsCache) {
-                    const results = state.mockResultsCache[contestId];
-                    if (results && results.voters) {
-                        const voter = results.voters.find(v => v.id === userId);
-                        if (voter) {
-                            return {
-                                id: userId,
-                                username: voter.name,
-                                avatar: voter.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
-                            };
-                        }
-                    }
-                }
                 // Fallback
                 return {
                     id: userId,
@@ -3636,16 +3596,9 @@
 
             // Calculate admin statistics
             const totalContests = state.contests.length;
-            const totalVotes = Object.values(state.mockResultsCache).reduce((sum, results) => {
-                return sum + (results.voters ? results.voters.length : 0);
-            }, 0);
-            const uniqueVoters = new Set();
-            Object.values(state.mockResultsCache).forEach(results => {
-                if (results.voters) {
-                    results.voters.forEach(voter => uniqueVoters.add(voter.id));
-                }
-            });
-            const totalUniqueVoters = uniqueVoters.size;
+            // Calculate total votes from voterCountCache
+            const totalVotes = Object.values(voterCountCache).reduce((sum, count) => sum + count, 0);
+            const totalUniqueVoters = 0; // TODO: Calculate from database if needed
             const totalBannedUsers = state.bannedUsers.length;
 
             return `
@@ -3880,6 +3833,13 @@
         window.confirmBanUser = confirmBanUser;
         window.executeBanUser = executeBanUser;
         window.unbanUser = unbanUser;
+        window.adminEditVote = adminEditVote;
+        window.confirmEditVote = confirmEditVote;
+        window.adminToggleBlockVote = adminToggleBlockVote;
+        window.executeToggleBlockVote = executeToggleBlockVote;
+        window.shareMergedView = shareMergedView;
+        window.confirmAddDuplicateImage = confirmAddDuplicateImage;
+        window.setResultsView = setResultsView;
 
         // Initialize app
         // Check for existing session on load
