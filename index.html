@@ -472,12 +472,14 @@
 
                 console.log('🔍 DEBUG: Fetching votes for contest IDs:', allContestIds);
 
-                // Fetch ALL votes (including blocked ones) for breakdown display
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
+                // Fetch ALL votes (including blocked ones) for breakdown display with aggressive cache-busting
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)&_cb=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
 
@@ -1233,12 +1235,14 @@
             try {
                 console.log('Loading shared contest:', contestId);
 
-                // Fetch contest from database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
+                // Fetch contest from database with aggressive cache-busting
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&_cb=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
 
@@ -1689,22 +1693,27 @@
 
         async function loadContests() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,contest_number,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                const cacheBuster = Date.now();
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,contest_number,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc&_cb=${cacheBuster}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
 
                 const contests = await response.json();
 
-                // Fetch voter counts in single query
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
+                // Fetch voter counts in single query with aggressive cache-busting
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id&_cb=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
                 const allVotes = await voterResponse.json();
@@ -1752,11 +1761,13 @@
             if (!state.user) return;
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*&_cb=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
 
@@ -2301,23 +2312,27 @@
 
                 console.log('📊 All users in state:', state.allUsers);
 
-                // Fetch admin statistics from database
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id`, {
+                // Fetch admin statistics from database with aggressive cache-busting
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id&_cb=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
                 const votes = await voterResponse.json();
                 const totalUniqueVoters = new Set(votes.map(v => v.user_id)).size;
 
-                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=count`, {
+                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=count&_cb=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Prefer': 'count=exact',
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
                     }
                 });
                 const votesCountData = await votesCountResponse.json();
