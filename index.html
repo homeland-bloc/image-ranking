@@ -297,7 +297,6 @@
             modalProcessing: false,
             imageScale: 100,
             mockResults: null,
-            mockResultsCache: {},  // Temporary: to be removed after cleaning dead code
             scaleUpdateTimeout: null,
             newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,  // Deprecated, use resultsView
@@ -310,6 +309,7 @@
             allUsers: [], // Track all users who have logged in
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
+            adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             showJoinModal: false, // Show join contests modal
             joinedContests: [], // Array of contest IDs joined with current contest
             mergedContestMap: [], // Map of contest numbers to titles for merged view
@@ -322,9 +322,6 @@
             loadingMessage: '',
             showUserDropdown: false  // User menu dropdown state
         };
-
-        // Cache for voter counts to avoid repeated DB queries
-        const voterCountCache = {};
 
         function shuffleArray(array) {
             const newArray = [...array];
@@ -502,13 +499,6 @@
                     a.username.localeCompare(b.username)
                 );
 
-                // Update voter count cache
-                allContestIds.forEach(contestId => {
-                    const contestVotes = allVotes.filter(v => v.contest_id === contestId);
-                    const uniqueVoters = new Set(contestVotes.map(v => v.user_id));
-                    voterCountCache[contestId] = uniqueVoters.size;
-                });
-
                 const imageScores = {};
                 allVotes.forEach(vote => {
                     console.log('🔍 DEBUG: Processing vote:', vote);
@@ -638,32 +628,6 @@
             });
 
             return grouped;
-        }
-
-        function getVoterCount(contest) {
-            // Use cached voter count if available
-            if (!contest) return 0;
-            const contestId = typeof contest === 'string' ? contest : contest.id;
-            return (voterCountCache && voterCountCache[contestId]) || 0;
-        }
-
-        async function updateVoterCountForContest(contestId) {
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                const votes = await response.json();
-                const uniqueVoters = new Set(votes.map(v => v.user_id));
-                voterCountCache[contestId] = uniqueVoters.size;
-                return uniqueVoters.size;
-            } catch (error) {
-                console.error('Error fetching voter count:', error);
-                return 0;
-            }
         }
 
         /**
@@ -1727,6 +1691,25 @@
 
                 const contests = await response.json();
 
+                // Fetch voter counts in single query
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+                const allVotes = await voterResponse.json();
+
+                // Calculate unique voters per contest
+                const voterCounts = {};
+                allVotes.forEach(vote => {
+                    if (!voterCounts[vote.contest_id]) {
+                        voterCounts[vote.contest_id] = new Set();
+                    }
+                    voterCounts[vote.contest_id].add(vote.user_id);
+                });
+
+                // Map contests with their voter counts
                 state.contests = contests.map(contest => ({
                     id: contest.id,
                     title: contest.title,
@@ -1737,6 +1720,7 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
+                    voterCount: voterCounts[contest.id] ? voterCounts[contest.id].size : 0,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -1747,46 +1731,11 @@
                         }))
                 }));
 
-                // Fetch voter counts for all contests in parallel
-                await loadAllVoterCounts();
-
                 render();
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
-            }
-        }
-
-        async function loadAllVoterCounts() {
-            try {
-                // Fetch all votes to calculate voter counts
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                const votes = await response.json();
-
-                // Group votes by contest_id and count unique voters
-                const contestVoters = {};
-                votes.forEach(vote => {
-                    if (!contestVoters[vote.contest_id]) {
-                        contestVoters[vote.contest_id] = new Set();
-                    }
-                    contestVoters[vote.contest_id].add(vote.user_id);
-                });
-
-                // Update cache with voter counts
-                Object.keys(contestVoters).forEach(contestId => {
-                    voterCountCache[contestId] = contestVoters[contestId].size;
-                });
-
-                console.log('📊 Voter counts loaded:', voterCountCache);
-            } catch (error) {
-                console.error('Error loading voter counts:', error);
             }
         }
 
@@ -2146,7 +2095,6 @@
                 // Reload results to get fresh data
                 await loadResults();
                 clearLoading();
-                render();
 
             } catch (error) {
                 console.error('Error updating vote:', error);
@@ -2205,7 +2153,6 @@
                 // Reload results to get fresh data
                 await loadResults();
                 clearLoading();
-                render();
 
             } catch (error) {
                 console.error('Error toggling vote block:', error);
@@ -2228,15 +2175,9 @@
                 return;
             }
 
-            // Refresh contest list when leaving results view
-            if (state.view === 'results') {
-                console.log('🔄 [CLEANUP] Refreshing contest list');
-                await loadContests();  // Refresh contest list to ensure fresh data
-            } else {
-                // Refresh voter counts when returning from other views (like vote view)
-                console.log('🔄 [CLEANUP] Refreshing voter counts');
-                await loadAllVoterCounts();
-            }
+            // Refresh contest list (this now includes fresh voter counts)
+            console.log('🔄 [CLEANUP] Refreshing contest list');
+            await loadContests();
 
             // Reset all contest-related state
             state.view = 'home';
@@ -2342,6 +2283,28 @@
                 }));
 
                 console.log('📊 All users in state:', state.allUsers);
+
+                // Fetch admin statistics from database
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+                const votes = await voterResponse.json();
+                const totalUniqueVoters = new Set(votes.map(v => v.user_id)).size;
+
+                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=count`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'count=exact'
+                    }
+                });
+                const votesCountData = await votesCountResponse.json();
+                const totalVotes = votesCountData.length || 0;
+
+                state.adminStats = { totalVotes, totalUniqueVoters };
 
                 state.showAdminDashboard = true;
                 document.body.classList.add('modal-open');
@@ -2704,8 +2667,8 @@
 
             // Sort contests
             filteredContests = [...filteredContests].sort((a, b) => {
-                const voterCountA = getVoterCount(a);
-                const voterCountB = getVoterCount(b);
+                const voterCountA = a.voterCount || 0;
+                const voterCountB = b.voterCount || 0;
 
                 switch (state.filters.sortBy) {
                     case 'newest':
@@ -2796,7 +2759,7 @@
                         ${filteredContests.map(contest => {
                             try {
                                 const hasVoted = state.userVotedContests[contest.id];
-                                const voterCount = getVoterCount(contest);
+                                const voterCount = contest.voterCount || 0;
                             const canDelete = canDeleteContest(contest);
                             // Format date as "day month year" (e.g., "30 Nov 2025")
                             const createdDate = contest.createdAt ? (() => {
@@ -3152,10 +3115,6 @@
         }
 
         function renderResults() {
-            if (!state.mockResults) {
-                state.mockResults = generateMockResults(state.currentContest, state.votes);
-            }
-
             let displayResults, grouped, sortedKeys, voterStats;
 
             // === BY VOTER VIEW ===
@@ -3596,9 +3555,8 @@
 
             // Calculate admin statistics
             const totalContests = state.contests.length;
-            // Calculate total votes from voterCountCache
-            const totalVotes = Object.values(voterCountCache).reduce((sum, count) => sum + count, 0);
-            const totalUniqueVoters = 0; // TODO: Calculate from database if needed
+            const totalVotes = state.adminStats.totalVotes;
+            const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalBannedUsers = state.bannedUsers.length;
 
             return `
