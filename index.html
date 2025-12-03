@@ -763,6 +763,7 @@
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
+            render(); // Close modal immediately before async work
 
             const votesToInsert = [];
             state.shuffledImages.forEach(img => {
@@ -798,8 +799,8 @@
                 state.view = 'results';
                 await loadResults();
 
-                // Update voter count for this contest
-                await updateVoterCountForContest(state.currentContest.id);
+                // Refresh contest list to update voter counts
+                await loadContests();
 
                 state.modalProcessing = false;
                 render();
@@ -832,11 +833,37 @@
         }
 
         function deleteContest(contestId) {
-            showConfirm(
-                'This will permanently delete the contest and all its data. This action cannot be undone.',
-                `confirmDeleteContest_${contestId}`,
-                '🗑️'
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) return;
+
+            // Store contest info for validation
+            state.contestToDelete = contest;
+
+            showInputModal(
+                `Type "${contest.title}" to confirm deletion`,
+                'Enter contest title exactly...',
+                'handleDeleteContestConfirmation',
+                false
             );
+        }
+
+        function handleDeleteContestConfirmation() {
+            if (state.modalProcessing) return;
+            const input = document.querySelector('.modal-input');
+            const enteredTitle = input ? input.value.trim() : '';
+
+            if (!state.contestToDelete) {
+                showAlert('Contest information not found.', '❌');
+                return;
+            }
+
+            if (enteredTitle !== state.contestToDelete.title) {
+                showAlert('Title does not match. Deletion cancelled.', '❌');
+                return;
+            }
+
+            // Title matches, proceed with deletion
+            confirmDeleteContest(state.contestToDelete.id);
         }
 
         async function confirmDeleteContest(contestId) {
@@ -1931,9 +1958,9 @@
             const contest = state.contests.find(c => c.id === contestId);
             if (!contest) return;
 
-            // Only the creator can lock/unlock
-            if (contest.createdBy !== state.user.id) {
-                showAlert('Only the creator can lock/unlock this contest.', '🔒');
+            // Only the creator or admin can lock/unlock
+            if (contest.createdBy !== state.user.id && state.user.id !== ADMIN_DISCORD_ID) {
+                showAlert('Only the creator or admin can lock/unlock this contest.', '🔒');
                 return;
             }
 
@@ -2109,9 +2136,12 @@
 
         async function confirmEditVote(userId, imageId, oldScore, newScore) {
             try {
-                state.modalProcessing = true;
-                closeModal();
+                // Close modal FIRST before setting modalProcessing
+                state.modal = null;
+                document.body.classList.remove('modal-open');
+                render();
 
+                state.modalProcessing = true;
                 setLoading('Updating vote...');
 
                 // Find the contest ID for this image
@@ -2168,9 +2198,12 @@
 
         async function executeToggleBlockVote(userId, imageId, shouldBlock) {
             try {
-                state.modalProcessing = true;
-                closeModal();
+                // Close modal FIRST before setting modalProcessing
+                state.modal = null;
+                document.body.classList.remove('modal-open');
+                render();
 
+                state.modalProcessing = true;
                 setLoading(shouldBlock ? 'Blocking vote...' : 'Unblocking vote...');
 
                 // Find the contest ID for this image
@@ -2348,9 +2381,11 @@
                     throw new Error(votes.message || 'Failed to load voter statistics');
                 }
 
-                const totalUniqueVoters = new Set(votes.map(v => v.user_id)).size;
+                // Count unique voters from users table
+                const totalUniqueVoters = users.length;
 
-                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=count`, {
+                // Count total votes using COUNT(*)
+                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=*`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2360,8 +2395,10 @@
                         'Expires': '0'
                     }
                 });
-                const votesCountData = await votesCountResponse.json();
-                const totalVotes = votesCountData.length || 0;
+
+                // Parse count from Content-Range header (e.g., "0-99/150" means 150 total)
+                const contentRange = votesCountResponse.headers.get('Content-Range');
+                const totalVotes = contentRange ? parseInt(contentRange.split('/')[1]) : 0;
 
                 state.adminStats = { totalVotes, totalUniqueVoters };
 
@@ -2491,12 +2528,33 @@
         }
 
         function toggleJoinContest(contestId) {
-            if (state.joinedContests.includes(contestId)) {
+            const wasSelected = state.joinedContests.includes(contestId);
+            const isNowSelected = !wasSelected;
+
+            if (wasSelected) {
                 state.joinedContests = state.joinedContests.filter(id => id !== contestId);
             } else {
                 state.joinedContests.push(contestId);
             }
-            render();
+
+            // Update DOM directly instead of calling render() to avoid blink
+            // Find the checkbox and parent div for this contest
+            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                // Check if this checkbox is for our contestId by looking at its onclick attribute
+                if (checkbox.onclick && checkbox.onclick.toString().includes(contestId)) {
+                    checkbox.checked = isNowSelected;
+                    // Update parent div's ring class
+                    const parentDiv = checkbox.closest('.flex.items-center.justify-between');
+                    if (parentDiv) {
+                        if (isNowSelected) {
+                            parentDiv.classList.add('ring-2', 'ring-purple-500');
+                        } else {
+                            parentDiv.classList.remove('ring-2', 'ring-purple-500');
+                        }
+                    }
+                }
+            });
         }
 
         async function applyJoinedContests() {
@@ -2954,6 +3012,12 @@
                             </p>
                             <p class="text-xs text-blue-800">
                                 📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 5MB each, multiple files supported)
+                            </p>
+                        </div>
+
+                        <div class="bg-yellow-50 border border-yellow-300 rounded-lg p-3 mb-4">
+                            <p class="text-xs text-yellow-800">
+                                ⚠️ <strong>Warning:</strong> Discord image URLs expire after 24 hours. Use permanent image hosting (Imgur, etc.) or upload files directly.
                             </p>
                         </div>
 
@@ -3837,6 +3901,7 @@
         window.confirmCancelVoting = confirmCancelVoting;
         window.toggleVoteView = toggleVoteView;
         window.deleteContest = deleteContest;
+        window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
