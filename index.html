@@ -473,7 +473,7 @@
                 console.log('🔍 DEBUG: Fetching votes for contest IDs:', allContestIds);
 
                 // Fetch ALL votes (including blocked ones) for breakdown display with aggressive cache-busting
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)&_cb=${Date.now()}`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -485,6 +485,14 @@
 
                 const allVotes = await response.json();
                 console.log('🔍 DEBUG: Fetched votes:', allVotes);
+
+                // Check if votes response is valid
+                if (!Array.isArray(allVotes)) {
+                    console.error('Invalid votes response:', allVotes);
+                    showAlert('Error loading votes: ' + (allVotes.message || 'Invalid response'), '❌');
+                    return;
+                }
+
                 console.log('🔍 DEBUG: Number of votes:', allVotes.length);
 
                 // Build list of unique voters for dropdown
@@ -1236,7 +1244,7 @@
                 console.log('Loading shared contest:', contestId);
 
                 // Fetch contest from database with aggressive cache-busting
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&_cb=${Date.now()}`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -1693,8 +1701,7 @@
 
         async function loadContests() {
             try {
-                const cacheBuster = Date.now();
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,contest_number,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc&_cb=${cacheBuster}`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -1706,8 +1713,14 @@
 
                 const contests = await response.json();
 
+                // Check if contests response is valid
+                if (!Array.isArray(contests)) {
+                    console.error('Invalid contests response:', contests);
+                    throw new Error(contests.message || 'Failed to load contests');
+                }
+
                 // Fetch voter counts in single query with aggressive cache-busting
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id&_cb=${Date.now()}`, {
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -1717,6 +1730,12 @@
                     }
                 });
                 const allVotes = await voterResponse.json();
+
+                // Check if votes response is valid
+                if (!Array.isArray(allVotes)) {
+                    console.error('Invalid votes response:', allVotes);
+                    throw new Error(allVotes.message || 'Failed to load voter counts');
+                }
 
                 // Calculate unique voters per contest
                 const voterCounts = {};
@@ -1731,7 +1750,6 @@
                 state.contests = contests.map(contest => ({
                     id: contest.id,
                     title: contest.title,
-                    contestNumber: contest.contest_number,
                     isLocked: contest.is_locked,
                     resultsPublic: contest.results_public,
                     createdBy: contest.created_by,
@@ -1761,7 +1779,7 @@
             if (!state.user) return;
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*&_cb=${Date.now()}`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2313,7 +2331,7 @@
                 console.log('📊 All users in state:', state.allUsers);
 
                 // Fetch admin statistics from database with aggressive cache-busting
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id&_cb=${Date.now()}`, {
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2323,9 +2341,16 @@
                     }
                 });
                 const votes = await voterResponse.json();
+
+                // Check if votes response is valid
+                if (!Array.isArray(votes)) {
+                    console.error('Invalid votes response:', votes);
+                    throw new Error(votes.message || 'Failed to load voter statistics');
+                }
+
                 const totalUniqueVoters = new Set(votes.map(v => v.user_id)).size;
 
-                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=count&_cb=${Date.now()}`, {
+                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=count`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
