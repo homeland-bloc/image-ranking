@@ -98,7 +98,8 @@
                 const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${discordUser.id}&select=is_banned`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -137,7 +138,8 @@
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'resolution=merge-duplicates'
+                            'Prefer': 'resolution=merge-duplicates',
+                            'Cache-Control': 'no-cache'
                         },
                         body: JSON.stringify({
                             id: user.id,
