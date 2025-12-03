@@ -476,7 +476,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -772,7 +773,8 @@
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'resolution=merge-duplicates,return=minimal'
+                        'Prefer': 'resolution=merge-duplicates,return=minimal',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify(votesToInsert)
                 });
@@ -837,7 +839,8 @@
                     method: 'DELETE',
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -1234,7 +1237,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -1304,7 +1308,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_merges?merge_id=eq.${mergeId}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -1551,7 +1556,8 @@
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=representation'
+                        'Prefer': 'return=representation',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({
                         title: state.newContest.title,
@@ -1583,7 +1589,8 @@
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify(imagesToInsert)
                 });
@@ -1685,7 +1692,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,contest_number,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -1695,7 +1703,8 @@
                 const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
                 const allVotes = await voterResponse.json();
@@ -1746,7 +1755,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -1773,7 +1783,8 @@
             return fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`, {
                 headers: {
                     'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                    'Cache-Control': 'no-cache'
                 }
             })
             .then(r => r.json())
@@ -1786,7 +1797,8 @@
                         headers: {
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
                         },
                         body: JSON.stringify({
                             id: user.id,
@@ -1843,7 +1855,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -1904,7 +1917,8 @@
                     headers: {
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({
                         is_locked: newLockStatus
@@ -2081,7 +2095,8 @@
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({ score: parseInt(newScore) })
                 });
@@ -2139,7 +2154,8 @@
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({ is_blocked: shouldBlock })
                 });
@@ -2261,7 +2277,8 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*&order=username.asc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
@@ -2288,7 +2305,8 @@
                 const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
                 const votes = await voterResponse.json();
@@ -2298,7 +2316,8 @@
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'count=exact'
+                        'Prefer': 'count=exact',
+                        'Cache-Control': 'no-cache'
                     }
                 });
                 const votesCountData = await votesCountResponse.json();
@@ -2337,7 +2356,8 @@
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({ is_banned: true })
                 });
@@ -2374,7 +2394,8 @@
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({ is_banned: false })
                 });
@@ -3813,7 +3834,8 @@
                         const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
                             }
                         });
 
