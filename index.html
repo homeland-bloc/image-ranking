@@ -307,6 +307,7 @@
             nextContestId: 1,
             bannedUsers: [], // Array of user IDs who are banned from app
             allUsers: [], // Track all users who have logged in
+            uploadProgress: null, // Upload progress tracking: { files: [{name, status, error, progress}], completed: false }
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
@@ -1078,17 +1079,10 @@
             const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
             const maxSize = 5 * 1024 * 1024; // 5MB in bytes
 
-            // Validate all files first
+            // Validate file types
             const invalidTypeFiles = files.filter(file => !validTypes.includes(file.type));
             if (invalidTypeFiles.length > 0) {
                 showAlert(`${invalidTypeFiles.length} file(s) are not valid image types (JPG, PNG, GIF, or WebP)`, '❌');
-                fileInput.value = '';
-                return;
-            }
-
-            const oversizedFiles = files.filter(file => file.size > maxSize);
-            if (oversizedFiles.length > 0) {
-                showAlert(`${oversizedFiles.length} file(s) exceed the 5MB size limit`, '❌');
                 fileInput.value = '';
                 return;
             }
@@ -1102,42 +1096,74 @@
                 return;
             }
 
-            try {
-                // Show uploading message
-                showToast(`Uploading ${files.length} image${files.length > 1 ? 's' : ''}...`, '⏳');
+            // Initialize upload progress state
+            state.uploadProgress = {
+                files: files.map(file => ({
+                    name: file.name,
+                    file: file,
+                    status: 'pending',
+                    progress: 0,
+                    error: null,
+                    imageUrl: null,
+                    retryCount: 0,
+                    sizeWarning: file.size > maxSize ? `${(file.size / 1024 / 1024).toFixed(1)}MB` : null
+                })),
+                completed: false
+            };
 
-                // Upload all files
-                const uploadPromises = files.map(file => uploadImageFile(file));
-                const imageUrls = await Promise.all(uploadPromises);
+            fileInput.value = '';
+            render();
 
-                // Add all uploaded images to the contest
-                imageUrls.forEach((imageUrl, index) => {
-                    const imageCount = state.newContest.images.length + 1;
-                    state.newContest.images.push({
-                        id: Date.now() + Math.random() + index,
-                        url: imageUrl,
-                        author: null,
-                        isFileUpload: true,
-                        label: `${imageCount}`
-                    });
-                });
+            // Upload files sequentially to better track progress
+            for (let i = 0; i < state.uploadProgress.files.length; i++) {
+                const fileData = state.uploadProgress.files[i];
 
-                fileInput.value = '';
-                showToast(`${files.length} image${files.length > 1 ? 's' : ''} uploaded successfully!`, '✅');
+                // Skip if already processed (cancelled)
+                if (fileData.status === 'failed' && fileData.error === 'Cancelled by user') {
+                    continue;
+                }
+
+                fileData.status = 'uploading';
+                fileData.progress = 10;
                 render();
-            } catch (error) {
-                console.error('Upload error:', error);
-                showAlert(`Upload failed: ${error.message}`, '❌');
-                fileInput.value = '';
+
+                try {
+                    const imageUrl = await uploadImageFileWithRetry(fileData.file, i);
+                    fileData.status = 'success';
+                    fileData.imageUrl = imageUrl;
+                    fileData.progress = 100;
+                } catch (error) {
+                    console.error(`Upload error for ${fileData.name}:`, error);
+                    fileData.status = 'failed';
+                    fileData.error = getFriendlyErrorMessage(error);
+                }
+
+                render();
             }
+
+            // Mark as completed
+            state.uploadProgress.completed = true;
+            render();
         }
 
-        async function uploadImageFile(file) {
+        async function uploadImageFile(file, progressCallback) {
             // Get file extension
             const fileExt = file.name.split('.').pop().toLowerCase();
 
             // Generate unique filename
             const fileName = `contest-${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+
+            // Simulate progress updates (Supabase doesn't provide native progress)
+            let progressInterval;
+            if (progressCallback) {
+                let simulatedProgress = 10;
+                progressInterval = setInterval(() => {
+                    if (simulatedProgress < 90) {
+                        simulatedProgress += 10;
+                        progressCallback(simulatedProgress);
+                    }
+                }, 200);
+            }
 
             try {
                 // Upload to Supabase Storage
@@ -1148,10 +1174,14 @@
                         upsert: false
                     });
 
+                if (progressInterval) clearInterval(progressInterval);
+
                 if (error) {
                     console.error('Supabase storage error:', error);
                     throw new Error(error.message || 'Failed to upload image to storage');
                 }
+
+                if (progressCallback) progressCallback(95);
 
                 // Get public URL
                 const { data: urlData } = supabase.storage
@@ -1162,11 +1192,135 @@
                     throw new Error('Failed to get public URL for uploaded image');
                 }
 
+                if (progressCallback) progressCallback(100);
+
                 return urlData.publicUrl;
             } catch (error) {
+                if (progressInterval) clearInterval(progressInterval);
                 console.error('Upload error:', error);
                 throw error;
             }
+        }
+
+        async function uploadImageFileWithRetry(file, fileIndex, maxRetries = 3) {
+            const updateProgress = (progress) => {
+                if (state.uploadProgress && state.uploadProgress.files[fileIndex]) {
+                    state.uploadProgress.files[fileIndex].progress = progress;
+                    render();
+                }
+            };
+
+            let lastError;
+            const retryCount = state.uploadProgress?.files[fileIndex]?.retryCount || 0;
+
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    // Exponential backoff: wait before retry (0ms, 1s, 2s, 4s)
+                    if (attempt > 0) {
+                        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
+                        console.log(`Retrying upload for ${file.name} after ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        updateProgress(5);
+                    }
+
+                    const imageUrl = await uploadImageFile(file, updateProgress);
+                    return imageUrl;
+                } catch (error) {
+                    lastError = error;
+                    console.error(`Upload attempt ${attempt + 1} failed for ${file.name}:`, error);
+
+                    // Don't retry on certain errors
+                    const errorMsg = error.message || String(error);
+                    if (errorMsg.includes('413') || errorMsg.includes('Payload Too Large') ||
+                        errorMsg.includes('401') || errorMsg.includes('403')) {
+                        throw error; // Don't retry auth or size errors
+                    }
+
+                    // Continue to next retry if available
+                    if (attempt < maxRetries - 1) {
+                        updateProgress(0);
+                    }
+                }
+            }
+
+            // All retries failed
+            throw lastError || new Error('Upload failed after multiple attempts');
+        }
+
+        // Upload progress modal helper functions
+        function closeUploadProgress() {
+            // Add successfully uploaded images to the contest
+            const successfulUploads = state.uploadProgress.files.filter(f => f.status === 'success' && f.imageUrl);
+            successfulUploads.forEach((file, index) => {
+                const imageCount = state.newContest.images.length + 1;
+                state.newContest.images.push({
+                    id: Date.now() + Math.random() + index,
+                    url: file.imageUrl,
+                    author: null,
+                    isFileUpload: true,
+                    label: `${imageCount}`
+                });
+            });
+
+            state.uploadProgress = null;
+            render();
+
+            if (successfulUploads.length > 0) {
+                showToast(`${successfulUploads.length} image${successfulUploads.length > 1 ? 's' : ''} added to contest!`, '✅');
+            }
+        }
+
+        async function retryUpload(fileIndex) {
+            const fileData = state.uploadProgress.files[fileIndex];
+            if (!fileData || !fileData.file) return;
+
+            // Reset file status
+            fileData.status = 'uploading';
+            fileData.progress = 0;
+            fileData.error = null;
+            fileData.retryCount = (fileData.retryCount || 0) + 1;
+            render();
+
+            try {
+                const imageUrl = await uploadImageFileWithRetry(fileData.file, fileIndex);
+                fileData.status = 'success';
+                fileData.imageUrl = imageUrl;
+                fileData.progress = 100;
+            } catch (error) {
+                fileData.status = 'failed';
+                fileData.error = getFriendlyErrorMessage(error);
+            }
+
+            render();
+        }
+
+        function cancelAllUploads() {
+            // Mark all pending/uploading files as cancelled
+            state.uploadProgress.files.forEach(file => {
+                if (file.status === 'pending' || file.status === 'uploading') {
+                    file.status = 'failed';
+                    file.error = 'Cancelled by user';
+                }
+            });
+            render();
+        }
+
+        function getFriendlyErrorMessage(error) {
+            const errorMsg = error.message || String(error);
+
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_HTTP2_PROTOCOL_ERROR')) {
+                return 'Network error - please check your connection and try again';
+            } else if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
+                return 'Upload timed out - file may be too large or connection too slow';
+            } else if (errorMsg.includes('413') || errorMsg.includes('Payload Too Large')) {
+                return 'File is too large for upload';
+            } else if (errorMsg.includes('401') || errorMsg.includes('403')) {
+                return 'Authentication error - please try logging in again';
+            } else if (errorMsg.includes('storage')) {
+                return 'Storage error: ' + errorMsg;
+            }
+
+            return errorMsg;
         }
 
         function handleDragOver(event) {
@@ -2672,6 +2826,100 @@
             `;
         }
 
+        function renderUploadProgressModal() {
+            if (!state.uploadProgress) return '';
+
+            const allCompleted = state.uploadProgress.files.every(f => f.status === 'success' || f.status === 'failed');
+            const successCount = state.uploadProgress.files.filter(f => f.status === 'success').length;
+            const failedCount = state.uploadProgress.files.filter(f => f.status === 'failed').length;
+            const uploadingCount = state.uploadProgress.files.filter(f => f.status === 'uploading').length;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-800">
+                                        ${allCompleted ? 'Upload Complete' : 'Uploading Images...'}
+                                    </h3>
+                                    <p class="text-sm text-gray-600 mt-1">
+                                        ${successCount} succeeded, ${failedCount} failed, ${uploadingCount} in progress
+                                    </p>
+                                </div>
+                                <div class="text-3xl">
+                                    ${allCompleted ? (failedCount > 0 ? '⚠️' : '✅') : '⏳'}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- File List -->
+                        <div class="flex-1 overflow-y-auto p-6 space-y-3">
+                            ${state.uploadProgress.files.map((file, index) => `
+                                <div class="border border-gray-200 rounded-lg p-4 ${
+                                    file.status === 'success' ? 'bg-green-50 border-green-200' :
+                                    file.status === 'failed' ? 'bg-red-50 border-red-200' :
+                                    'bg-blue-50 border-blue-200'
+                                }">
+                                    <div class="flex items-start justify-between mb-2">
+                                        <div class="flex-1 min-w-0">
+                                            <p class="font-medium text-gray-800 truncate" title="${file.name}">
+                                                ${file.name}
+                                            </p>
+                                            ${file.sizeWarning ? `
+                                                <p class="text-xs text-orange-600 mt-1">⚠️ Large file (${file.sizeWarning})</p>
+                                            ` : ''}
+                                            ${file.error ? `
+                                                <p class="text-xs text-red-600 mt-1">${file.error}</p>
+                                            ` : ''}
+                                        </div>
+                                        <div class="ml-3 text-2xl flex-shrink-0">
+                                            ${file.status === 'success' ? '✅' :
+                                              file.status === 'failed' ? '❌' :
+                                              file.status === 'uploading' ? '⏳' : '⏱️'}
+                                        </div>
+                                    </div>
+
+                                    <!-- Progress Bar -->
+                                    ${file.status === 'uploading' || file.status === 'pending' ? `
+                                        <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
+                                            <div class="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                                                 style="width: ${file.progress || 0}%"></div>
+                                        </div>
+                                        <p class="text-xs text-gray-600">${file.progress || 0}%</p>
+                                    ` : ''}
+
+                                    <!-- Retry Button -->
+                                    ${file.status === 'failed' ? `
+                                        <button onclick="retryUpload(${index})"
+                                                class="mt-2 px-3 py-1 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+                                            🔄 Retry Upload
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="p-6 border-t border-gray-200">
+                            ${allCompleted ? `
+                                <button onclick="closeUploadProgress()"
+                                        class="w-full px-5 py-3 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700">
+                                    Done
+                                </button>
+                            ` : `
+                                <button onclick="cancelAllUploads()"
+                                        class="w-full px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300">
+                                    Cancel Remaining Uploads
+                                </button>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderHeader() {
             const showBackButton = state.view === 'results' || state.view === 'vote';
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -3837,7 +4085,7 @@
             const app = document.getElementById('app');
             
             if (!state.isLoggedIn) {
-                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderToast();
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderUploadProgressModal() + renderToast();
                 return;
             }
 
@@ -3859,7 +4107,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showJoinModal ? renderJoinContestsModal() : '') + renderToast();
+            app.innerHTML = renderHeader() + content + renderModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showJoinModal ? renderJoinContestsModal() : '') + renderToast();
         }
 
         window.login = login;
@@ -3895,6 +4143,9 @@
         window.backToHome = backToHome;
         window.confirmBackToHome = confirmBackToHome;
         window.closeModal = closeModal;
+        window.closeUploadProgress = closeUploadProgress;
+        window.retryUpload = retryUpload;
+        window.cancelAllUploads = cancelAllUploads;
         window.updateScale = updateScale;
         window.adjustScale = adjustScale;
         window.confirmSubmitVotes = confirmSubmitVotes;
