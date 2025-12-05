@@ -473,8 +473,8 @@
 
                 console.log('🔍 DEBUG: Fetching votes for contest IDs:', allContestIds);
 
-                // Fetch ALL votes (including blocked ones) for breakdown display with aggressive cache-busting
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar)`, {
+                // Fetch ALL votes with voter info including ban status for breakdown display with aggressive cache-busting
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -496,10 +496,11 @@
 
                 console.log('🔍 DEBUG: Number of votes:', allVotes.length);
 
-                // Build list of unique voters for dropdown
+                // Build list of unique voters for dropdown (exclude banned users)
                 const votersMap = new Map();
                 allVotes.forEach(vote => {
-                    if (!votersMap.has(vote.user_id)) {
+                    const voterIsBanned = vote.voter?.is_banned || false;
+                    if (!votersMap.has(vote.user_id) && !voterIsBanned) {
                         votersMap.set(vote.user_id, {
                             userId: vote.user_id,
                             username: vote.voter.username,
@@ -521,20 +522,23 @@
                         };
                     }
 
-                    // Only include non-blocked votes in score calculations
                     const isBlocked = vote.is_blocked || false;
-                    if (!isBlocked) {
+                    const voterIsBanned = vote.voter?.is_banned || false;
+
+                    // Only include non-blocked AND non-banned votes in score calculations
+                    if (!isBlocked && !voterIsBanned) {
                         imageScores[vote.image_id].scores.push(vote.score);
                     }
 
-                    // Include ALL votes in breakdown (blocked and non-blocked)
+                    // Include ALL votes in breakdown (blocked, banned, and non-blocked)
                     imageScores[vote.image_id].breakdown.push({
                         userId: vote.user_id,
                         username: vote.voter.username,
                         avatar: vote.voter.avatar,
                         score: vote.score,
                         isCurrentUser: vote.user_id === state.user?.id,
-                        isBlocked: isBlocked
+                        isBlocked: isBlocked,
+                        isBanned: voterIsBanned
                     });
                 });
 
@@ -2613,9 +2617,9 @@
             render();
         }
 
-        async function banUser(userId) {
+        async function banUser(userId, banReason) {
             try {
-                // Update database
+                // Update database with ban status and reason
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
                     method: 'PATCH',
                     headers: {
@@ -2625,7 +2629,10 @@
                         'Prefer': 'return=minimal',
                         'Cache-Control': 'no-cache'
                     },
-                    body: JSON.stringify({ is_banned: true })
+                    body: JSON.stringify({
+                        is_banned: true,
+                        ban_reason: banReason
+                    })
                 });
 
                 if (!response.ok) {
@@ -2641,6 +2648,7 @@
                 const userIndex = state.allUsers.findIndex(u => u.id === userId);
                 if (userIndex !== -1) {
                     state.allUsers[userIndex].isBanned = true;
+                    state.allUsers[userIndex].banReason = banReason;
                 }
 
                 showAlert('User has been banned.', '✅');
@@ -2653,7 +2661,7 @@
 
         async function unbanUser(userId) {
             try {
-                // Update database
+                // Update database - clear ban status and reason
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
                     method: 'PATCH',
                     headers: {
@@ -2663,7 +2671,10 @@
                         'Prefer': 'return=minimal',
                         'Cache-Control': 'no-cache'
                     },
-                    body: JSON.stringify({ is_banned: false })
+                    body: JSON.stringify({
+                        is_banned: false,
+                        ban_reason: null
+                    })
                 });
 
                 if (!response.ok) {
@@ -2677,9 +2688,10 @@
                 const userIndex = state.allUsers.findIndex(u => u.id === userId);
                 if (userIndex !== -1) {
                     state.allUsers[userIndex].isBanned = false;
+                    state.allUsers[userIndex].banReason = null;
                 }
 
-                showAlert('User has been unbanned.', '✅');
+                showAlert('User has been unbanned. Their votes will now be included in results.', '✅');
                 render();
             } catch (error) {
                 console.error('Error unbanning user:', error);
@@ -2688,18 +2700,45 @@
         }
 
         function confirmBanUser(userId) {
-            showConfirm(
-                'This user will not be able to create contests or vote. This action can be undone later.',
-                `executeBanUser_${userId}`,
-                '🚫'
+            // Store userId for later use
+            state.userToBan = userId;
+            showInputModal(
+                'Ban User - Enter Reason',
+                'e.g., spam, inappropriate content, etc.',
+                'handleBanUserReason',
+                false
             );
         }
 
-        function executeBanUser(userId) {
+        function handleBanUserReason() {
+            if (state.modalProcessing) return;
+            const input = document.querySelector('.modal-input');
+            const banReason = input ? input.value.trim() : '';
+
+            if (!banReason || banReason.length === 0) {
+                showAlert('Ban reason cannot be empty.', '❌');
+                return;
+            }
+            if (banReason.length > 500) {
+                showAlert('Ban reason is too long (max 500 characters).', '❌');
+                return;
+            }
+
+            // Proceed with ban
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
-            banUser(userId);
+            banUser(state.userToBan, banReason);
+            state.userToBan = null;
+            state.modalProcessing = false;
+        }
+
+        function executeBanUser(userId) {
+            // This function is no longer used, but kept for backwards compatibility
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            banUser(userId, 'No reason provided');
             state.modalProcessing = false;
         }
 
@@ -3880,12 +3919,17 @@
                                                     const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
                                                     return `
                                                     <div class="flex items-center gap-2 p-2 rounded-lg ${
+                                                        vote.isBanned ? 'bg-red-100 opacity-60' :
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                        <span class="text-sm text-gray-700 flex-1 truncate ${vote.isBlocked ? 'line-through' : ''}">
-                                                            ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''}" />
+                                                        <span class="text-sm flex-1 truncate ${
+                                                            vote.isBanned ? 'line-through text-red-600' :
+                                                            vote.isBlocked ? 'line-through text-gray-700' :
+                                                            'text-gray-700'
+                                                        }">
+                                                            ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBanned ? ' (BANNED)' : ''}
                                                         </span>
                                                         ${isAdmin ? `
                                                             <button
@@ -4189,6 +4233,7 @@
         window.toggleJoinContest = toggleJoinContest;
         window.applyJoinedContests = applyJoinedContests;
         window.confirmBanUser = confirmBanUser;
+        window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
         window.unbanUser = unbanUser;
         window.adminEditVote = adminEditVote;
@@ -4209,8 +4254,8 @@
 
                     // Check if token is expired
                     if (user.expiresAt && Date.now() < user.expiresAt) {
-                        // Check if user is banned
-                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned`, {
+                        // Check if user is banned and get ban reason
+                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -4220,10 +4265,11 @@
 
                         const userData = await banCheckResponse.json();
 
-                        // If user is banned, log them out
+                        // If user is banned, log them out with reason
                         if (userData && userData.length > 0 && userData[0].is_banned === true) {
+                            const banReason = userData[0].ban_reason || 'No reason provided';
                             localStorage.removeItem('peony_user');
-                            showAlert('Your account has been banned from Peony.', '🚫');
+                            showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
                         } else {
                             // User not banned, proceed with login
                             state.isLoggedIn = true;
