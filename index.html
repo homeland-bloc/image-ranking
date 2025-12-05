@@ -873,6 +873,40 @@
             document.body.classList.remove('modal-open');
 
             try {
+                // First, fetch contest images to clean up storage
+                const contest = state.contests.find(c => c.id === contestId);
+                if (contest && contest.images) {
+                    const filesToDelete = [];
+
+                    for (const image of contest.images) {
+                        // Only delete images that were uploaded to storage (not external URLs)
+                        if (image.isFileUpload && image.url) {
+                            // Extract file path from Supabase storage URL
+                            // URL format: https://{project}.supabase.co/storage/v1/object/public/contest-images/{fileName}
+                            const urlParts = image.url.split('/contest-images/');
+                            if (urlParts.length === 2) {
+                                filesToDelete.push(urlParts[1]);
+                            }
+                        }
+                    }
+
+                    // Delete files from storage if there are any
+                    if (filesToDelete.length > 0) {
+                        console.log('Deleting files from storage:', filesToDelete);
+                        const { data, error } = await supabase.storage
+                            .from('contest-images')
+                            .remove(filesToDelete);
+
+                        if (error) {
+                            console.warn('Storage cleanup error:', error);
+                            // Don't fail the entire deletion if storage cleanup fails
+                        } else {
+                            console.log('Successfully deleted files from storage:', data);
+                        }
+                    }
+                }
+
+                // Now delete the contest from database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
                     method: 'DELETE',
                     headers: {
@@ -1900,8 +1934,9 @@
                     throw new Error(contests.message || 'Failed to load contests');
                 }
 
-                // Fetch voter counts in single query with aggressive cache-busting
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
+                // Calculate fresh voter counts for each contest
+                // This is equivalent to: SELECT contest_id, COUNT(DISTINCT user_id) FROM votes GROUP BY contest_id
+                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id&_=${Date.now()}`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -1918,7 +1953,7 @@
                     throw new Error(allVotes.message || 'Failed to load voter counts');
                 }
 
-                // Calculate unique voters per contest
+                // Calculate unique voters per contest (COUNT(DISTINCT user_id) per contest_id)
                 const voterCounts = {};
                 allVotes.forEach(vote => {
                     if (!voterCounts[vote.contest_id]) {
@@ -2683,7 +2718,6 @@
 
         function toggleJoinContest(contestId) {
             const wasSelected = state.joinedContests.includes(contestId);
-            const isNowSelected = !wasSelected;
 
             if (wasSelected) {
                 state.joinedContests = state.joinedContests.filter(id => id !== contestId);
@@ -2691,24 +2725,8 @@
                 state.joinedContests.push(contestId);
             }
 
-            // Update DOM directly instead of calling render() to avoid blink
-            // Find the checkbox and parent div for this contest
-            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-            checkboxes.forEach(checkbox => {
-                // Check if this checkbox is for our contestId by looking at its onclick attribute
-                if (checkbox.onclick && checkbox.onclick.toString().includes(contestId)) {
-                    checkbox.checked = isNowSelected;
-                    // Update parent div's ring class
-                    const parentDiv = checkbox.closest('.flex.items-center.justify-between');
-                    if (parentDiv) {
-                        if (isNowSelected) {
-                            parentDiv.classList.add('ring-2', 'ring-purple-500');
-                        } else {
-                            parentDiv.classList.remove('ring-2', 'ring-purple-500');
-                        }
-                    }
-                }
-            });
+            // Re-render to update checkbox state and visual feedback
+            render();
         }
 
         async function applyJoinedContests() {
@@ -3137,7 +3155,7 @@
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                                    ${contest.createdBy === state.user.id ? `
+                                    ${(contest.createdBy === state.user.id || state.user.id === ADMIN_DISCORD_ID) ? `
                                         <button
                                             onclick='toggleContestLock("${contest.id}")'
                                             class="absolute top-3 right-3 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-black hover:bg-gray-900' : 'bg-green-500 hover:bg-green-600'}"
@@ -3931,6 +3949,7 @@
             const totalVotes = state.adminStats.totalVotes;
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalBannedUsers = state.bannedUsers.length;
+            const totalImages = state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeAdminDashboard()">
@@ -3948,7 +3967,7 @@
                             <div class="space-y-4">
                                 <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
                                     <h4 class="font-bold text-gray-800 mb-3">Statistics</h4>
-                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
                                             <div class="text-xs text-gray-600">Total Contests</div>
@@ -3960,6 +3979,10 @@
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
                                             <div class="text-xs text-gray-600">Unique Voters</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-orange-600">${totalImages}</div>
+                                            <div class="text-xs text-gray-600">Total Images</div>
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-red-600">${totalBannedUsers}</div>
