@@ -710,10 +710,10 @@
 
             setLoading('Submitting votes...');
 
-            const votesToInsert = [];
+            const votesToSubmit = [];
             state.shuffledImages.forEach(img => {
                 if (state.votes[img.id]) {
-                    votesToInsert.push({
+                    votesToSubmit.push({
                         user_id: state.user.id,
                         image_id: img.id,
                         contest_id: state.currentContest.id,
@@ -723,20 +723,66 @@
             });
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'resolution=merge-duplicates,return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
-                    body: JSON.stringify(votesToInsert)
-                });
+                // Check if votes already exist for this user and contest
+                const existingVotesResponse = await fetch(
+                    `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${state.currentContest.id}&select=*`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
 
-                if (!response.ok) {
-                    throw new Error('Failed to submit votes');
+                if (!existingVotesResponse.ok) {
+                    throw new Error('Failed to check existing votes');
+                }
+
+                const existingVotes = await existingVotesResponse.json();
+
+                if (existingVotes.length > 0) {
+                    // Votes exist - update them using PATCH
+                    // We need to update each vote individually by matching user_id, contest_id, and image_id
+                    const updatePromises = votesToSubmit.map(async (vote) => {
+                        const response = await fetch(
+                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
+                            {
+                                method: 'PATCH',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': SUPABASE_ANON_KEY,
+                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                    'Prefer': 'return=minimal',
+                                    'Cache-Control': 'no-cache'
+                                },
+                                body: JSON.stringify({ score: vote.score })
+                            }
+                        );
+
+                        if (!response.ok) {
+                            throw new Error(`Failed to update vote for image ${vote.image_id}`);
+                        }
+                    });
+
+                    await Promise.all(updatePromises);
+                } else {
+                    // No existing votes - insert new ones using POST
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Prefer': 'return=minimal',
+                            'Cache-Control': 'no-cache'
+                        },
+                        body: JSON.stringify(votesToSubmit)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to submit votes');
+                    }
                 }
 
                 await loadUserVotes();
@@ -1715,9 +1761,8 @@
                     throw new Error(contests.message || 'Failed to load contests');
                 }
 
-                // Calculate fresh voter counts for each contest
-                // This is equivalent to: SELECT contest_id, COUNT(DISTINCT user_id) FROM votes GROUP BY contest_id
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
+                // Fetch voter counts from the pre-calculated PostgreSQL view
+                const voterCountsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contest_voter_counts?select=*`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -1726,24 +1771,27 @@
                         'Expires': '0'
                     }
                 });
-                const allVotes = await voterResponse.json();
 
-                // Check if votes response is valid
-                if (!Array.isArray(allVotes)) {
-                    console.error('Invalid votes response:', allVotes);
-                    throw new Error(allVotes.message || 'Failed to load voter counts');
+                if (!voterCountsResponse.ok) {
+                    console.error('Failed to fetch voter counts');
+                    throw new Error('Failed to load voter counts');
                 }
 
-                // Calculate unique voters per contest (COUNT(DISTINCT user_id) per contest_id)
-                const voterCounts = {};
-                allVotes.forEach(vote => {
-                    if (!voterCounts[vote.contest_id]) {
-                        voterCounts[vote.contest_id] = new Set();
-                    }
-                    voterCounts[vote.contest_id].add(vote.user_id);
+                const voterCountsArray = await voterCountsResponse.json();
+
+                // Check if voter counts response is valid
+                if (!Array.isArray(voterCountsArray)) {
+                    console.error('Invalid voter counts response:', voterCountsArray);
+                    throw new Error(voterCountsArray.message || 'Failed to load voter counts');
+                }
+
+                // Create a map of contest_id to voter_count for efficient lookup
+                const voterCountsMap = {};
+                voterCountsArray.forEach(row => {
+                    voterCountsMap[row.contest_id] = row.voter_count;
                 });
 
-                // Map contests with their voter counts
+                // Map contests with their voter counts from the view
                 state.contests = contests.map(contest => ({
                     id: contest.id,
                     title: contest.title,
@@ -1753,7 +1801,7 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
-                    voterCount: voterCounts[contest.id] ? voterCounts[contest.id].size : 0,
+                    voterCount: voterCountsMap[contest.id] || 0,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
