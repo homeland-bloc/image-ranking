@@ -296,7 +296,7 @@
             modal: null,
             modalProcessing: false,
             imageScale: 100,
-            mockResults: null,
+            results: null,
             scaleUpdateTimeout: null,
             newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,  // Deprecated, use resultsView
@@ -311,9 +311,6 @@
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
-            showJoinModal: false, // Show join contests modal
-            joinedContests: [], // Array of contest IDs joined with current contest
-            mergedContestMap: [], // Map of contest numbers to titles for merged view
             filters: {
                 createdBy: null,           // Username or null
                 sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
@@ -418,63 +415,15 @@
             return { color: 'text-gray-600', bg: 'bg-gray-200', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(229, 231, 235)' };
         }
 
-        // Seeded random number generator for consistent demo voters
-        function seededRandom(seed) {
-            const x = Math.sin(seed) * 10000;
-            return x - Math.floor(x);
-        }
-
-        function generateFixedDemoVoters(contestId, imageId) {
-            // Use mockUsers for consistent demo voters (skip first user which is DemoUser/admin)
-            const demoVoters = mockUsers.slice(1).map((user, index) => ({
-                ...user,
-                seed: index + 1
-            }));
-
-            // Extract numeric part from contestId (e.g., "contest-1" -> 1)
-            const contestNum = typeof contestId === 'string'
-                ? parseInt(contestId.split('-').pop()) || 0
-                : contestId;
-
-            // Convert imageId to number (handle both string and numeric IDs)
-            const imageNum = typeof imageId === 'string'
-                ? parseInt(imageId) || 0
-                : imageId;
-
-            // Generate consistent number of voters (3-6) based on contest
-            const voterCountSeed = contestNum * 100;
-            const voterCount = 3 + Math.floor(seededRandom(voterCountSeed) * 4); // 3-6 voters
-
-            return demoVoters.slice(0, voterCount).map(voter => {
-                // Generate consistent score (1-5) based on contest + image + voter
-                const scoreSeed = contestNum * 1000 + (imageNum % 1000) * 100 + voter.seed;
-                const score = 1 + Math.floor(seededRandom(scoreSeed) * 5); // 1-5
-
-                return {
-                    username: voter.username,
-                    avatar: voter.avatar,
-                    score: score,
-                    isCurrentUser: false,
-                    userId: voter.id
-                };
-            });
-        }
 
         async function loadResults() {
+            setLoading('Loading results...');
             try {
                 console.log('🔍 DEBUG: Loading results for contest:', state.currentContest.id);
                 console.log('🔍 DEBUG: Current user:', state.user);
 
-                // Build array of all contest IDs (current + joined for merged contests)
-                const allContestIds = [state.currentContest.id, ...(state.joinedContests || [])];
-                const contestIdFilter = allContestIds.length > 1
-                    ? `contest_id=in.(${allContestIds.join(',')})`
-                    : `contest_id=eq.${state.currentContest.id}`;
-
-                console.log('🔍 DEBUG: Fetching votes for contest IDs:', allContestIds);
-
                 // Fetch ALL votes with voter info including ban status for breakdown display with aggressive cache-busting
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -495,6 +444,11 @@
                 }
 
                 console.log('🔍 DEBUG: Number of votes:', allVotes.length);
+
+                // Warn if we hit the vote limit
+                if (allVotes.length === 2000) {
+                    console.warn('⚠️ Hit vote limit of 2000 - may be missing votes');
+                }
 
                 // Build list of unique voters for dropdown (exclude banned users)
                 const votersMap = new Map();
@@ -545,45 +499,29 @@
                 console.log('🔍 DEBUG: Image scores:', imageScores);
                 console.log('🔍 DEBUG: Contest images:', state.currentContest.images);
 
-                // Collect all images from current contest and joined contests
-                let allImages = [...state.currentContest.images];
-                if (state.joinedContests && state.joinedContests.length > 0) {
-                    state.joinedContests.forEach(contestId => {
-                        const joinedContest = state.contests.find(c => c.id === contestId);
-                        if (joinedContest && joinedContest.images) {
-                            allImages = [...allImages, ...joinedContest.images];
-                        }
-                    });
-                }
-
-                state.mockResults = allImages.map(img => {
+                // Map images with their scores
+                state.results = state.currentContest.images.map(img => {
                     const scores = imageScores[img.id]?.scores || [];
                     const sum = scores.reduce((acc, s) => acc + s, 0);
                     const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
 
                     console.log(`🔍 DEBUG: Image ${img.id} - scores:`, scores, 'average:', average);
 
-                    // Find contest number if in merged view
-                    let contestNumber = null;
-                    if (state.mergedContestMap && state.mergedContestMap.length > 0) {
-                        const contestEntry = state.mergedContestMap.find(c => c.id === img.contestId);
-                        contestNumber = contestEntry ? contestEntry.number : null;
-                    }
-
                     return {
                         ...img,
                         averageScore: average,
                         totalVotes: scores.length,
-                        breakdown: imageScores[img.id]?.breakdown || [],
-                        contestNumber: contestNumber
+                        breakdown: imageScores[img.id]?.breakdown || []
                     };
                 }).sort((a, b) => b.averageScore - a.averageScore);
 
-                console.log('🔍 DEBUG: Final results:', state.mockResults);
+                console.log('🔍 DEBUG: Final results:', state.results);
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
+            } finally {
+                clearLoading();
             }
         }
 
@@ -649,19 +587,19 @@
         /**
          * Generate voter statistics from loaded results
          * Calculates each voter's average score across all images they voted on
-         * Uses only data from state.mockResults (already loaded from database)
+         * Uses only data from state.results (already loaded from database)
          *
          * @returns {Array} Array of voter objects with calculated averages, sorted by average score (highest first)
          */
         function generateVoterStats() {
-            if (!state.mockResults) return [];
+            if (!state.results) return [];
 
             // Accumulator for voter data
             // Structure: { userId: { votes: [], totalScore: 0, totalImages: 0, username, avatar, etc. } }
             const voterVotes = {};
 
             // Collect votes from all images in loaded results
-            state.mockResults.forEach(imageResult => {
+            state.results.forEach(imageResult => {
                 if (!imageResult.breakdown) return;
 
                 imageResult.breakdown.forEach(vote => {
@@ -770,6 +708,8 @@
             document.body.classList.remove('modal-open');
             render(); // Close modal immediately before async work
 
+            setLoading('Submitting votes...');
+
             const votesToInsert = [];
             state.shuffledImages.forEach(img => {
                 if (state.votes[img.id]) {
@@ -814,6 +754,8 @@
                 console.error('Error message:', error.message);
                 showAlert('Failed to submit votes: ' + error.message, '❌');
                 state.modalProcessing = false;
+            } finally {
+                clearLoading();
             }
         }
 
@@ -876,6 +818,8 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
+            setLoading('Deleting contest...');
+
             try {
                 // First, fetch contest images to clean up storage
                 const contest = state.contests.find(c => c.id === contestId);
@@ -933,6 +877,8 @@
                 console.error('Error message:', error.message);
                 showAlert('Failed to delete contest: ' + error.message, '❌');
                 state.modalProcessing = false;
+            } finally {
+                clearLoading();
             }
         }
 
@@ -1531,180 +1477,6 @@
             }
         }
 
-        async function loadSharedMerge(mergeId) {
-            try {
-                console.log('📦 Loading shared merge:', mergeId);
-
-                // Fetch merge configuration from database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_merges?merge_id=eq.${mergeId}`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
-                });
-
-                const merges = await response.json();
-
-                if (!merges || merges.length === 0) {
-                    showAlert('Merged contest view not found. It may have been deleted.', '❌');
-                    window.location.hash = '';
-                    state.view = 'home';
-                    render();
-                    return;
-                }
-
-                const mergeData = merges[0];
-                console.log('📦 Merge data:', mergeData);
-
-                // Load the main contest
-                await loadSharedContest(mergeData.main_contest_id);
-
-                // Wait for contest to load, then apply joined contests
-                // Use setTimeout to ensure loadSharedContest completes
-                setTimeout(async () => {
-                    if (state.currentContest && state.currentContest.id === mergeData.main_contest_id) {
-                        state.joinedContests = mergeData.joined_contest_ids || [];
-                        console.log('📦 Applied joined contests:', state.joinedContests);
-
-                        // Load merged results
-                        await applyJoinedContests();
-                    }
-                }, 100);
-
-            } catch (error) {
-                console.error('Error loading shared merge:', error);
-                showAlert('Failed to load merged view: ' + error.message, '❌');
-                window.location.hash = '';
-                state.view = 'home';
-                render();
-            }
-        }
-
-        async function loadMergedContestsFromNumbers(contestNumbers) {
-            try {
-                console.log('🔗 [MERGE] Loading merged contests from numbers:', contestNumbers);
-
-                if (contestNumbers.length < 2) {
-                    showAlert('Invalid merge link. Must have at least 2 contests.', '❌');
-                    state.view = 'home';
-                    render();
-                    return;
-                }
-
-                // Find contests by their contest_numbers
-                const mainNumber = contestNumbers[0];
-                const joinedNumbers = contestNumbers.slice(1);
-
-                console.log('🔗 [MERGE] Main contest number:', mainNumber);
-                console.log('🔗 [MERGE] Joined contest numbers:', joinedNumbers);
-
-                const mainContest = state.contests.find(c => c.contestNumber === mainNumber);
-                if (!mainContest) {
-                    showAlert(`Contest #${mainNumber} not found.`, '❌');
-                    state.view = 'home';
-                    render();
-                    return;
-                }
-
-                console.log('🔗 [MERGE] Found main contest:', mainContest.title);
-
-                // Set up merged view
-                state.currentContest = mainContest;
-                state.joinedContests = joinedNumbers
-                    .map(num => {
-                        const contest = state.contests.find(c => c.contestNumber === num);
-                        if (contest) {
-                            console.log(`🔗 [MERGE] Found joined contest #${num}:`, contest.title);
-                            return contest.id;
-                        } else {
-                            console.warn(`⚠️ [MERGE] Contest #${num} not found`);
-                            return null;
-                        }
-                    })
-                    .filter(Boolean);
-
-                if (state.joinedContests.length === 0) {
-                    showAlert('No valid joined contests found in merge link.', '❌');
-                    state.view = 'home';
-                    render();
-                    return;
-                }
-
-                console.log('🔗 [MERGE] Joined contest IDs:', state.joinedContests);
-
-                // Load user votes for the main contest
-                const userVotes = state.userVotedContests[mainContest.id] || {};
-                state.votes = userVotes;
-
-                // Load merged results
-                await loadResults();
-                state.view = 'results';
-                state.resultsView = 'average';
-
-                // Create contest numbering map for display (simple sequential 1, 2, 3...)
-                const allContests = [mainContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-                state.mergedContestMap = allContests.map((contest, index) => ({
-                    number: index + 1,  // Simple sequential numbering (main contest = 1)
-                    title: contest.title,
-                    id: contest.id
-                }));
-
-                console.log('🔗 [MERGE] Contest map:', state.mergedContestMap);
-
-                render();
-
-                console.log('✅ [MERGE] Successfully loaded merged view');
-
-            } catch (error) {
-                console.error('❌ [MERGE] Failed to load merged contests:', error);
-                showAlert('Failed to load merged contests.', '❌');
-                state.view = 'home';
-                render();
-            }
-        }
-
-        async function shareMergedView() {
-            try {
-                console.log('🔗 [MERGE] Generating shareable merge link');
-
-                // Validate required data
-                if (!state.currentContest) {
-                    throw new Error('No contest is currently loaded');
-                }
-                if (!state.joinedContests || state.joinedContests.length === 0) {
-                    throw new Error('No contests have been joined to merge');
-                }
-
-                // Create merge URL using contest IDs: #merge=id1,id2,id3
-                const allContestIds = [state.currentContest.id, ...state.joinedContests];
-                const mergeUrl = `${window.location.origin}${window.location.pathname}#merge=${allContestIds.join(',')}`;
-
-                console.log('🔗 [MERGE] Generated merge URL:', mergeUrl);
-                console.log('🔗 [MERGE] Contest IDs:', allContestIds);
-
-                // Copy to clipboard
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(mergeUrl);
-                } else {
-                    // Fallback for older browsers
-                    const textArea = document.createElement('textarea');
-                    textArea.value = mergeUrl;
-                    textArea.style.position = 'fixed';
-                    textArea.style.left = '-9999px';
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textArea);
-                }
-
-                showToast('🔗 Merge link copied to clipboard!', 'success');
-
-            } catch (error) {
-                console.error('❌ [MERGE] Failed to share merge:', error);
-                showAlert('Failed to copy merge link. Please try again.', '❌');
-            }
-        }
 
         function handleHashChange() {
             const hash = window.location.hash.slice(1); // Remove '#'
@@ -1779,6 +1551,8 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
+            setLoading('Creating contest...');
+
             try {
                 // Insert contest - database auto-generates UUID
                 const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
@@ -1844,6 +1618,8 @@
                 console.error('Full contest creation error:', error);
                 state.modalProcessing = false;
                 showAlert('Failed to create contest: ' + error.message, '❌');
+            } finally {
+                clearLoading();
             }
         }
 
@@ -1919,6 +1695,7 @@
         }
 
         async function loadContests() {
+            setLoading('Loading contests...');
             try {
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
@@ -1992,6 +1769,8 @@
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
+            } finally {
+                clearLoading();
             }
         }
 
@@ -2089,7 +1868,7 @@
             state.votes = {};
             state.currentImageIndex = 0;
             state.hasSubmitted = false;
-            state.mockResults = null;
+            state.results = null;
             state.view = 'vote';
 
             // Update URL hash for shareable link
@@ -2124,7 +1903,6 @@
                 state.votes = userVotes;
                 await loadResults();
                 state.showMyVotes = false;
-                state.joinedContests = []; // Clear merged contests when viewing single contest
                 state.view = 'results';
 
                 // Update URL hash for shareable link
@@ -2142,8 +1920,36 @@
             state.votes = {};
             await loadResults();
             state.showMyVotes = false;
-            state.joinedContests = []; // Clear merged contests when viewing single contest
             state.view = 'results';
+            render();
+        }
+
+        function startRevote() {
+            // Show confirmation modal
+            state.modal = {
+                type: 'confirm',
+                icon: '🔄',
+                message: 'Re-vote from scratch? Your new votes will replace your old ones when submitted.',
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Start Revote', action: 'confirmRevote', primary: true }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function confirmRevote() {
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            // Reset voting state with clean slate
+            state.votes = {};
+            state.hasSubmitted = false;
+            state.shuffledImages = shuffleArray(state.currentContest.images);
+            state.currentImageIndex = 0;
+            state.view = 'vote';
+
             render();
         }
 
@@ -2262,7 +2068,7 @@
 
             // Filter mockResults to show only images with this user's votes
             // and update the results to show this user's score as the primary score
-            state.mockResults = state.mockResults.map(img => {
+            state.results = state.results.map(img => {
                 const vote = img.breakdown.find(v => v.username === username);
                 if (vote) {
                     return {
@@ -2307,7 +2113,7 @@
             }
 
             // Show modal with score buttons
-            const voteData = state.mockResults.find(r => r.id === imageId)?.breakdown.find(v => v.userId === userId);
+            const voteData = state.results.find(r => r.id === imageId)?.breakdown.find(v => v.userId === userId);
             if (!voteData) return;
 
             showModal({
@@ -2378,7 +2184,7 @@
                 return;
             }
 
-            const voteData = state.mockResults.find(r => r.id === imageId)?.breakdown.find(v => v.userId === userId);
+            const voteData = state.results.find(r => r.id === imageId)?.breakdown.find(v => v.userId === userId);
             if (!voteData) return;
 
             const action = currentlyBlocked ? 'unblock' : 'block';
@@ -2421,14 +2227,17 @@
 
                 showToast(`Vote ${shouldBlock ? 'blocked' : 'unblocked'}`, 'success');
 
-                // Reload results to get fresh data
+                // Reload results to get fresh data with updated ban status
                 await loadResults();
-                clearLoading();
+
+                // Re-render to refresh the breakdown modal
+                render();
 
             } catch (error) {
                 console.error('Error toggling vote block:', error);
-                clearLoading();
                 showAlert('Failed to toggle vote block: ' + error.message, '❌');
+            } finally {
+                clearLoading();
                 state.modalProcessing = false;
             }
         }
@@ -2453,9 +2262,8 @@
             // Reset all contest-related state
             state.view = 'home';
             state.currentContest = null;
-            state.joinedContests = [];
             state.showBreakdownModal = null;
-            state.mockResults = null;
+            state.results = null;
             state.showMyVotes = false;
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
@@ -2477,9 +2285,8 @@
             // Reset all contest-related state with null checks
             state.view = 'home';
             state.currentContest = null;
-            state.joinedContests = [];
             state.showBreakdownModal = null;
-            state.mockResults = null;
+            state.results = null;
             state.showMyVotes = false;
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
@@ -2651,6 +2458,11 @@
                     state.allUsers[userIndex].banReason = banReason;
                 }
 
+                // Reload results to refresh vote data with updated ban status
+                if (state.view === 'results' && state.currentContest) {
+                    await loadResults();
+                }
+
                 showAlert('User has been banned.', '✅');
                 render();
             } catch (error) {
@@ -2689,6 +2501,11 @@
                 if (userIndex !== -1) {
                     state.allUsers[userIndex].isBanned = false;
                     state.allUsers[userIndex].banReason = null;
+                }
+
+                // Reload results to refresh vote data with updated ban status
+                if (state.view === 'results' && state.currentContest) {
+                    await loadResults();
                 }
 
                 showAlert('User has been unbanned. Their votes will now be included in results.', '✅');
@@ -2742,66 +2559,6 @@
             state.modalProcessing = false;
         }
 
-        function showJoinContests() {
-            state.showJoinModal = true;
-            document.body.classList.add('modal-open');
-            render();
-        }
-
-        function closeJoinContests() {
-            state.showJoinModal = false;
-            state.joinedContests = [];
-            document.body.classList.remove('modal-open');
-            render();
-        }
-
-        function toggleJoinContest(contestId) {
-            const wasSelected = state.joinedContests.includes(contestId);
-
-            if (wasSelected) {
-                state.joinedContests = state.joinedContests.filter(id => id !== contestId);
-            } else {
-                state.joinedContests.push(contestId);
-            }
-
-            // Re-render to update checkbox state and visual feedback
-            render();
-        }
-
-        async function applyJoinedContests() {
-            if (state.joinedContests.length === 0) return;
-
-            state.showJoinModal = false;
-            document.body.classList.remove('modal-open');
-
-            console.log('🔗 [MERGE] Applying joined contests:', state.joinedContests);
-            console.log('🔗 [MERGE] Main contest:', state.currentContest.id);
-
-            // Load merged results from database
-            await loadResults();
-
-            // Create contest numbering map for display (simple sequential 1, 2, 3...)
-            const allContests = [state.currentContest, ...state.joinedContests.map(id => state.contests.find(c => c.id === id)).filter(Boolean)];
-            state.mergedContestMap = allContests.map((contest, index) => ({
-                number: index + 1,  // Simple sequential numbering (main contest = 1)
-                title: contest.title,
-                id: contest.id
-            }));
-
-            console.log('🔗 [MERGE] Contest map updated:', state.mergedContestMap);
-
-            render();
-        }
-
-        async function clearJoinedContests() {
-            console.log('🔗 [MERGE] Clearing joined contests');
-            state.joinedContests = [];
-            state.mergedContestMap = null;
-
-            // Reload results for single contest
-            await loadResults();
-            render();
-        }
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -2975,6 +2732,16 @@
                     </div>
                 </div>
             `;
+        }
+
+        function renderLoadingOverlay() {
+            if (!state.isLoading) return '';
+            return `<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+                <div class="bg-white rounded-lg p-6 flex flex-col items-center">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-mauve-500 mb-3"></div>
+                    <p class="text-gray-700 font-semibold">${state.loadingMessage}</p>
+                </div>
+            </div>`;
         }
 
         function renderHeader() {
@@ -3559,7 +3326,7 @@
 
                 // Find all votes by the selected user from the loaded results
                 const userVotesMap = {};
-                state.mockResults.forEach(imageResult => {
+                state.results.forEach(imageResult => {
                     const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId && !v.isBlocked);
                     if (userVote) {
                         userVotesMap[imageResult.id] = userVote.score;
@@ -3569,7 +3336,7 @@
                 const hasVotes = Object.keys(userVotesMap).length > 0;
 
                 // Map the selected user's votes onto the images
-                displayResults = state.mockResults.map(img => ({
+                displayResults = state.results.map(img => ({
                     ...img,
                     averageScore: userVotesMap[img.id] || 0,
                     userVoteScore: userVotesMap[img.id]
@@ -3581,7 +3348,7 @@
             // === AVERAGE VIEW ===
             // Shows images grouped by average score ranges (e.g., 4.5-5.0, 4.0-4.49, etc.)
             else {
-                displayResults = state.mockResults;
+                displayResults = state.results;
                 grouped = groupByScoreRange(displayResults);
                 sortedKeys = Object.keys(grouped).sort((a, b) => {
                     const aMin = grouped[a].min;
@@ -3608,20 +3375,6 @@
                                 state.resultsView === 'userVotes' ? 'Individual user votes' :
                                 'Average votes from all participants'
                             }</p>
-                            ${state.joinedContests.length > 0 ? `
-                                <p class="text-xs text-purple-600 font-semibold mb-2">🔗 Viewing ${state.joinedContests.length + 1} merged contests</p>
-                                <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2 max-w-2xl mx-auto">
-                                    <p class="text-xs font-semibold text-purple-800 mb-2">Contest Legend:</p>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
-                                        ${state.mergedContestMap.map(contest => `
-                                            <div class="flex items-center gap-2">
-                                                <span class="bg-purple-600 text-white px-2 py-0.5 rounded font-bold min-w-[24px] text-center">#${contest.number}</span>
-                                                <span class="text-gray-700 truncate">${contest.title}</span>
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                </div>
-                            ` : ''}
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
@@ -3645,6 +3398,15 @@
                                     >
                                         By Voter
                                     </button>
+                                    ${state.userVotedContests[state.currentContest.id] ? `
+                                        <button
+                                            onclick="startRevote()"
+                                            class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
+                                            title="Re-vote from scratch"
+                                        >
+                                            🔄 Revote
+                                        </button>
+                                    ` : ''}
                                 </div>
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? `
@@ -3666,33 +3428,6 @@
                                         </select>
                                     </div>
                                 ` : ''}
-                                <!-- Second row: Action buttons (Join Contest, Unmerge, Share Merged View) -->
-                                <div class="flex items-center justify-center gap-2">
-                                    ${state.joinedContests.length > 0 ? `
-                                        <button
-                                            onclick="clearJoinedContests()"
-                                            class="px-3 py-1 rounded-lg bg-gray-500 text-white hover:bg-gray-600 transition text-sm"
-                                            title="Return to single contest view"
-                                        >
-                                            ← Unmerge
-                                        </button>
-                                        <button
-                                            onclick="shareMergedView()"
-                                            class="px-3 py-1 rounded-lg bg-green-500 text-white hover:bg-green-600 transition text-sm"
-                                            title="Share this merged view"
-                                        >
-                                            📤 Share Merged View
-                                        </button>
-                                    ` : `
-                                        <button
-                                            onclick="showJoinContests()"
-                                            class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
-                                            title="Merge results with another contest"
-                                        >
-                                            🔗 Join Contest
-                                        </button>
-                                    `}
-                                </div>
                             </div>
                         </div>
 
@@ -3731,7 +3466,7 @@
                                         // Calculate contest average from all non-blocked votes
                                         let totalVotes = 0;
                                         let totalScore = 0;
-                                        state.mockResults.forEach(img => {
+                                        state.results.forEach(img => {
                                             img.breakdown.forEach(vote => {
                                                 if (!vote.isBlocked) {
                                                     totalVotes++;
@@ -3809,11 +3544,6 @@
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
-                                                    ${state.joinedContests.length > 0 && item.contestNumber ? `
-                                                        <div class="absolute top-0 left-0 bg-purple-600 text-white text-center font-bold px-2 py-0.5 rounded-br" style="font-size: ${Math.max(10, fontSize)}px;">
-                                                            #${item.contestNumber}
-                                                        </div>
-                                                    ` : ''}
                                                 </div>
                                             `).join('')}
                                         </div>
@@ -3840,11 +3570,6 @@
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
-                                                    ${state.joinedContests.length > 0 && item.contestNumber ? `
-                                                        <div class="absolute top-0 left-0 bg-purple-600 text-white text-center font-bold px-2 py-0.5 rounded-br" style="font-size: ${Math.max(10, fontSize)}px;">
-                                                            #${item.contestNumber}
-                                                        </div>
-                                                    ` : ''}
                                                     <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
                                                         ${item.averageScore}
                                                     </div>
@@ -3863,7 +3588,7 @@
         }
 
         function renderBreakdownModal() {
-            const item = state.mockResults.find(r => r.id === state.showBreakdownModal);
+            const item = state.results.find(r => r.id === state.showBreakdownModal);
             if (!item) return '';
 
             const votesByScore = { 1: [], 2: [], 3: [], 4: [], 5: [] };
@@ -4074,85 +3799,12 @@
         }
 
 
-        function renderJoinContestsModal() {
-            if (!state.showJoinModal) return '';
-
-            // Filter out the current contest from available contests
-            const availableContests = state.contests.filter(c => c.id !== state.currentContest?.id);
-
-            return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeJoinContests()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
-                        <div class="p-6">
-                            <div class="flex justify-between items-center mb-4">
-                                <h3 class="text-2xl font-bold text-gray-800">🔗 Join Contests</h3>
-                                <button onclick="closeJoinContests()" class="text-gray-500 hover:text-gray-700">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
-                            </div>
-
-                            <p class="text-sm text-gray-600 mb-4">Select contests to merge with <strong>${state.currentContest?.title}</strong>. The results will be combined.</p>
-
-                            <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200 mb-4">
-                                <h4 class="font-bold text-gray-800 mb-3">Available Contests</h4>
-                                ${availableContests.length > 0 ? `
-                                    <div class="space-y-2">
-                                        ${availableContests.map(contest => {
-                                            const isSelected = state.joinedContests.includes(contest.id);
-                                            return `
-                                                <div
-                                                    class="flex items-center justify-between p-3 bg-white rounded-lg cursor-pointer hover:bg-gray-50 transition ${isSelected ? 'ring-2 ring-purple-500' : ''}"
-                                                    onclick="toggleJoinContest('${contest.id}')"
-                                                >
-                                                    <div class="flex items-center gap-3">
-                                                        <input
-                                                            type="checkbox"
-                                                            ${isSelected ? 'checked' : ''}
-                                                            class="w-5 h-5 text-purple-500 rounded"
-                                                            onclick="event.stopPropagation(); toggleJoinContest('${contest.id}')"
-                                                        />
-                                                        <div>
-                                                            <div class="font-semibold text-gray-800">${contest.title}</div>
-                                                            <div class="text-xs text-gray-500">
-                                                                ${contest.images.length} images · by ${contest.creatorName}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            `;
-                                        }).join('')}
-                                    </div>
-                                ` : '<p class="text-sm text-gray-500 italic">No other contests available</p>'}
-                            </div>
-
-                            <div class="flex gap-3 justify-end">
-                                <button
-                                    onclick="closeJoinContests()"
-                                    class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onclick="applyJoinedContests()"
-                                    class="px-4 py-2 bg-purple-500 text-white rounded-lg font-semibold hover:bg-purple-600 transition"
-                                    ${state.joinedContests.length === 0 ? 'disabled' : ''}
-                                >
-                                    Merge ${state.joinedContests.length > 0 ? `(${state.joinedContests.length})` : ''}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
 
         function render() {
             const app = document.getElementById('app');
             
             if (!state.isLoggedIn) {
-                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderUploadProgressModal() + renderToast();
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderUploadProgressModal() + renderToast() + renderLoadingOverlay();
                 return;
             }
 
@@ -4174,7 +3826,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showJoinModal ? renderJoinContestsModal() : '') + renderToast();
+            app.innerHTML = renderHeader() + content + renderModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -4197,6 +3849,8 @@
         window.startVoting = startVoting;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
+        window.startRevote = startRevote;
+        window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
         window.shareContest = shareContest;
         window.toggleContestLock = toggleContestLock;
@@ -4228,10 +3882,6 @@
         window.updateImageLabel = updateImageLabel;
         window.showAdminDashboard = showAdminDashboard;
         window.closeAdminDashboard = closeAdminDashboard;
-        window.showJoinContests = showJoinContests;
-        window.closeJoinContests = closeJoinContests;
-        window.toggleJoinContest = toggleJoinContest;
-        window.applyJoinedContests = applyJoinedContests;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
@@ -4240,7 +3890,6 @@
         window.confirmEditVote = confirmEditVote;
         window.adminToggleBlockVote = adminToggleBlockVote;
         window.executeToggleBlockVote = executeToggleBlockVote;
-        window.shareMergedView = shareMergedView;
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
         window.setResultsView = setResultsView;
 
