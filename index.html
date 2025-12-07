@@ -315,6 +315,8 @@
                 createdBy: null,           // Username or null
                 sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
             },
+            selectedContestsForMerge: [], // Array of contest IDs selected for merging
+            mergedResults: null, // Results from merged contests
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -1102,17 +1104,97 @@
             }
         }
 
+        async function compressImage(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+                reader.onload = (e) => {
+                    const img = new Image();
+
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+
+                        // Calculate new dimensions (max 1920px width, maintain aspect ratio)
+                        const maxWidth = 1920;
+                        let width = img.width;
+                        let height = img.height;
+
+                        if (width > maxWidth) {
+                            height = (height * maxWidth) / width;
+                            width = maxWidth;
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+
+                        // Draw resized image
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        // Try compression with 0.8 quality first
+                        canvas.toBlob((blob) => {
+                            if (blob.size <= 200 * 1024) {
+                                // Success with 0.8 quality
+                                const compressedFile = new File([blob], file.name, {
+                                    type: 'image/jpeg',
+                                    lastModified: Date.now()
+                                });
+                                resolve({
+                                    file: compressedFile,
+                                    originalSize: file.size,
+                                    compressedSize: blob.size
+                                });
+                            } else {
+                                // Try with 0.6 quality
+                                canvas.toBlob((blob2) => {
+                                    if (blob2.size <= 200 * 1024) {
+                                        // Success with 0.6 quality
+                                        const compressedFile = new File([blob2], file.name, {
+                                            type: 'image/jpeg',
+                                            lastModified: Date.now()
+                                        });
+                                        resolve({
+                                            file: compressedFile,
+                                            originalSize: file.size,
+                                            compressedSize: blob2.size
+                                        });
+                                    } else {
+                                        // Still too large even at 0.6 quality
+                                        reject(new Error(`Image too large: ${(blob2.size / 1024).toFixed(0)}KB even after compression. Please use a smaller image.`));
+                                    }
+                                }, 'image/jpeg', 0.6);
+                            }
+                        }, 'image/jpeg', 0.8);
+                    };
+
+                    img.onerror = () => reject(new Error('Failed to load image for compression'));
+                    img.src = e.target.result;
+                };
+
+                reader.onerror = () => reject(new Error('Failed to read image file'));
+                reader.readAsDataURL(file);
+            });
+        }
+
         async function handleFileSelect(fileInput) {
             const files = Array.from(fileInput.files);
             if (files.length === 0) return;
 
             const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-            const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+            const maxSizeBeforeCompression = 10 * 1024 * 1024; // 10MB - reject if too large even before compression
 
             // Validate file types
             const invalidTypeFiles = files.filter(file => !validTypes.includes(file.type));
             if (invalidTypeFiles.length > 0) {
                 showAlert(`${invalidTypeFiles.length} file(s) are not valid image types (JPG, PNG, GIF, or WebP)`, '❌');
+                fileInput.value = '';
+                return;
+            }
+
+            // Check for files that are too large even before compression
+            const tooLargeFiles = files.filter(file => file.size > maxSizeBeforeCompression);
+            if (tooLargeFiles.length > 0) {
+                showAlert(`${tooLargeFiles.length} file(s) exceed 10MB. Please use smaller images.`, '❌');
                 fileInput.value = '';
                 return;
             }
@@ -1126,17 +1208,25 @@
                 return;
             }
 
+            // Show warning if any files need compression
+            const largeFiles = files.filter(file => file.size > 200 * 1024);
+            if (largeFiles.length > 0) {
+                showToast('⚠️ Images will be automatically compressed to reduce file size', 'info');
+            }
+
             // Initialize upload progress state
             state.uploadProgress = {
                 files: files.map(file => ({
                     name: file.name,
                     file: file,
+                    originalSize: file.size,
+                    compressedSize: null,
                     status: 'pending',
                     progress: 0,
                     error: null,
                     imageUrl: null,
                     retryCount: 0,
-                    sizeWarning: file.size > maxSize ? `${(file.size / 1024 / 1024).toFixed(1)}MB` : null
+                    needsCompression: file.size > 200 * 1024
                 })),
                 completed: false
             };
@@ -1144,7 +1234,7 @@
             fileInput.value = '';
             render();
 
-            // Upload files sequentially to better track progress
+            // Process files sequentially
             for (let i = 0; i < state.uploadProgress.files.length; i++) {
                 const fileData = state.uploadProgress.files[i];
 
@@ -1153,17 +1243,33 @@
                     continue;
                 }
 
-                fileData.status = 'uploading';
-                fileData.progress = 10;
-                render();
-
                 try {
+                    // Compress if needed
+                    if (fileData.needsCompression) {
+                        fileData.status = 'compressing';
+                        fileData.progress = 5;
+                        render();
+
+                        const compressed = await compressImage(fileData.file);
+                        fileData.file = compressed.file;
+                        fileData.compressedSize = compressed.compressedSize;
+                        fileData.progress = 10;
+                        render();
+                    } else {
+                        fileData.compressedSize = fileData.file.size;
+                    }
+
+                    // Upload the file
+                    fileData.status = 'uploading';
+                    fileData.progress = 15;
+                    render();
+
                     const imageUrl = await uploadImageFileWithRetry(fileData.file, i);
                     fileData.status = 'success';
                     fileData.imageUrl = imageUrl;
                     fileData.progress = 100;
                 } catch (error) {
-                    console.error(`Upload error for ${fileData.name}:`, error);
+                    console.error(`Processing error for ${fileData.name}:`, error);
                     fileData.status = 'failed';
                     fileData.error = getFriendlyErrorMessage(error);
                 }
@@ -1447,6 +1553,134 @@
             } catch (error) {
                 console.error('Failed to copy link:', error);
                 showToast('Failed to copy link', 'error');
+            }
+        }
+
+        function toggleContestSelection(contestId) {
+            const index = state.selectedContestsForMerge.indexOf(contestId);
+            if (index > -1) {
+                state.selectedContestsForMerge.splice(index, 1);
+            } else {
+                state.selectedContestsForMerge.push(contestId);
+            }
+            render();
+        }
+
+        async function shareMerge() {
+            if (state.selectedContestsForMerge.length < 2) {
+                showAlert('Please select at least 2 contests to merge', '❌');
+                return;
+            }
+
+            try {
+                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${state.selectedContestsForMerge.join(',')}`;
+
+                // Try to use modern clipboard API
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(shareUrl);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = shareUrl;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+
+                showToast('🔗 Merge link copied!', 'success');
+            } catch (error) {
+                console.error('Failed to copy merge link:', error);
+                showToast('Failed to copy link', 'error');
+            }
+        }
+
+        async function viewMerge() {
+            if (state.selectedContestsForMerge.length < 2) {
+                showAlert('Please select at least 2 contests to merge', '❌');
+                return;
+            }
+
+            await loadSharedMerge(state.selectedContestsForMerge.join(','));
+        }
+
+        async function loadSharedMerge(contestIdsStr) {
+            try {
+                console.log('Loading merged contests:', contestIdsStr);
+
+                const contestIds = contestIdsStr.split(',').map(id => id.trim());
+
+                if (contestIds.length < 2) {
+                    showAlert('At least 2 contests are required for merging', '❌');
+                    return;
+                }
+
+                state.isLoading = true;
+                state.loadingMessage = 'Loading merged results...';
+                render();
+
+                // Call the PostgreSQL function to get merged results
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_merged_contest_results`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({ contest_ids: contestIds })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch merged results: ${response.statusText}`);
+                }
+
+                const mergedData = await response.json();
+
+                if (!mergedData || mergedData.length === 0) {
+                    showAlert('No results found for the selected contests', '❌');
+                    state.isLoading = false;
+                    render();
+                    return;
+                }
+
+                // Fetch contest details for titles
+                const contestDetailsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=in.(${contestIds.join(',')})&select=id,title`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const contestDetails = await contestDetailsResponse.json();
+                const contestTitles = {};
+                contestDetails.forEach(c => {
+                    contestTitles[c.id] = c.title;
+                });
+
+                // Transform the data for display
+                state.mergedResults = {
+                    contestIds: contestIds,
+                    contestTitles: contestTitles,
+                    images: mergedData.map(item => ({
+                        id: item.image_id,
+                        url: item.image_url,
+                        contestId: item.contest_id,
+                        averageScore: parseFloat(item.average_score).toFixed(2),
+                        totalVotes: item.total_votes,
+                        voteBreakdown: item.vote_breakdown
+                    }))
+                };
+
+                state.view = 'mergedResults';
+                state.isLoading = false;
+                render();
+            } catch (error) {
+                console.error('Error loading merged results:', error);
+                showAlert('Failed to load merged results: ' + error.message, '❌');
+                state.isLoading = false;
+                render();
             }
         }
 
@@ -2694,7 +2928,7 @@
             const allCompleted = state.uploadProgress.files.every(f => f.status === 'success' || f.status === 'failed');
             const successCount = state.uploadProgress.files.filter(f => f.status === 'success').length;
             const failedCount = state.uploadProgress.files.filter(f => f.status === 'failed').length;
-            const uploadingCount = state.uploadProgress.files.filter(f => f.status === 'uploading').length;
+            const uploadingCount = state.uploadProgress.files.filter(f => f.status === 'uploading' || f.status === 'compressing').length;
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4">
@@ -2729,8 +2963,16 @@
                                             <p class="font-medium text-gray-800 truncate" title="${file.name}">
                                                 ${file.name}
                                             </p>
-                                            ${file.sizeWarning ? `
-                                                <p class="text-xs text-orange-600 mt-1">⚠️ Large file (${file.sizeWarning})</p>
+                                            ${file.needsCompression ? `
+                                                <p class="text-xs text-gray-600 mt-1">
+                                                    Original: ${(file.originalSize / 1024).toFixed(0)}KB
+                                                    ${file.compressedSize ? `→ Compressed: ${(file.compressedSize / 1024).toFixed(0)}KB` : ''}
+                                                </p>
+                                            ` : file.originalSize ? `
+                                                <p class="text-xs text-gray-600 mt-1">Size: ${(file.originalSize / 1024).toFixed(0)}KB</p>
+                                            ` : ''}
+                                            ${file.status === 'compressing' ? `
+                                                <p class="text-xs text-blue-600 mt-1">🔄 Compressing...</p>
                                             ` : ''}
                                             ${file.error ? `
                                                 <p class="text-xs text-red-600 mt-1">${file.error}</p>
@@ -2739,17 +2981,20 @@
                                         <div class="ml-3 text-2xl flex-shrink-0">
                                             ${file.status === 'success' ? '✅' :
                                               file.status === 'failed' ? '❌' :
+                                              file.status === 'compressing' ? '🔄' :
                                               file.status === 'uploading' ? '⏳' : '⏱️'}
                                         </div>
                                     </div>
 
                                     <!-- Progress Bar -->
-                                    ${file.status === 'uploading' || file.status === 'pending' ? `
+                                    ${file.status === 'uploading' || file.status === 'compressing' || file.status === 'pending' ? `
                                         <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
                                             <div class="bg-blue-500 h-2 rounded-full transition-all duration-300"
                                                  style="width: ${file.progress || 0}%"></div>
                                         </div>
-                                        <p class="text-xs text-gray-600">${file.progress || 0}%</p>
+                                        <p class="text-xs text-gray-600">
+                                            ${file.status === 'compressing' ? 'Compressing...' : `${file.progress || 0}%`}
+                                        </p>
                                     ` : ''}
 
                                     <!-- Retry Button -->
@@ -2793,7 +3038,7 @@
         }
 
         function renderHeader() {
-            const showBackButton = state.view === 'results' || state.view === 'vote';
+            const showBackButton = state.view === 'results' || state.view === 'vote' || state.view === 'mergedResults';
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
@@ -2994,6 +3239,36 @@
                         </div>
                     ` : ''}
 
+                    ${state.selectedContestsForMerge.length > 0 ? `
+                        <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4 flex gap-3 items-center flex-wrap">
+                            <span class="text-sm font-medium text-purple-800">
+                                ${state.selectedContestsForMerge.length} contest${state.selectedContestsForMerge.length !== 1 ? 's' : ''} selected for merge
+                            </span>
+                            <div class="flex gap-2 ml-auto">
+                                <button
+                                    onclick="viewMerge()"
+                                    class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    ${state.selectedContestsForMerge.length < 2 ? 'disabled' : ''}
+                                >
+                                    View Merge
+                                </button>
+                                <button
+                                    onclick="shareMerge()"
+                                    class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    ${state.selectedContestsForMerge.length < 2 ? 'disabled' : ''}
+                                >
+                                    📋 Share Merge Link
+                                </button>
+                                <button
+                                    onclick="state.selectedContestsForMerge = []; render();"
+                                    class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm"
+                                >
+                                    Clear Selection
+                                </button>
+                            </div>
+                        </div>
+                    ` : ''}
+
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         ${filteredContests.map(contest => {
                             try {
@@ -3033,6 +3308,13 @@
                                         </div>
                                     ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
+                                        <input
+                                            type="checkbox"
+                                            ${state.selectedContestsForMerge.includes(contest.id) ? 'checked' : ''}
+                                            onchange="toggleContestSelection('${contest.id}')"
+                                            class="w-5 h-5 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer mt-1"
+                                            title="Select for merge"
+                                        />
                                         <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
@@ -3130,8 +3412,11 @@
                             <p class="text-xs text-blue-800 mb-1">
                                 📱 <strong>Mobile:</strong> Open image → Share → Copy link → Paste below
                             </p>
-                            <p class="text-xs text-blue-800">
-                                📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 5MB each, multiple files supported)
+                            <p class="text-xs text-blue-800 mb-1">
+                                📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 10MB each, multiple files supported)
+                            </p>
+                            <p class="text-xs text-green-800 font-semibold">
+                                ⚡ Uploaded files are automatically compressed to optimize loading speed
                             </p>
                         </div>
 
@@ -3419,9 +3704,9 @@
                                 <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
                             </div>
                             <p class="text-gray-600 text-sm mb-1">${
-                                state.resultsView === 'byVoter' ? 'Voter statistics and average scores' :
+                                state.resultsView === 'byVoter' ? 'Average scores per voter' :
                                 state.resultsView === 'userVotes' ? 'Individual user votes' :
-                                'Average votes from all participants'
+                                'Total votes from all participants'
                             }</p>
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
@@ -3432,19 +3717,19 @@
                                         onclick="setResultsView('average')"
                                         class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
                                     >
-                                        Average
+                                        Total
                                     </button>
                                     <button
                                         onclick="setResultsView('userVotes')"
                                         class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
                                     >
-                                        User Votes
+                                        By User
                                     </button>
                                     <button
                                         onclick="setResultsView('byVoter')"
                                         class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
                                     >
-                                        By Voter
+                                        Average
                                     </button>
                                     ${state.userVotedContests[state.currentContest.id] ? `
                                         <button
@@ -3846,7 +4131,95 @@
             `;
         }
 
+        function renderMergedResults() {
+            if (!state.mergedResults) {
+                return '<div class="text-center p-8">No merged results available</div>';
+            }
 
+            const { contestIds, contestTitles, images } = state.mergedResults;
+
+            // Group images by contest
+            const imagesByContest = {};
+            images.forEach(img => {
+                if (!imagesByContest[img.contestId]) {
+                    imagesByContest[img.contestId] = [];
+                }
+                imagesByContest[img.contestId].push(img);
+            });
+
+            // Sort all images by average score descending
+            const sortedImages = [...images].sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in mb-4">
+                        <div class="text-center mb-4">
+                            <div class="flex items-center justify-center gap-2 mb-2">
+                                <span class="text-4xl">🔀</span>
+                                <h2 class="text-2xl font-bold text-gray-800">Merged Contest Results</h2>
+                            </div>
+                            <p class="text-gray-600 text-sm mb-2">
+                                Combined results from ${contestIds.length} contest${contestIds.length !== 1 ? 's' : ''}
+                            </p>
+                            <div class="flex flex-wrap gap-2 justify-center">
+                                ${contestIds.map(id => `
+                                    <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-semibold">
+                                        ${contestTitles[id] || 'Unknown Contest'}
+                                    </span>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 justify-center">
+                            <button
+                                onclick="shareMerge()"
+                                class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition text-sm flex items-center gap-2"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                                </svg>
+                                Share Merge Link
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        ${sortedImages.map((image, index) => `
+                            <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition fade-in">
+                                ${index < 3 ? `
+                                    <div class="absolute top-2 left-2 z-10">
+                                        <div class="text-3xl">${index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}</div>
+                                    </div>
+                                ` : ''}
+                                <div class="relative aspect-square bg-gray-100">
+                                    <img
+                                        src="${image.url}"
+                                        alt="Image ${index + 1}"
+                                        class="w-full h-full object-contain cursor-pointer hover:opacity-90 transition"
+                                        onclick='showImageModal(${JSON.stringify(image).replace(/'/g, "&apos;")})'
+                                    />
+                                </div>
+                                <div class="p-2">
+                                    <div class="flex justify-between items-center mb-1">
+                                        <span class="text-sm font-bold text-gray-700">#${index + 1}</span>
+                                        <span class="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded-full font-semibold">
+                                            ${contestTitles[image.contestId] || 'Unknown'}
+                                        </span>
+                                    </div>
+                                    <div class="bg-gray-50 rounded p-2">
+                                        <div class="text-center">
+                                            <div class="text-xl font-bold text-gray-800">${image.averageScore}</div>
+                                            <div class="text-xs text-gray-600">Average Score</div>
+                                            <div class="text-xs text-gray-500 mt-1">${image.totalVotes} vote${image.totalVotes !== 1 ? 's' : ''}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
 
         function render() {
             const app = document.getElementById('app');
@@ -3869,6 +4242,9 @@
                     break;
                 case 'results':
                     content = renderResults();
+                    break;
+                case 'mergedResults':
+                    content = renderMergedResults();
                     break;
                 default:
                     content = renderHome();
@@ -3901,6 +4277,9 @@
         window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
         window.shareContest = shareContest;
+        window.toggleContestSelection = toggleContestSelection;
+        window.shareMerge = shareMerge;
+        window.viewMerge = viewMerge;
         window.toggleContestLock = toggleContestLock;
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
