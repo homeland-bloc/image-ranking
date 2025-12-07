@@ -317,6 +317,7 @@
             },
             selectedContestsForMerge: [], // Array of contest IDs selected for merging
             mergedResults: null, // Results from merged contests
+            showMergeModal: false, // Show merge contest selection modal
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -1131,10 +1132,10 @@
                         // Draw resized image
                         ctx.drawImage(img, 0, 0, width, height);
 
-                        // Try compression with 0.8 quality first
+                        // Try compression with 0.7 quality first
                         canvas.toBlob((blob) => {
                             if (blob.size <= 200 * 1024) {
-                                // Success with 0.8 quality
+                                // Success with 0.7 quality
                                 const compressedFile = new File([blob], file.name, {
                                     type: 'image/jpeg',
                                     lastModified: Date.now()
@@ -1159,12 +1160,28 @@
                                             compressedSize: blob2.size
                                         });
                                     } else {
-                                        // Still too large even at 0.6 quality
-                                        reject(new Error(`Image too large: ${(blob2.size / 1024).toFixed(0)}KB even after compression. Please use a smaller image.`));
+                                        // Try with 0.5 quality
+                                        canvas.toBlob((blob3) => {
+                                            if (blob3.size <= 200 * 1024) {
+                                                // Success with 0.5 quality
+                                                const compressedFile = new File([blob3], file.name, {
+                                                    type: 'image/jpeg',
+                                                    lastModified: Date.now()
+                                                });
+                                                resolve({
+                                                    file: compressedFile,
+                                                    originalSize: file.size,
+                                                    compressedSize: blob3.size
+                                                });
+                                            } else {
+                                                // Still too large even at 0.5 quality
+                                                reject(new Error('Image too large to compress under 200KB. Please use a smaller image.'));
+                                            }
+                                        }, 'image/jpeg', 0.5);
                                     }
                                 }, 'image/jpeg', 0.6);
                             }
-                        }, 'image/jpeg', 0.8);
+                        }, 'image/jpeg', 0.7);
                     };
 
                     img.onerror = () => reject(new Error('Failed to load image for compression'));
@@ -1181,7 +1198,7 @@
             if (files.length === 0) return;
 
             const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-            const maxSizeBeforeCompression = 10 * 1024 * 1024; // 10MB - reject if too large even before compression
+            const maxSizeBeforeCompression = 1 * 1024 * 1024; // 1MB - reject if too large even before compression
 
             // Validate file types
             const invalidTypeFiles = files.filter(file => !validTypes.includes(file.type));
@@ -1194,7 +1211,7 @@
             // Check for files that are too large even before compression
             const tooLargeFiles = files.filter(file => file.size > maxSizeBeforeCompression);
             if (tooLargeFiles.length > 0) {
-                showAlert(`${tooLargeFiles.length} file(s) exceed 10MB. Please use smaller images.`, '❌');
+                showAlert(`${tooLargeFiles.length} file(s) exceed 1MB. Please use smaller images.`, '❌');
                 fileInput.value = '';
                 return;
             }
@@ -1211,7 +1228,7 @@
             // Show warning if any files need compression
             const largeFiles = files.filter(file => file.size > 200 * 1024);
             if (largeFiles.length > 0) {
-                showToast('⚠️ Images will be automatically compressed to reduce file size', 'info');
+                showToast('⚠️ Image will be compressed to reduce file size', 'info');
             }
 
             // Initialize upload progress state
@@ -1219,6 +1236,7 @@
                 files: files.map(file => ({
                     name: file.name,
                     file: file,
+                    originalFile: file, // Keep original file for retry
                     originalSize: file.size,
                     compressedSize: null,
                     status: 'pending',
@@ -1283,8 +1301,8 @@
         }
 
         async function uploadImageFile(file, progressCallback) {
-            // Get file extension
-            const fileExt = file.name.split('.').pop().toLowerCase();
+            // Always use .jpg extension for compressed images
+            const fileExt = 'jpg';
 
             // Generate unique filename
             const fileName = `contest-${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
@@ -1408,16 +1426,37 @@
 
         async function retryUpload(fileIndex) {
             const fileData = state.uploadProgress.files[fileIndex];
-            if (!fileData || !fileData.file) return;
+            if (!fileData || !fileData.originalFile) return;
 
             // Reset file status
-            fileData.status = 'uploading';
+            fileData.status = 'pending';
             fileData.progress = 0;
             fileData.error = null;
             fileData.retryCount = (fileData.retryCount || 0) + 1;
             render();
 
             try {
+                // Re-compress if needed (using original file)
+                if (fileData.needsCompression) {
+                    fileData.status = 'compressing';
+                    fileData.progress = 5;
+                    render();
+
+                    const compressed = await compressImage(fileData.originalFile);
+                    fileData.file = compressed.file;
+                    fileData.compressedSize = compressed.compressedSize;
+                    fileData.progress = 10;
+                    render();
+                } else {
+                    fileData.file = fileData.originalFile;
+                    fileData.compressedSize = fileData.originalFile.size;
+                }
+
+                // Upload the file
+                fileData.status = 'uploading';
+                fileData.progress = 15;
+                render();
+
                 const imageUrl = await uploadImageFileWithRetry(fileData.file, fileIndex);
                 fileData.status = 'success';
                 fileData.imageUrl = imageUrl;
@@ -1566,6 +1605,142 @@
             render();
         }
 
+        function openMergeModal() {
+            // Initialize with current contest pre-selected
+            if (state.currentContest) {
+                state.selectedContestsForMerge = [state.currentContest.id];
+            }
+            state.showMergeModal = true;
+            render();
+        }
+
+        function closeMergeModal() {
+            state.showMergeModal = false;
+            state.selectedContestsForMerge = [];
+            render();
+        }
+
+        async function viewSelectedMerge() {
+            if (state.selectedContestsForMerge.length < 2) {
+                showAlert('Please select at least 2 contests to merge', '❌');
+                return;
+            }
+
+            state.showMergeModal = false;
+            await loadSharedMerge(state.selectedContestsForMerge.join(','));
+        }
+
+        async function copyMergeLink() {
+            if (!state.mergedResults || !state.mergedResults.contestIds) {
+                showAlert('No merge data available', '❌');
+                return;
+            }
+
+            try {
+                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${state.mergedResults.contestIds.join(',')}`;
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(shareUrl);
+                } else {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = shareUrl;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+
+                showToast('🔗 Merge link copied!', 'success');
+            } catch (error) {
+                console.error('Failed to copy merge link:', error);
+                showToast('Failed to copy link', 'error');
+            }
+        }
+
+        function showBreakdownMerged(imageId) {
+            state.showBreakdownModal = imageId;
+            render();
+        }
+
+        function renderBreakdownModalMerged() {
+            if (!state.mergedResults || !state.mergedResults.images) return '';
+
+            const item = state.mergedResults.images.find(img => img.id === state.showBreakdownModal);
+            if (!item) return '';
+
+            const votesByScore = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+            (item.voteBreakdown || []).forEach(vote => {
+                if (votesByScore[vote.score]) {
+                    votesByScore[vote.score].push(vote);
+                }
+            });
+
+            Object.keys(votesByScore).forEach(score => {
+                votesByScore[score].sort((a, b) => a.username.localeCompare(b.username));
+            });
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown</h3>
+                                <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 overflow-y-auto p-4">
+                            <div class="flex flex-col lg:flex-row gap-4">
+                                <div class="lg:w-1/2 flex-shrink-0">
+                                    <img src="${item.url}" alt="Image" class="w-full rounded-lg shadow-lg" />
+                                    <div class="mt-3 bg-gray-50 rounded-lg p-3">
+                                        <div class="text-center">
+                                            <div class="text-3xl font-bold text-gray-800">${item.averageScore}</div>
+                                            <div class="text-sm text-gray-600">Average Score</div>
+                                            <div class="text-xs text-gray-500 mt-1">${item.totalVotes} vote${item.totalVotes !== 1 ? 's' : ''}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="lg:w-1/2 space-y-3">
+                                    ${[5, 4, 3, 2, 1].map(score => {
+                                        const votes = votesByScore[score] || [];
+                                        const colorStyle = getScoreColor(score);
+
+                                        return `
+                                            <div class="rounded-lg overflow-hidden">
+                                                <div class="px-3 py-2 flex justify-between items-center" style="background-color: ${colorStyle}; color: white;">
+                                                    <span class="font-bold">Score ${score}</span>
+                                                    <span class="bg-white/20 px-2 py-0.5 rounded-full text-sm">${votes.length}</span>
+                                                </div>
+                                                ${votes.length > 0 ? `
+                                                    <div class="bg-gray-50 p-2 space-y-1">
+                                                        ${votes.map(vote => `
+                                                            <div class="flex items-center gap-2 bg-white rounded p-2">
+                                                                <img src="${vote.avatar}" alt="${vote.username}" class="w-6 h-6 rounded-full" />
+                                                                <span class="text-sm text-gray-700 ${vote.isBlocked ? 'line-through opacity-50' : ''}">${vote.username}</span>
+                                                                ${vote.isBlocked ? '<span class="text-xs text-red-500 ml-auto">Blocked</span>' : ''}
+                                                            </div>
+                                                        `).join('')}
+                                                    </div>
+                                                ` : ''}
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         async function shareMerge() {
             if (state.selectedContestsForMerge.length < 2) {
                 showAlert('Please select at least 2 contests to merge', '❌');
@@ -1675,6 +1850,10 @@
 
                 state.view = 'mergedResults';
                 state.isLoading = false;
+
+                // Update URL hash with merge
+                window.location.hash = `merge=${contestIds.join(',')}`;
+
                 render();
             } catch (error) {
                 console.error('Error loading merged results:', error);
@@ -2546,6 +2725,7 @@
             state.currentContest = null;
             state.showBreakdownModal = null;
             state.results = null;
+            state.mergedResults = null;
             state.showMyVotes = false;
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
@@ -2922,6 +3102,86 @@
             `;
         }
 
+        function renderMergeModal() {
+            if (!state.showMergeModal) return '';
+
+            const selectedCount = state.selectedContestsForMerge.length;
+            const currentContestId = state.currentContest?.id;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeMergeModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-800">Merge Contests</h3>
+                                    <p class="text-sm text-gray-600 mt-1">
+                                        Select contests to merge (${selectedCount} selected, min 2 required)
+                                    </p>
+                                </div>
+                                <button onclick="closeMergeModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Contest List -->
+                        <div class="flex-1 overflow-y-auto p-6 space-y-2">
+                            ${state.contests.map(contest => {
+                                const isCurrentContest = contest.id === currentContestId;
+                                const isSelected = state.selectedContestsForMerge.includes(contest.id);
+                                const isDisabled = isCurrentContest;
+
+                                return `
+                                    <div class="border ${isSelected ? 'border-blue-400 bg-blue-50' : 'border-gray-200'} rounded-lg p-3 flex items-center gap-3 ${isDisabled ? 'opacity-75' : 'cursor-pointer hover:border-blue-300'}"
+                                         ${!isDisabled ? `onclick="toggleContestSelection('${contest.id}')"` : ''}>
+                                        <input
+                                            type="checkbox"
+                                            ${isSelected ? 'checked' : ''}
+                                            ${isDisabled ? 'disabled' : ''}
+                                            class="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}"
+                                            onclick="event.stopPropagation()"
+                                            onchange="toggleContestSelection('${contest.id}')"
+                                        />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
+                                                ${isCurrentContest ? '<span class="text-xs bg-blue-500 text-white px-2 py-0.5 rounded">Current</span>' : ''}
+                                            </div>
+                                            <p class="text-xs text-gray-500">
+                                                ${contest.creatorName} • ${contest.imageCount || 0} images • ${contest.voterCount || 0} voters
+                                            </p>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="p-6 border-t border-gray-200 flex gap-3">
+                            <button
+                                onclick="closeMergeModal()"
+                                class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onclick="viewSelectedMerge()"
+                                class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount >= 2 ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
+                                ${selectedCount < 2 ? 'disabled' : ''}
+                            >
+                                Merge & View Results
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderUploadProgressModal() {
             if (!state.uploadProgress) return '';
 
@@ -2966,7 +3226,7 @@
                                             ${file.needsCompression ? `
                                                 <p class="text-xs text-gray-600 mt-1">
                                                     Original: ${(file.originalSize / 1024).toFixed(0)}KB
-                                                    ${file.compressedSize ? `→ Compressed: ${(file.compressedSize / 1024).toFixed(0)}KB` : ''}
+                                                    ${file.compressedSize ? `→ Compressed: ${(file.compressedSize / 1024).toFixed(0)}KB (${Math.round((1 - file.compressedSize / file.originalSize) * 100)}% smaller)` : '→ Compressing...'}
                                                 </p>
                                             ` : file.originalSize ? `
                                                 <p class="text-xs text-gray-600 mt-1">Size: ${(file.originalSize / 1024).toFixed(0)}KB</p>
@@ -3239,36 +3499,6 @@
                         </div>
                     ` : ''}
 
-                    ${state.selectedContestsForMerge.length > 0 ? `
-                        <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4 flex gap-3 items-center flex-wrap">
-                            <span class="text-sm font-medium text-purple-800">
-                                ${state.selectedContestsForMerge.length} contest${state.selectedContestsForMerge.length !== 1 ? 's' : ''} selected for merge
-                            </span>
-                            <div class="flex gap-2 ml-auto">
-                                <button
-                                    onclick="viewMerge()"
-                                    class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    ${state.selectedContestsForMerge.length < 2 ? 'disabled' : ''}
-                                >
-                                    View Merge
-                                </button>
-                                <button
-                                    onclick="shareMerge()"
-                                    class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    ${state.selectedContestsForMerge.length < 2 ? 'disabled' : ''}
-                                >
-                                    📋 Share Merge Link
-                                </button>
-                                <button
-                                    onclick="state.selectedContestsForMerge = []; render();"
-                                    class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm"
-                                >
-                                    Clear Selection
-                                </button>
-                            </div>
-                        </div>
-                    ` : ''}
-
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         ${filteredContests.map(contest => {
                             try {
@@ -3308,13 +3538,6 @@
                                         </div>
                                     ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
-                                        <input
-                                            type="checkbox"
-                                            ${state.selectedContestsForMerge.includes(contest.id) ? 'checked' : ''}
-                                            onchange="toggleContestSelection('${contest.id}')"
-                                            class="w-5 h-5 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer mt-1"
-                                            title="Select for merge"
-                                        />
                                         <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
@@ -3731,16 +3954,29 @@
                                     >
                                         Average
                                     </button>
-                                    ${state.userVotedContests[state.currentContest.id] ? `
-                                        <button
-                                            onclick="startRevote()"
-                                            class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
-                                            title="Re-vote from scratch"
-                                        >
-                                            🔄 Revote
-                                        </button>
-                                    ` : ''}
                                 </div>
+                                <!-- Second row: Action buttons (only show if user has voted or contest is locked) -->
+                                ${state.userVotedContests[state.currentContest.id] || state.currentContest.isLocked ? `
+                                    <div class="flex items-center justify-center gap-3">
+                                        ${state.userVotedContests[state.currentContest.id] ? `
+                                            <button
+                                                onclick="startRevote()"
+                                                class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
+                                                title="Re-vote from scratch"
+                                            >
+                                                🔄 Revote
+                                            </button>
+                                        ` : ''}
+                                        <button
+                                            onclick="openMergeModal()"
+                                            class="px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition text-sm"
+                                            title="Merge with other contests"
+                                        >
+                                            🔗 Merge with Other Contests
+                                        </button>
+                                    </div>
+                                ` : ''}
+                            </div>
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? `
                                     <div class="flex items-center gap-2">
@@ -4138,85 +4374,318 @@
 
             const { contestIds, contestTitles, images } = state.mergedResults;
 
-            // Group images by contest
-            const imagesByContest = {};
-            images.forEach(img => {
-                if (!imagesByContest[img.contestId]) {
-                    imagesByContest[img.contestId] = [];
-                }
-                imagesByContest[img.contestId].push(img);
-            });
+            // Create results structure similar to single contest
+            const mergedResultsData = images.map(img => ({
+                id: img.id,
+                url: img.url,
+                contestId: img.contestId,
+                averageScore: parseFloat(img.averageScore),
+                totalVotes: img.totalVotes,
+                breakdown: img.voteBreakdown || []
+            }));
 
-            // Sort all images by average score descending
-            const sortedImages = [...images].sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+            let displayResults, grouped, sortedKeys, voterStats;
+
+            // === BY VOTER VIEW ===
+            if (state.resultsView === 'byVoter') {
+                // Generate voter stats from breakdown data
+                const voterMap = {};
+                mergedResultsData.forEach(imageResult => {
+                    (imageResult.breakdown || []).forEach(vote => {
+                        if (!vote.isBlocked) {
+                            if (!voterMap[vote.userId]) {
+                                voterMap[vote.userId] = {
+                                    userId: vote.userId,
+                                    username: vote.username,
+                                    avatar: vote.avatar,
+                                    totalScore: 0,
+                                    totalImages: 0,
+                                    isCurrentUser: vote.userId === state.user?.id
+                                };
+                            }
+                            voterMap[vote.userId].totalScore += vote.score;
+                            voterMap[vote.userId].totalImages++;
+                        }
+                    });
+                });
+
+                voterStats = Object.values(voterMap).map(voter => ({
+                    ...voter,
+                    averageScore: (voter.totalScore / voter.totalImages).toFixed(2)
+                })).sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+            }
+            // === USER VOTES VIEW ===
+            else if (state.resultsView === 'userVotes') {
+                const selectedUserId = state.selectedVoterUserId || state.user?.id;
+
+                const userVotesMap = {};
+                mergedResultsData.forEach(imageResult => {
+                    const userVote = (imageResult.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked);
+                    if (userVote) {
+                        userVotesMap[imageResult.id] = userVote.score;
+                    }
+                });
+
+                displayResults = mergedResultsData.map(img => ({
+                    ...img,
+                    averageScore: userVotesMap[img.id] || 0,
+                    userVoteScore: userVotesMap[img.id]
+                })).filter(img => img.userVoteScore);
+
+                grouped = groupMyVotesByScore(displayResults);
+                sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
+            }
+            // === AVERAGE VIEW ===
+            else {
+                displayResults = mergedResultsData;
+                grouped = groupByScoreRange(displayResults);
+                sortedKeys = Object.keys(grouped).sort((a, b) => {
+                    const aMin = grouped[a].min;
+                    const bMin = grouped[b].min;
+                    return bMin - aMin;
+                });
+            }
+
+            // Get all voters for dropdown
+            const voterSet = new Set();
+            mergedResultsData.forEach(img => {
+                (img.breakdown || []).forEach(vote => {
+                    if (!vote.isBlocked) {
+                        voterSet.add(JSON.stringify({ userId: vote.userId, username: vote.username, avatar: vote.avatar }));
+                    }
+                });
+            });
+            const mergedVoters = Array.from(voterSet).map(v => JSON.parse(v));
+
+            const baseSize = 150;
+            const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
+            const baseFontSize = 12;
+            const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
+
+            // Build title
+            const titleText = contestIds.length <= 3
+                ? contestIds.map(id => contestTitles[id]).join(', ')
+                : `${contestIds.length} contests`;
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in mb-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in results-bg">
                         <div class="text-center mb-4">
                             <div class="flex items-center justify-center gap-2 mb-2">
                                 <span class="text-4xl">🔀</span>
-                                <h2 class="text-2xl font-bold text-gray-800">Merged Contest Results</h2>
+                                <h2 class="text-2xl font-bold text-gray-800">Merged Results</h2>
                             </div>
-                            <p class="text-gray-600 text-sm mb-2">
-                                Combined results from ${contestIds.length} contest${contestIds.length !== 1 ? 's' : ''}
+                            <p class="text-gray-600 text-sm mb-1">
+                                ${titleText}
                             </p>
-                            <div class="flex flex-wrap gap-2 justify-center">
-                                ${contestIds.map(id => `
-                                    <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-semibold">
-                                        ${contestTitles[id] || 'Unknown Contest'}
-                                    </span>
-                                `).join('')}
-                            </div>
-                        </div>
+                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
-                        <div class="flex gap-2 justify-center">
-                            <button
-                                onclick="shareMerge()"
-                                class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition text-sm flex items-center gap-2"
-                            >
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
-                                </svg>
-                                Share Merge Link
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                        ${sortedImages.map((image, index) => `
-                            <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition fade-in">
-                                ${index < 3 ? `
-                                    <div class="absolute top-2 left-2 z-10">
-                                        <div class="text-3xl">${index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}</div>
+                            <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                <!-- First row: View tabs -->
+                                <div class="flex items-center justify-center gap-3">
+                                    <button
+                                        onclick="setResultsView('average')"
+                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
+                                    >
+                                        Total
+                                    </button>
+                                    <button
+                                        onclick="setResultsView('userVotes')"
+                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
+                                    >
+                                        By User
+                                    </button>
+                                    <button
+                                        onclick="setResultsView('byVoter')"
+                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
+                                    >
+                                        Average
+                                    </button>
+                                </div>
+                                <!-- Share button row -->
+                                <div class="flex items-center justify-center gap-3">
+                                    <button
+                                        onclick="copyMergeLink()"
+                                        class="px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition text-sm"
+                                        title="Copy merge link to clipboard"
+                                    >
+                                        📋 Share Merge Link
+                                    </button>
+                                </div>
+                                <!-- User selector dropdown for User Votes view -->
+                                ${state.resultsView === 'userVotes' && mergedVoters.length > 0 ? `
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-xs font-medium text-gray-700">Select User:</label>
+                                        <select
+                                            onchange="setResultsView('userVotes', this.value)"
+                                            class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                        >
+                                            ${mergedVoters.map(voter => {
+                                                const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
+                                                const isCurrent = voter.userId === state.user?.id;
+                                                return `
+                                                    <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
+                                                        ${voter.username}${isCurrent ? ' (You)' : ''}
+                                                    </option>
+                                                `;
+                                            }).join('')}
+                                        </select>
                                     </div>
                                 ` : ''}
-                                <div class="relative aspect-square bg-gray-100">
-                                    <img
-                                        src="${image.url}"
-                                        alt="Image ${index + 1}"
-                                        class="w-full h-full object-contain cursor-pointer hover:opacity-90 transition"
-                                        onclick='showImageModal(${JSON.stringify(image).replace(/'/g, "&apos;")})'
-                                    />
+                            </div>
+                        </div>
+
+                        ${state.resultsView !== 'byVoter' ? `
+                        <div class="mb-4 max-w-md mx-auto">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                <button
+                                    onclick="adjustScale(-1)"
+                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                    title="Decrease scale"
+                                >−</button>
+                                <input
+                                    type="range"
+                                    id="scaleSlider"
+                                    min="40"
+                                    max="200"
+                                    value="${state.imageScale}"
+                                    oninput="updateScale(this.value)"
+                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                />
+                                <button
+                                    onclick="adjustScale(1)"
+                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                    title="Increase scale"
+                                >+</button>
+                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        ${state.resultsView === 'byVoter' ? `
+                            ${voterStats && voterStats.length > 0 ? `
+                                <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                                    ${(() => {
+                                        let totalVotes = 0;
+                                        let totalScore = 0;
+                                        mergedResultsData.forEach(img => {
+                                            (img.breakdown || []).forEach(vote => {
+                                                if (!vote.isBlocked) {
+                                                    totalVotes++;
+                                                    totalScore += vote.score;
+                                                }
+                                            });
+                                        });
+                                        const contestAverage = totalVotes > 0 ? (totalScore / totalVotes).toFixed(2) : 0;
+
+                                        return `
+                                            <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
+                                                <div class="text-2xl mb-2">🏆</div>
+                                                <div class="text-xs font-semibold text-gray-800 text-center mb-1">
+                                                    Contest Average
+                                                </div>
+                                                <div class="text-xl font-bold text-white score-text">
+                                                    ${contestAverage}
+                                                </div>
+                                                <div class="text-xs text-gray-500">
+                                                    ${totalVotes} vote${totalVotes !== 1 ? 's' : ''}
+                                                </div>
+                                            </div>
+                                        `;
+                                    })()}
+                                    ${voterStats.map(voter => `
+                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
+                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">
+                                                ${voter.username}
+                                            </div>
+                                            <div class="text-xl font-bold text-white score-text">
+                                                ${voter.averageScore}
+                                            </div>
+                                            <div class="text-xs text-gray-500">
+                                                ${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}
+                                            </div>
+                                        </div>
+                                    `).join('')}
                                 </div>
-                                <div class="p-2">
-                                    <div class="flex justify-between items-center mb-1">
-                                        <span class="text-sm font-bold text-gray-700">#${index + 1}</span>
-                                        <span class="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded-full font-semibold">
-                                            ${contestTitles[image.contestId] || 'Unknown'}
-                                        </span>
-                                    </div>
-                                    <div class="bg-gray-50 rounded p-2">
-                                        <div class="text-center">
-                                            <div class="text-xl font-bold text-gray-800">${image.averageScore}</div>
-                                            <div class="text-xs text-gray-600">Average Score</div>
-                                            <div class="text-xs text-gray-500 mt-1">${image.totalVotes} vote${image.totalVotes !== 1 ? 's' : ''}</div>
+                            ` : `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">👥</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Voters Yet</h3>
+                                    <p class="text-gray-600">No voting data available for merged contests.</p>
+                                </div>
+                            `}
+                        ` : state.resultsView === 'userVotes' && (!displayResults || displayResults.length === 0) ? `
+                            <div class="text-center py-12">
+                                <div class="text-6xl mb-4">📭</div>
+                                <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
+                                <p class="text-gray-600">This user hasn't voted on any images in these contests.</p>
+                            </div>
+                        ` : sortedKeys.map(key => {
+                            const group = grouped[key];
+
+                            if (state.resultsView === 'userVotes') {
+                                const score = group.score;
+                                const colorStyle = getScoreColor(score);
+                                return `
+                                    <div class="mb-4">
+                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg inline-block" style="color: white; background-color: ${colorStyle};">
+                                            Score ${score}
+                                        </h3>
+                                        <div class="flex flex-wrap gap-1">
+                                            ${group.items.map(item => `
+                                                <div
+                                                    onclick="showBreakdownMerged(${item.id})"
+                                                    class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                                                    style="height: ${imageSize}px;"
+                                                >
+                                                    <img
+                                                        src="${item.url}"
+                                                        alt="Image"
+                                                        class="h-full w-auto object-cover"
+                                                        style="height: ${imageSize}px;"
+                                                        onload="this.parentElement.classList.remove('image-loading')"
+                                                    />
+                                                </div>
+                                            `).join('')}
                                         </div>
                                     </div>
-                                </div>
-                            </div>
-                        `).join('')}
+                                `;
+                            } else {
+                                const colorStyle = getCategoryColor(group.min, group.isMissing);
+                                return `
+                                    <div class="mb-4">
+                                        <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full block">
+                                            ${getCategoryLabel(group.min, group.max, group.isMissing)}
+                                        </h3>
+                                        <div class="flex flex-wrap gap-1">
+                                            ${group.items.map(item => `
+                                                <div
+                                                    onclick="showBreakdownMerged(${item.id})"
+                                                    class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
+                                                    style="height: ${imageSize}px;"
+                                                >
+                                                    <img
+                                                        src="${item.url}"
+                                                        alt="Image"
+                                                        class="h-full w-auto object-cover"
+                                                        style="height: ${imageSize}px;"
+                                                        onload="this.parentElement.classList.remove('image-loading')"
+                                                    />
+                                                    <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                        ${item.averageScore}
+                                                    </div>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        }).join('')}
                     </div>
+
+                    ${state.showBreakdownModal ? renderBreakdownModalMerged() : ''}
                 </div>
             `;
         }
@@ -4250,7 +4719,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -4280,6 +4749,11 @@
         window.toggleContestSelection = toggleContestSelection;
         window.shareMerge = shareMerge;
         window.viewMerge = viewMerge;
+        window.openMergeModal = openMergeModal;
+        window.closeMergeModal = closeMergeModal;
+        window.viewSelectedMerge = viewSelectedMerge;
+        window.copyMergeLink = copyMergeLink;
+        window.showBreakdownMerged = showBreakdownMerged;
         window.toggleContestLock = toggleContestLock;
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
