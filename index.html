@@ -306,7 +306,8 @@
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             filters: {
                 createdBy: null,           // Username or null
-                sortBy: 'newest'           // 'newest', 'oldest', 'mostVoted', 'leastVoted'
+                sortBy: 'newest',          // 'newest', 'oldest', 'mostVoted', 'leastVoted'
+                searchQuery: ''            // Search term for contest titles
             },
             selectedContestsForMerge: [], // Array of contest IDs selected for merging
             mergedResults: null, // Results from merged contests
@@ -398,8 +399,8 @@
             if (min >= 4.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
             // Yellow-green blend
             if (min >= 3.5) return { color: 'text-lime-500', bg: 'bg-lime-100', textColor: 'rgb(163, 230, 53)', bgColor: 'rgb(220, 252, 231)' };
-            // Yellow
-            if (min >= 3.0) return { color: 'text-yellow-600', bg: 'bg-yellow-100', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 240, 138)' };
+            // Yellow with green hint
+            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-yellow-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(254, 252, 232)' };
             // Orange-yellow blend
             if (min >= 2.5) return { color: 'text-orange-500', bg: 'bg-orange-200', textColor: 'rgb(251, 146, 60)', bgColor: 'rgb(254, 215, 170)' };
             // Orange
@@ -621,7 +622,7 @@
                 });
             });
 
-            // Calculate averages and sort by average score (highest to lowest)
+            // Calculate averages and sort alphabetically by username
             return Object.values(voterVotes)
                 .map(voter => ({
                     ...voter,
@@ -629,7 +630,7 @@
                         ? parseFloat((voter.totalScore / voter.totalImages).toFixed(2))
                         : 0
                 }))
-                .sort((a, b) => b.averageScore - a.averageScore);
+                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
         }
 
         function showModal(config) {
@@ -1027,7 +1028,9 @@
                 return;
             }
 
-            if (state.newContest.images.length >= 50) {
+            // Admin can bypass 50-image limit
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (state.newContest.images.length >= 50 && !isAdmin) {
                 showAlert('Maximum 50 images per contest!', '❌');
                 return;
             }
@@ -1065,7 +1068,9 @@
 
             console.log('✅ User confirmed adding duplicate URL:', url);
 
-            if (state.newContest.images.length >= 50) {
+            // Admin can bypass 50-image limit
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (state.newContest.images.length >= 50 && !isAdmin) {
                 showAlert('Maximum 50 images per contest!', '❌');
                 state.tempDuplicateUrl = null;
                 state.tempDuplicateUrlInputId = null;
@@ -1205,9 +1210,10 @@
                 return;
             }
 
-            // Check if adding all files would exceed the 50 image limit
+            // Check if adding all files would exceed the 50 image limit (admin can bypass)
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const totalImages = state.newContest.images.length + files.length;
-            if (totalImages > 50) {
+            if (totalImages > 50 && !isAdmin) {
                 const availableSlots = 50 - state.newContest.images.length;
                 showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 50 total)`, '❌');
                 fileInput.value = '';
@@ -3448,9 +3454,27 @@
             render();
         }
 
+        function setSearchQuery(query) {
+            state.filters.searchQuery = query;
+            // Update URL parameter
+            const url = new URL(window.location);
+            if (query) {
+                url.searchParams.set('search', query);
+            } else {
+                url.searchParams.delete('search');
+            }
+            window.history.replaceState({}, '', url);
+            render();
+        }
+
         function clearAllFilters() {
             state.filters.createdBy = null;
             state.filters.sortBy = 'newest';
+            state.filters.searchQuery = '';
+            // Clear URL parameter
+            const url = new URL(window.location);
+            url.searchParams.delete('search');
+            window.history.replaceState({}, '', url);
             render();
         }
 
@@ -3465,6 +3489,15 @@
             // Filter by creator
             if (state.filters.createdBy) {
                 filteredContests = filteredContests.filter(c => c.createdBy === state.filters.createdBy);
+            }
+
+            // Filter by search query
+            if (state.filters.searchQuery) {
+                const searchLower = state.filters.searchQuery.toLowerCase();
+                filteredContests = filteredContests.filter(c =>
+                    c.title.toLowerCase().includes(searchLower) ||
+                    (c.creatorName && c.creatorName.toLowerCase().includes(searchLower))
+                );
             }
 
             // Sort contests
@@ -3515,7 +3548,18 @@
                         `}
                     </div>
 
-                    <div class="bg-white rounded-lg shadow-md p-3 mb-4 flex gap-3 flex-wrap">
+                    <div class="bg-white rounded-lg shadow-md p-3 mb-4">
+                        <div class="mb-3">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
+                            <input
+                                type="text"
+                                value="${state.filters.searchQuery || ''}"
+                                oninput="setSearchQuery(this.value)"
+                                placeholder="Search by contest title or creator name..."
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
+                            />
+                        </div>
+                        <div class="flex gap-3 flex-wrap">
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
                             <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
@@ -3538,22 +3582,31 @@
                                 `).join('')}
                             </select>
                         </div>
-                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' ? `
+                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
                             <div class="flex items-end">
                                 <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
                                     Clear All Filters
                                 </button>
                             </div>
                         ` : ''}
+                        </div>
                     </div>
 
-                    ${state.filters.createdBy ? `
+                    ${state.filters.createdBy || state.filters.searchQuery ? `
                         <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex gap-2 items-center flex-wrap">
                             <span class="text-sm font-medium text-blue-800">Active Filters:</span>
-                            <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
-                                Creator: ${uniqueCreators.find(c => c.id === state.filters.createdBy)?.name || 'Unknown'}
-                                <button onclick="setFilterCreator('all')" class="hover:text-blue-900">✕</button>
-                            </span>
+                            ${state.filters.createdBy ? `
+                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                                    Creator: ${uniqueCreators.find(c => c.id === state.filters.createdBy)?.name || 'Unknown'}
+                                    <button onclick="setFilterCreator('all')" class="hover:text-blue-900">✕</button>
+                                </span>
+                            ` : ''}
+                            ${state.filters.searchQuery ? `
+                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                                    Search: "${state.filters.searchQuery}"
+                                    <button onclick="setSearchQuery('')" class="hover:text-blue-900">✕</button>
+                                </span>
+                            ` : ''}
                         </div>
                     ` : ''}
 
@@ -3612,14 +3665,22 @@
                                         ${contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
-                                                class="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 text-white py-2 rounded-lg font-semibold hover:from-gray-600 hover:to-gray-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
-                                        ` : hasVoted ? `
+                                        ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCount > 0) ? `
+                                            ${contest.createdBy === state.user.id && !hasVoted ? `
+                                                <button
+                                                    onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                                    class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                                >
+                                                    Start Voting
+                                                </button>
+                                            ` : ''}
                                             <button
                                                 onclick='viewResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
-                                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
@@ -4016,7 +4077,7 @@
                                 <!-- Second row: Action buttons (only show if user has voted or contest is locked) -->
                                 ${state.userVotedContests[state.currentContest.id] || state.currentContest.isLocked ? `
                                     <div class="flex items-center justify-center gap-3">
-                                        ${state.userVotedContests[state.currentContest.id] ? `
+                                        ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
                                             <button
                                                 onclick="startRevote()"
                                                 class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
@@ -4470,7 +4531,7 @@
                 voterStats = Object.values(voterMap).map(voter => ({
                     ...voter,
                     averageScore: (voter.totalScore / voter.totalImages).toFixed(2)
-                })).sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+                })).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
             }
             // === USER VOTES VIEW ===
             else if (state.resultsView === 'userVotes') {
@@ -4851,6 +4912,7 @@
         window.confirmDeleteContest = confirmDeleteContest;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
+        window.setSearchQuery = setSearchQuery;
         window.clearAllFilters = clearAllFilters;
         window.toggleImageLabels = toggleImageLabels;
         window.updateImageLabel = updateImageLabel;
@@ -4932,6 +4994,14 @@
             if (state.user) {
                 await loadUserVotes();
             }
+
+            // Parse URL search parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const searchQuery = urlParams.get('search');
+            if (searchQuery) {
+                state.filters.searchQuery = searchQuery;
+            }
+
             render();
 
             // Setup hash change listener for browser back/forward
