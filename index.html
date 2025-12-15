@@ -5217,12 +5217,16 @@
             else if (state.resultsView === 'userVotes') {
                 const selectedUserId = state.selectedVoterUserId || state.user?.id;
 
-                // Find all votes by the selected user from the loaded results
+                // Find all votes by the selected user from the loaded results (including blocked ones)
                 const userVotesMap = {};
+                const blockedVotesSet = new Set();
                 state.results.forEach(imageResult => {
-                    const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId && !v.isBlocked);
+                    const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId);
                     if (userVote) {
                         userVotesMap[imageResult.id] = userVote.score;
+                        if (userVote.isBlocked) {
+                            blockedVotesSet.add(imageResult.id);
+                        }
                     }
                 });
 
@@ -5232,7 +5236,8 @@
                 displayResults = state.results.map(img => ({
                     ...img,
                     averageScore: userVotesMap[img.id] || 0,
-                    userVoteScore: userVotesMap[img.id]
+                    userVoteScore: userVotesMap[img.id],
+                    isBlocked: blockedVotesSet.has(img.id)
                 })).filter(img => img.userVoteScore); // Only show images the user voted on
 
                 grouped = groupMyVotesByScore(displayResults);
@@ -5443,10 +5448,15 @@
                                                     class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative"
                                                     style="height: ${imageSize}px;"
                                                 >
+                                                    ${item.isBlocked ? `
+                                                        <div class="absolute inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-10">
+                                                            <span class="text-4xl">🚫</span>
+                                                        </div>
+                                                    ` : ''}
                                                     <img
                                                         src="${item.url}"
                                                         alt="Image"
-                                                        class="h-full w-auto object-cover"
+                                                        class="h-full w-auto object-cover ${item.isBlocked ? 'opacity-60' : ''}"
                                                         style="height: ${imageSize}px;"
                                                         onload="this.parentElement.classList.remove('image-loading')"
                                                     />
