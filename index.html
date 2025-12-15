@@ -324,6 +324,7 @@
             newContest: { title: '', images: [], labelsEnabled: false },
             showMyVotes: false,  // Deprecated, use resultsView
             resultsView: 'average',  // 'average', 'userVotes', or 'byVoter'
+            voterSortBy: 'scoreDesc',  // 'scoreDesc', 'scoreAsc', 'nameAsc', 'nameDesc' for byVoter view
             selectedVoterUserId: null,  // For user votes dropdown (null = current user)
             contestVoters: [],  // List of all users who voted in current contest(s)
             shuffledImages: [],
@@ -676,15 +677,27 @@
                 });
             });
 
-            // Calculate averages and sort alphabetically by username
-            return Object.values(voterVotes)
+            // Calculate averages and sort based on state.voterSortBy
+            const voters = Object.values(voterVotes)
                 .map(voter => ({
                     ...voter,
                     averageScore: voter.totalImages > 0
                         ? parseFloat((voter.totalScore / voter.totalImages).toFixed(2))
                         : 0
-                }))
-                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                }));
+
+            // Apply sorting based on state.voterSortBy
+            switch (state.voterSortBy) {
+                case 'scoreAsc':
+                    return voters.sort((a, b) => a.averageScore - b.averageScore);
+                case 'nameAsc':
+                    return voters.sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                case 'nameDesc':
+                    return voters.sort((a, b) => b.username.toLowerCase().localeCompare(a.username.toLowerCase()));
+                case 'scoreDesc':
+                default:
+                    return voters.sort((a, b) => b.averageScore - a.averageScore);
+            }
         }
 
         function showModal(config) {
@@ -860,8 +873,8 @@
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
-                showAlert('Failed to submit votes: ' + error.message, '❌');
                 state.modalProcessing = false;
+                showAlert('Failed to submit votes: ' + error.message, '❌');
             } finally {
                 clearTimeout(timeoutId); // Clear timeout if submission completed
                 clearLoading();
@@ -1188,59 +1201,86 @@
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
 
-                        // Calculate new dimensions (max 1920px width, maintain aspect ratio)
-                        const maxWidth = 1920;
                         let width = img.width;
                         let height = img.height;
+                        let currentMaxSize = 1920; // Start with 1920px max
 
-                        if (width > maxWidth) {
-                            height = (height * maxWidth) / width;
-                            width = maxWidth;
-                        }
+                        // Helper to resize and draw
+                        const drawResized = (maxSize) => {
+                            let w = img.width;
+                            let h = img.height;
 
-                        canvas.width = width;
-                        canvas.height = height;
+                            if (w > maxSize || h > maxSize) {
+                                if (w > h) {
+                                    h = (h * maxSize) / w;
+                                    w = maxSize;
+                                } else {
+                                    w = (w * maxSize) / h;
+                                    h = maxSize;
+                                }
+                            }
 
-                        // Draw resized image
-                        ctx.drawImage(img, 0, 0, width, height);
+                            canvas.width = w;
+                            canvas.height = h;
+                            ctx.drawImage(img, 0, 0, w, h);
+                            return { w, h };
+                        };
 
-                        // Smart dynamic quality - calculate starting quality based on original size
-                        const originalSizeKB = file.size / 1024;
-                        const targetSizeKB = 150; // Target 150KB
-                        let quality = Math.max(0.3, Math.min(0.8, (targetSizeKB / originalSizeKB) * 1.5));
+                        // Try quality 0.7 first with original size (up to 1920px)
+                        drawResized(1920);
 
-                        // Iteratively compress with decreasing quality (max 5 attempts)
-                        let attempts = 0;
-                        const maxAttempts = 5;
+                        canvas.toBlob((blob) => {
+                            if (blob && blob.size <= 200 * 1024) {
+                                // Success with quality 0.7
+                                const compressedFile = new File([blob], file.name, {
+                                    type: 'image/jpeg',
+                                    lastModified: Date.now()
+                                });
+                                resolve({
+                                    file: compressedFile,
+                                    originalSize: file.size,
+                                    compressedSize: blob.size
+                                });
+                                return;
+                            }
 
-                        const tryCompress = (currentQuality) => {
-                            canvas.toBlob((blob) => {
-                                attempts++;
-                                const compressedSizeKB = blob.size / 1024;
-
-                                if (blob.size <= 200 * 1024) {
-                                    // Success - under 200KB
-                                    const compressedFile = new File([blob], file.name, {
+                            // Try resizing to 2000px max with quality 0.7
+                            drawResized(2000);
+                            canvas.toBlob((blob2) => {
+                                if (blob2 && blob2.size <= 200 * 1024) {
+                                    // Success with 2000px max
+                                    const compressedFile = new File([blob2], file.name, {
                                         type: 'image/jpeg',
                                         lastModified: Date.now()
                                     });
                                     resolve({
                                         file: compressedFile,
                                         originalSize: file.size,
-                                        compressedSize: blob.size
+                                        compressedSize: blob2.size
                                     });
-                                } else if (attempts < maxAttempts && currentQuality > 0.3) {
-                                    // Still too large, try again with lower quality
-                                    const newQuality = Math.max(0.3, currentQuality - 0.1);
-                                    tryCompress(newQuality);
-                                } else {
-                                    // Failed after max attempts or reached minimum quality
-                                    reject(new Error('Image too large to compress under 200KB. Please use a smaller image.'));
+                                    return;
                                 }
-                            }, 'image/jpeg', currentQuality);
-                        };
 
-                        tryCompress(quality);
+                                // Try quality 0.5 with 2000px max
+                                canvas.toBlob((blob3) => {
+                                    if (blob3 && blob3.size <= 200 * 1024) {
+                                        // Success with quality 0.5
+                                        const compressedFile = new File([blob3], file.name, {
+                                            type: 'image/jpeg',
+                                            lastModified: Date.now()
+                                        });
+                                        resolve({
+                                            file: compressedFile,
+                                            originalSize: file.size,
+                                            compressedSize: blob3.size
+                                        });
+                                    } else {
+                                        // Failed - still too large
+                                        reject(new Error('Image too large to compress under 200KB. Please use a smaller image.'));
+                                    }
+                                }, 'image/jpeg', 0.5);
+                            }, 'image/jpeg', 0.7);
+                        }, 'image/jpeg', 0.7);
                     };
 
                     img.onerror = () => reject(new Error('Failed to load image for compression'));
@@ -1257,7 +1297,7 @@
             if (files.length === 0) return;
 
             const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-            const maxSizeBeforeCompression = 1 * 1024 * 1024; // 1MB - reject if too large even before compression
+            const maxSizeBeforeCompression = 500 * 1024 * 1024; // 500MB - reject if too large even before compression
 
             // Validate file types
             const invalidTypeFiles = files.filter(file => !validTypes.includes(file.type));
@@ -1270,7 +1310,7 @@
             // Check for files that are too large even before compression
             const tooLargeFiles = files.filter(file => file.size > maxSizeBeforeCompression);
             if (tooLargeFiles.length > 0) {
-                showAlert(`${tooLargeFiles.length} file(s) exceed 1MB. Please use smaller images.`, '❌');
+                showAlert(`${tooLargeFiles.length} file(s) exceed 500MB. Please use smaller images.`, '❌');
                 fileInput.value = '';
                 return;
             }
@@ -2411,8 +2451,8 @@
                         creatorName: e.creator.username,
                         creatorAvatar: e.creator.avatar,
                         createdAt: e.created_at,
-                        sourceContestId: e.source_contest_id,
-                        sourceMergerId: e.source_merger_id,
+                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : null,
+                        sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
                         type: 'extract'
@@ -2785,7 +2825,15 @@
 
         function setMergerName(name) {
             state.newMergerName = name;
-            render();
+            // Don't render to avoid input blur - button state will be updated on blur
+        }
+
+        function updateMergerNameOnBlur() {
+            const input = document.getElementById('merger-name-input');
+            if (input) {
+                state.newMergerName = input.value;
+                render();
+            }
         }
 
         async function saveMerger() {
@@ -3053,7 +3101,15 @@
 
         function setExtractName(name) {
             state.newExtractName = name;
-            render();
+            // Don't render to avoid input blur - button state will be updated on blur
+        }
+
+        function updateExtractNameOnBlur() {
+            const input = document.getElementById('extract-name-input');
+            if (input) {
+                state.newExtractName = input.value;
+                render();
+            }
         }
 
         async function saveExtract() {
@@ -3079,10 +3135,8 @@
 
                 if (state.extractSourceType === 'contest') {
                     extractData.source_contest_id = state.extractSourceId;
-                    extractData.source_merger_id = null;
                 } else if (state.extractSourceType === 'merger') {
-                    extractData.source_contest_id = null;
-                    extractData.source_merger_id = state.extractSourceId;
+                    extractData.source_contest_id = state.extractSourceId;
                 }
 
                 // Save to extracts table
@@ -3588,6 +3642,11 @@
                 state.selectedVoterUserId = state.user?.id || null;
             }
 
+            render();
+        }
+
+        function setVoterSortBy(sortBy) {
+            state.voterSortBy = sortBy;
             render();
         }
 
@@ -4450,9 +4509,11 @@
                             <div class="mb-4">
                                 <label class="text-sm font-medium text-gray-700 mb-1 block">Extract Name</label>
                                 <input
+                                    id="extract-name-input"
                                     type="text"
                                     value="${state.newExtractName || ''}"
                                     oninput="setExtractName(this.value)"
+                                    onblur="updateExtractNameOnBlur()"
                                     placeholder="Enter name for this extract..."
                                     class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-yellow-400 focus:outline-none"
                                 />
@@ -4565,9 +4626,11 @@
                             <div class="mb-4">
                                 <label class="text-sm font-medium text-gray-700 mb-1 block">Merger Name</label>
                                 <input
+                                    id="merger-name-input"
                                     type="text"
                                     value="${state.newMergerName || ''}"
                                     oninput="setMergerName(this.value)"
+                                    onblur="updateMergerNameOnBlur()"
                                     placeholder="Enter name for this merger..."
                                     class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
                                 />
@@ -4820,6 +4883,13 @@
             render();
         }
 
+        function applySearch() {
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) {
+                setSearchQuery(searchInput.value);
+            }
+        }
+
         function clearAllFilters() {
             state.filters.createdBy = null;
             state.filters.sortBy = 'newest';
@@ -4914,11 +4984,11 @@
                                 `;
                             })()}
                             ${state.user.id === ADMIN_DISCORD_ID ? `
-                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-sm">
-                                    Create Merge
+                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-lg text-sm">
+                                    + Create Merge
                                 </button>
                                 <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-sm">
-                                    Create Extract +
+                                    + Create Extract
                                 </button>
                             ` : ''}
                         </div>
@@ -4927,13 +4997,22 @@
                     <div class="bg-white rounded-lg shadow-md p-3 mb-4">
                         <div class="mb-3">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
-                            <input
-                                type="text"
-                                value="${state.filters.searchQuery || ''}"
-                                oninput="setSearchQuery(this.value)"
-                                placeholder="Search by contest title or creator name..."
-                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
-                            />
+                            <div class="flex gap-2">
+                                <input
+                                    id="search-input"
+                                    type="text"
+                                    value="${state.filters.searchQuery || ''}"
+                                    onkeypress="if(event.key==='Enter') applySearch()"
+                                    placeholder="Search by contest title or creator name..."
+                                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
+                                />
+                                <button
+                                    onclick="applySearch()"
+                                    class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition"
+                                >
+                                    Search
+                                </button>
+                            </div>
                         </div>
                         <div class="flex gap-3 flex-wrap">
                         <div class="flex-1 min-w-[200px]">
@@ -5279,7 +5358,7 @@
                                         <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
-                                                <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
+                                                <h3 class="text-base font-bold text-gray-800 line-clamp-2">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
@@ -5292,7 +5371,7 @@
                                         ${contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
-                                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
@@ -5307,7 +5386,7 @@
                                             ` : ''}
                                             <button
                                                 onclick='viewResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
-                                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
@@ -5416,7 +5495,7 @@
                         ` : hasVotedAll ? `
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
+                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
@@ -5510,7 +5589,7 @@
                             </button>
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
+                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
@@ -5837,7 +5916,7 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                    <div class="bg-white rounded-xl shadow-xl p-4 pb-8 fade-in min-h-screen">
                         <div class="text-center mb-4">
                             <div class="flex items-center justify-center gap-2 mb-2">
                                 <span class="text-4xl">🎆</span>
@@ -5896,7 +5975,7 @@
                             </div>
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? `
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex justify-center items-center gap-2">
                                         <label class="text-xs font-medium text-gray-700">Select User:</label>
                                         <select
                                             onchange="setResultsView('userVotes', this.value)"
@@ -5947,6 +6026,20 @@
 
                         ${state.resultsView === 'byVoter' ? `
                             ${voterStats && voterStats.length > 0 ? `
+                                <div class="mb-4 flex justify-center">
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-xs font-medium text-gray-700">Sort by:</label>
+                                        <select
+                                            onchange="setVoterSortBy(this.value)"
+                                            class="px-3 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                        >
+                                            <option value="scoreDesc" ${state.voterSortBy === 'scoreDesc' ? 'selected' : ''}>Score: High to Low</option>
+                                            <option value="scoreAsc" ${state.voterSortBy === 'scoreAsc' ? 'selected' : ''}>Score: Low to High</option>
+                                            <option value="nameAsc" ${state.voterSortBy === 'nameAsc' ? 'selected' : ''}>Name: A-Z</option>
+                                            <option value="nameDesc" ${state.voterSortBy === 'nameDesc' ? 'selected' : ''}>Name: Z-A</option>
+                                        </select>
+                                    </div>
+                                </div>
                                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                                     ${(() => {
                                         // Calculate contest average from all non-blocked votes
@@ -6899,6 +6992,7 @@
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
         window.setSearchQuery = setSearchQuery;
+        window.applySearch = applySearch;
         window.clearAllFilters = clearAllFilters;
         window.toggleImageLabels = toggleImageLabels;
         window.updateImageLabel = updateImageLabel;
@@ -6917,10 +7011,12 @@
         window.executeToggleBlockVote = executeToggleBlockVote;
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
         window.setResultsView = setResultsView;
+        window.setVoterSortBy = setVoterSortBy;
         window.openCreateMergerModal = openCreateMergerModal;
         window.closeCreateMergerModal = closeCreateMergerModal;
         window.toggleContestForMerger = toggleContestForMerger;
         window.setMergerName = setMergerName;
+        window.updateMergerNameOnBlur = updateMergerNameOnBlur;
         window.saveMerger = saveMerger;
         window.deleteMerger = deleteMerger;
         window.viewMergerResults = viewMergerResults;
@@ -6935,6 +7031,7 @@
         window.selectExtractSource = selectExtractSource;
         window.toggleExtractImage = toggleExtractImage;
         window.setExtractName = setExtractName;
+        window.updateExtractNameOnBlur = updateExtractNameOnBlur;
         window.saveExtract = saveExtract;
         window.openManageFoldersModal = openManageFoldersModal;
         window.closeManageFoldersModal = closeManageFoldersModal;
