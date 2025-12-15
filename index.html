@@ -352,7 +352,7 @@
             showManageFoldersModal: false, // Show manage folders modal
             newMergerName: '', // Name for new merger being created
             newExtractName: '', // Name for new extract being created
-            extractSourceType: null, // 'contest' or 'merger'
+            extractSourceType: null, // 'contest', 'merger', or 'extract'
             extractSourceId: null, // ID of source contest/merger
             extractSelectedImages: [], // Array of image IDs selected for extract
             selectedFolderId: null, // Currently selected folder for viewing
@@ -448,22 +448,22 @@
             // Special styling for missing votes - black text on dark gray background
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
-            // Bright green with cyan/blue undertone for top scores
-            if (min >= 4.5) return { color: 'text-emerald-700', bg: 'bg-emerald-100', textColor: 'rgb(16, 185, 129)', bgColor: 'rgb(209, 250, 229)' };
-            // Lime green
-            if (min >= 4.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
-            // Yellow-green blend
-            if (min >= 3.5) return { color: 'text-lime-500', bg: 'bg-lime-100', textColor: 'rgb(163, 230, 53)', bgColor: 'rgb(220, 252, 231)' };
-            // Yellow with green hint
-            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-yellow-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(254, 252, 232)' };
-            // Orange-yellow blend
-            if (min >= 2.5) return { color: 'text-orange-500', bg: 'bg-orange-200', textColor: 'rgb(251, 146, 60)', bgColor: 'rgb(254, 215, 170)' };
-            // Orange
-            if (min >= 2.0) return { color: 'text-orange-600', bg: 'bg-orange-100', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 237, 213)' };
-            // Red-orange blend
-            if (min >= 1.5) return { color: 'text-red-500', bg: 'bg-red-100', textColor: 'rgb(239, 68, 68)', bgColor: 'rgb(254, 226, 226)' };
-            // Red
-            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
+            // Bright green with cyan/blue undertone for top scores (5.0)
+            if (min >= 4.5) return { color: 'text-emerald-800', bg: 'bg-emerald-200', textColor: 'rgb(6, 95, 70)', bgColor: 'rgb(167, 243, 208)' };
+            // Lime green (4.5)
+            if (min >= 4.0) return { color: 'text-lime-800', bg: 'bg-lime-200', textColor: 'rgb(63, 98, 18)', bgColor: 'rgb(217, 249, 157)' };
+            // Yellow-green blend (4.0)
+            if (min >= 3.5) return { color: 'text-lime-700', bg: 'bg-lime-200', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(217, 249, 157)' };
+            // Yellow with green hint (3.5)
+            if (min >= 3.0) return { color: 'text-yellow-800', bg: 'bg-yellow-200', textColor: 'rgb(133, 77, 14)', bgColor: 'rgb(254, 240, 138)' };
+            // Orange-yellow blend (3.0)
+            if (min >= 2.5) return { color: 'text-orange-700', bg: 'bg-orange-200', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(254, 215, 170)' };
+            // Orange (2.5)
+            if (min >= 2.0) return { color: 'text-orange-800', bg: 'bg-orange-200', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
+            // Red-orange blend (2.0)
+            if (min >= 1.5) return { color: 'text-red-700', bg: 'bg-red-200', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(254, 202, 202)' };
+            // Red (1.0)
+            if (min >= 1.0) return { color: 'text-red-800', bg: 'bg-red-200', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(254, 202, 202)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-200', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(229, 231, 235)' };
         }
@@ -2451,7 +2451,7 @@
                         creatorName: e.creator.username,
                         creatorAvatar: e.creator.avatar,
                         createdAt: e.created_at,
-                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : null,
+                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : (e.source_type === 'extract' ? e.source_contest_id : null),
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
@@ -2820,7 +2820,20 @@
             } else {
                 state.selectedContestsForMerge.push(contestId);
             }
+
+            // Preserve scroll position
+            const modalContent = document.querySelector('.modal-content .overflow-y-auto');
+            const scrollTop = modalContent ? modalContent.scrollTop : 0;
+
             render();
+
+            // Restore scroll position after render
+            setTimeout(() => {
+                const newModalContent = document.querySelector('.modal-content .overflow-y-auto');
+                if (newModalContent && scrollTop > 0) {
+                    newModalContent.scrollTop = scrollTop;
+                }
+            }, 0);
         }
 
         function setMergerName(name) {
@@ -3137,6 +3150,8 @@
                     extractData.source_contest_id = state.extractSourceId;
                 } else if (state.extractSourceType === 'merger') {
                     extractData.source_contest_id = state.extractSourceId;
+                } else if (state.extractSourceType === 'extract') {
+                    extractData.source_contest_id = state.extractSourceId;
                 }
 
                 // Save to extracts table
@@ -3226,6 +3241,23 @@
                         creatorName: extract.creatorName,
                         creatorAvatar: extract.creatorAvatar
                     };
+                }
+            } else if (extract.sourceType === 'extract') {
+                // Get images from source extract
+                const sourceExtract = state.extracts.find(e => e.id === extract.sourceContestId);
+                if (sourceExtract && sourceExtract.sourceType === 'contest') {
+                    const originalContest = state.contests.find(c => c.id === sourceExtract.sourceContestId);
+                    if (originalContest) {
+                        const filteredImages = originalContest.images.filter(img => extract.imageIds.includes(img.id));
+                        sourceContest = {
+                            id: 'extract_' + extractId,
+                            title: extract.name,
+                            images: filteredImages,
+                            createdBy: extract.createdBy,
+                            creatorName: extract.creatorName,
+                            creatorAvatar: extract.creatorAvatar
+                        };
+                    }
                 }
             }
 
@@ -4406,7 +4438,7 @@
                                 </div>
 
                                 ${state.mergers.length > 0 ? `
-                                    <div>
+                                    <div class="mb-4">
                                         <h4 class="font-semibold text-gray-700 mb-2">Mergers</h4>
                                         <div class="space-y-2">
                                             ${state.mergers.map(merger => {
@@ -4425,6 +4457,26 @@
                                                     </div>
                                                 `;
                                             }).join('')}
+                                        </div>
+                                    </div>
+                                ` : ''}
+
+                                ${state.extracts.length > 0 ? `
+                                    <div>
+                                        <h4 class="font-semibold text-gray-700 mb-2">Extracts</h4>
+                                        <div class="space-y-2">
+                                            ${state.extracts.map(extract => `
+                                                <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
+                                                     onclick="selectExtractSource('extract', '${extract.id}')">
+                                                    <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                    <div class="flex-1 min-w-0">
+                                                        <h5 class="font-semibold text-gray-800 truncate">${extract.name}</h5>
+                                                        <p class="text-xs text-gray-500">
+                                                            ${extract.creatorName} • ${extract.imageIds.length} images
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            `).join('')}
                                         </div>
                                     </div>
                                 ` : ''}
@@ -4450,6 +4502,32 @@
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
                     sourceImages = mergedContests.flatMap(c => c.images);
                     sourceName = merger.name;
+                }
+            } else if (state.extractSourceType === 'extract') {
+                const extract = state.extracts.find(e => e.id === state.extractSourceId);
+                if (extract) {
+                    // Get images from the extract's source
+                    if (extract.sourceType === 'contest') {
+                        const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                        if (sourceContest) {
+                            sourceImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
+                        }
+                    } else if (extract.sourceType === 'merger') {
+                        const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                        if (sourceMerger) {
+                            const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
+                            const allImages = mergedContests.flatMap(c => c.images);
+                            sourceImages = allImages.filter(img => extract.imageIds.includes(img.id));
+                        }
+                    } else if (extract.sourceType === 'extract') {
+                        // Recursively get images from source extract
+                        const sourceExtract = state.extracts.find(e => e.id === extract.sourceContestId);
+                        if (sourceExtract) {
+                            // For now, just get the IDs - in practice we'd need to resolve the full image objects
+                            sourceImages = extract.imageIds.map(id => ({ id, url: '' }));
+                        }
+                    }
+                    sourceName = extract.name;
                 }
             }
 
@@ -4491,13 +4569,15 @@
                                                     ${image.label}
                                                 </div>
                                             ` : ''}
-                                            ${isSelected ? `
-                                                <div class="absolute top-1 right-1 bg-yellow-500 text-white rounded-full w-6 h-6 flex items-center justify-center">
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-yellow-500' : 'border-gray-300'}">
+                                                ${isSelected ? `
+                                                    <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                                                     </svg>
-                                                </div>
-                                            ` : ''}
+                                                ` : `
+                                                    <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
+                                                `}
+                                            </div>
                                         </div>
                                     `;
                                 }).join('')}
@@ -5537,6 +5617,9 @@
             } else if (extract.sourceType === 'merger') {
                 const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
                 sourceRef = sourceMerger ? sourceMerger.name : 'Unknown Merger';
+            } else if (extract.sourceType === 'extract') {
+                const sourceExtract = state.extracts.find(e => e.id === extract.sourceContestId);
+                sourceRef = sourceExtract ? sourceExtract.name : 'Unknown Extract';
             }
 
             const imageCount = extract.imageIds.length;
