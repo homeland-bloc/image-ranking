@@ -1741,10 +1741,10 @@
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                        <span class="text-sm flex-1 truncate ${
-                                                            vote.isBlocked ? 'line-through text-gray-700' : 'text-gray-700'
-                                                        }">
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');" />
+                                                        <span class="text-sm flex-1 truncate cursor-pointer ${
+                                                            vote.isBlocked ? 'line-through text-gray-700' : 'text-gray-700 hover:text-mauve-600'
+                                                        }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}
                                                         </span>
                                                     </div>
@@ -3882,6 +3882,12 @@
             render();
         }
 
+        async function viewUserProfile(userId) {
+            state.view = 'userProfile';
+            state.viewingUserId = userId;
+            render();
+        }
+
         async function banUser(userId, banReason) {
             try {
                 // Update database with ban status and reason
@@ -4977,6 +4983,127 @@
             `;
         }
 
+        function renderUserProfile() {
+            const userId = state.viewingUserId;
+            if (!userId) {
+                return '<div class="text-center p-8">User not found</div>';
+            }
+
+            // Find user info from allUsers or from contest data
+            let userInfo = state.allUsers.find(u => u.id === userId);
+
+            // If not in allUsers, try to find from contest votes
+            if (!userInfo) {
+                // Look through all contests to find this user's votes
+                for (const contest of state.contests) {
+                    const votes = contest.votes || [];
+                    const vote = votes.find(v => v.userId === userId);
+                    if (vote) {
+                        userInfo = { id: userId, username: vote.username, avatar: vote.avatar };
+                        break;
+                    }
+                }
+            }
+
+            if (!userInfo) {
+                return '<div class="text-center p-8">User not found</div>';
+            }
+
+            // Find all contests, mergers, and extracts this user has voted in
+            const votedContests = state.contests.filter(contest => {
+                const votes = contest.votes || [];
+                return votes.some(v => v.userId === userId);
+            });
+
+            const votedMergers = state.mergers.filter(merger => {
+                // Check if user voted in any of the source contests
+                const sourceContestIds = merger.contestIds || [];
+                return sourceContestIds.some(contestId => {
+                    const contest = state.contests.find(c => c.id === contestId);
+                    if (!contest) return false;
+                    const votes = contest.votes || [];
+                    return votes.some(v => v.userId === userId);
+                });
+            });
+
+            const votedExtracts = state.extracts.filter(extract => {
+                // Check if user voted in source contest/merger
+                if (extract.sourceType === 'contest') {
+                    const contest = state.contests.find(c => c.id === extract.sourceId);
+                    if (!contest) return false;
+                    const votes = contest.votes || [];
+                    return votes.some(v => v.userId === userId);
+                } else if (extract.sourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === extract.sourceId);
+                    if (!merger) return false;
+                    const sourceContestIds = merger.contestIds || [];
+                    return sourceContestIds.some(contestId => {
+                        const contest = state.contests.find(c => c.id === contestId);
+                        if (!contest) return false;
+                        const votes = contest.votes || [];
+                        return votes.some(v => v.userId === userId);
+                    });
+                }
+                return false;
+            });
+
+            const allVotedItems = [
+                ...votedContests.map(c => ({ ...c, itemType: 'contest' })),
+                ...votedMergers.map(m => ({ ...m, itemType: 'merger' })),
+                ...votedExtracts.map(e => ({ ...e, itemType: 'extract' }))
+            ];
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isBanned = state.bannedUsers.includes(userId);
+            const isCurrentUser = state.user && state.user.id === userId;
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <button onclick="state.view = 'home'; render();" class="mb-4 bg-gray-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-600 transition">
+                        ← Back to Home
+                    </button>
+
+                    <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+                        <div class="flex items-center gap-4 mb-4">
+                            <img src="${userInfo.avatar}" alt="${userInfo.username}" class="w-24 h-24 rounded-full" />
+                            <div class="flex-1">
+                                <h2 class="text-3xl font-bold text-gray-800">${userInfo.username}</h2>
+                                <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
+                                <p class="text-sm text-gray-500 mt-2">Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}</p>
+                            </div>
+                            ${isAdmin && !isCurrentUser && !isBanned ? `
+                                <button onclick="confirmBanUser('${userId}', '${userInfo.username}')" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition">
+                                    🚫 Ban User
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="text-2xl font-bold text-gray-800">Voting History</h3>
+                    </div>
+
+                    ${allVotedItems.length === 0 ? `
+                        <div class="bg-white rounded-xl shadow-lg p-8 text-center">
+                            <p class="text-gray-500">No voting history yet</p>
+                        </div>
+                    ` : `
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            ${allVotedItems.map(item => {
+                                if (item.itemType === 'merger') {
+                                    return renderMergerCard(item);
+                                } else if (item.itemType === 'extract') {
+                                    return renderExtractCard(item);
+                                } else {
+                                    return renderContestCard(item);
+                                }
+                            }).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
         function renderContestCard(contest) {
                         try {
                                 const hasVoted = state.userVotedContests[contest.id];
@@ -5016,13 +5143,13 @@
                                         </div>
                                     ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
                                                 <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate">by ${contest.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                                <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
                                                 <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
@@ -5124,13 +5251,13 @@
                         </button>
                     ` : ''}
                     <div class="flex items-start gap-2 mb-2 mt-6">
-                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by ${merger.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
                                 <span class="ml-auto whitespace-nowrap">${voterRange} ${totalImages}🖼️</span>
                             </div>
                         </div>
@@ -5221,13 +5348,13 @@
                         </button>
                     ` : ''}
                     <div class="flex items-start gap-2 mb-2 mt-6">
-                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-base font-bold text-yellow-900 truncate">${extract.name}</h3>
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by ${extract.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
                                 <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
                             </div>
                             <div class="text-xs text-yellow-600 mt-1">
@@ -5879,12 +6006,12 @@
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''}" />
-                                                        <span class="text-sm flex-1 truncate ${
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''} cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');" />
+                                                        <span class="text-sm flex-1 truncate cursor-pointer ${
                                                             vote.isBanned ? 'line-through text-red-600' :
                                                             vote.isBlocked ? 'line-through text-gray-700' :
-                                                            'text-gray-700'
-                                                        }">
+                                                            'text-gray-700 hover:text-mauve-600'
+                                                        }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBanned ? ' (BANNED)' : ''}
                                                         </span>
                                                         ${isAdmin ? `
@@ -6571,6 +6698,9 @@
                 case 'mergedResults':
                     content = renderMergedResults();
                     break;
+                case 'userProfile':
+                    content = renderUserProfile();
+                    break;
                 default:
                     content = renderHome();
             }
@@ -6679,6 +6809,7 @@
         window.addItemToFolder = addItemToFolder;
         window.removeItemFromFolder = removeItemFromFolder;
         window.toggleFolderExpanded = toggleFolderExpanded;
+        window.viewUserProfile = viewUserProfile;
 
         // Initialize app
         // Check for existing session on load
