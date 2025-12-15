@@ -762,6 +762,16 @@
 
             setLoading('Submitting votes...');
 
+            // Timeout fallback: force clear loading and show error if submission takes >10 seconds
+            const timeoutId = setTimeout(() => {
+                if (state.isLoading) {
+                    clearLoading();
+                    showAlert('Vote submission timed out. Please try again.', '❌');
+                    state.modalProcessing = false;
+                    render();
+                }
+            }, 10000);
+
             const votesToSubmit = [];
             state.shuffledImages.forEach(img => {
                 if (state.votes[img.id]) {
@@ -853,6 +863,7 @@
                 showAlert('Failed to submit votes: ' + error.message, '❌');
                 state.modalProcessing = false;
             } finally {
+                clearTimeout(timeoutId); // Clear timeout if submission completed
                 clearLoading();
             }
         }
