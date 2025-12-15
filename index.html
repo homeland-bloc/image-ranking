@@ -312,6 +312,22 @@
             selectedContestsForMerge: [], // Array of contest IDs selected for merging
             mergedResults: null, // Results from merged contests
             showMergeModal: false, // Show merge contest selection modal
+            mergers: [], // Array of merger objects from database
+            extracts: [], // Array of extract objects from database
+            groups: [], // Array of group objects from database
+            showCreateMergerModal: false, // Show create merger modal
+            showCreateExtractModal: false, // Show create extract modal
+            showManageFoldersModal: false, // Show manage folders modal
+            newMergerName: '', // Name for new merger being created
+            newExtractName: '', // Name for new extract being created
+            extractSourceType: null, // 'contest' or 'merger'
+            extractSourceId: null, // ID of source contest/merger
+            extractSelectedImages: [], // Array of image IDs selected for extract
+            selectedFolderId: null, // Currently selected folder for viewing
+            expandedFolderIds: [], // Array of folder IDs that are expanded
+            appSettings: {}, // Global app settings (contest creation enabled, revoting enabled)
+            view: 'home', // Can also be 'userProfile'
+            viewingUserId: null, // User ID being viewed in profile
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
