@@ -35,6 +35,9 @@
     <!-- Supabase JS Client for Realtime -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+    <!-- SortableJS for drag-and-drop -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -3650,6 +3653,228 @@
             }
         }
 
+        // ==================== FOLDER MANAGEMENT ====================
+
+        async function openManageFoldersModal() {
+            state.showManageFoldersModal = true;
+            state.showUserDropdown = false;
+            document.body.classList.add('modal-open');
+            await loadGroups();
+            render();
+        }
+
+        function closeManageFoldersModal() {
+            state.showManageFoldersModal = false;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        async function createFolder() {
+            const folderName = prompt('Enter folder name:');
+            if (!folderName || !folderName.trim()) return;
+
+            try {
+                setLoading('Creating folder...');
+                const maxOrder = state.groups.length > 0 ? Math.max(...state.groups.map(g => g.display_order || 0)) : 0;
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        name: folderName.trim(),
+                        display_order: maxOrder + 1
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create folder');
+                }
+
+                await loadGroups();
+                showToast('Folder created successfully', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error creating folder:', error);
+                showToast('Failed to create folder: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function deleteFolder(folderId) {
+            if (!confirm('Delete this folder? Items will not be deleted, only ungrouped.')) return;
+
+            try {
+                setLoading('Deleting folder...');
+
+                // First delete all contest_groups entries for this folder
+                await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${folderId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                // Then delete the group itself
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to delete folder');
+                }
+
+                await loadGroups();
+                showToast('Folder deleted successfully', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error deleting folder:', error);
+                showToast('Failed to delete folder: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function addItemToFolder(folderId) {
+            // Get all available items
+            const allItems = [
+                ...state.contests.map(c => ({ id: c.id, type: 'contest', title: c.title })),
+                ...state.mergers.map(m => ({ id: m.id, type: 'merger', title: m.name })),
+                ...state.extracts.map(e => ({ id: e.id, type: 'extract', title: e.name }))
+            ];
+
+            // Filter out items already in this folder
+            const folder = state.groups.find(g => g.id === folderId);
+            const folderItemIds = folder?.items?.map(i => `${i.item_type}:${i.item_id}`) || [];
+            const availableItems = allItems.filter(item => !folderItemIds.includes(`${item.type}:${item.id}`));
+
+            if (availableItems.length === 0) {
+                showToast('No items available to add', 'info');
+                return;
+            }
+
+            // Create a simple selection dialog
+            const itemsHTML = availableItems.map(item =>
+                `<option value="${item.type}:${item.id}">[${item.type.toUpperCase()}] ${item.title}</option>`
+            ).join('');
+
+            const selection = prompt('Enter item number from console (check browser console for list)');
+            console.log('Available items:', availableItems.map((item, idx) => `${idx}: [${item.type.toUpperCase()}] ${item.title}`));
+
+            if (!selection) return;
+
+            const idx = parseInt(selection);
+            if (isNaN(idx) || idx < 0 || idx >= availableItems.length) {
+                showToast('Invalid selection', 'error');
+                return;
+            }
+
+            const selectedItem = availableItems[idx];
+
+            try {
+                setLoading('Adding item to folder...');
+                const maxOrder = folder?.items?.length > 0 ? Math.max(...folder.items.map(i => i.display_order || 0)) : 0;
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        group_id: folderId,
+                        item_id: selectedItem.id,
+                        item_type: selectedItem.type,
+                        display_order: maxOrder + 1
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to add item to folder');
+                }
+
+                await loadGroups();
+                showToast('Item added to folder successfully', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error adding item to folder:', error);
+                showToast('Failed to add item to folder: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function removeItemFromFolder(groupId, itemId, itemType) {
+            try {
+                setLoading('Removing item from folder...');
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to remove item from folder');
+                }
+
+                await loadGroups();
+                showToast('Item removed from folder', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error removing item from folder:', error);
+                showToast('Failed to remove item: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function saveFolderOrder(folderId, newOrder) {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        display_order: newOrder
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update folder order');
+                }
+            } catch (error) {
+                console.error('Error saving folder order:', error);
+            }
+        }
+
+        function toggleFolderExpanded(folderId) {
+            const index = state.expandedFolderIds.indexOf(folderId);
+            if (index > -1) {
+                state.expandedFolderIds.splice(index, 1);
+            } else {
+                state.expandedFolderIds.push(folderId);
+            }
+            render();
+        }
+
 
         function viewAllByCreator(userId) {
             state.filters.createdBy = userId;
@@ -4405,6 +4630,9 @@
                                                 <button onclick="showAppSettings()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                     🔧 App Settings
                                                 </button>
+                                                <button onclick="openManageFoldersModal()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                    📁 Manage Folders
+                                                </button>
                                             ` : ''}
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 Logout
@@ -4635,29 +4863,116 @@
                         </div>
                     ` : ''}
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        ${(() => {
-                            // Combine contests, mergers, and extracts into a unified list
-                            const allItems = [
-                                ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
-                                ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
-                                ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
-                            ];
+                    ${(() => {
+                        // Combine contests, mergers, and extracts into a unified list
+                        const allItems = [
+                            ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
+                            ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
+                            ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
+                        ];
 
-                            // Sort by creation date (newest first by default)
-                            allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        // Sort by creation date (newest first by default)
+                        allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-                            return allItems.map(item => {
-                                if (item.itemType === 'merger') {
-                                    return renderMergerCard(item);
-                                } else if (item.itemType === 'extract') {
-                                    return renderExtractCard(item);
-                                } else {
-                                    return renderContestCard(item);
-                                }
-                            }).join('');
-                        })()}
-                    </div>
+                        // Check if we should show folders (only when sort is newest and no filters)
+                        const showFolders = state.filters.sortBy === 'newest' && !state.filters.createdBy && !state.filters.searchQuery;
+
+                        if (showFolders && state.groups.length > 0) {
+                            // Get items that are in folders
+                            const itemsInFolders = new Set();
+                            state.groups.forEach(group => {
+                                (group.items || []).forEach(item => {
+                                    itemsInFolders.add(`${item.item_type}:${item.item_id}`);
+                                });
+                            });
+
+                            // Get ungrouped items
+                            const ungroupedItems = allItems.filter(item =>
+                                !itemsInFolders.has(`${item.itemType}:${item.id}`)
+                            );
+
+                            return `
+                                ${state.groups.map(group => {
+                                    const isExpanded = state.expandedFolderIds.includes(group.id);
+                                    // Get actual items for this folder
+                                    const folderItems = (group.items || []).map(item => {
+                                        if (item.item_type === 'contest') {
+                                            const contest = state.contests.find(c => c.id === item.item_id);
+                                            return contest ? { ...contest, itemType: 'contest' } : null;
+                                        } else if (item.item_type === 'merger') {
+                                            const merger = state.mergers.find(m => m.id === item.item_id);
+                                            return merger ? { ...merger, itemType: 'merger' } : null;
+                                        } else if (item.item_type === 'extract') {
+                                            const extract = state.extracts.find(e => e.id === item.item_id);
+                                            return extract ? { ...extract, itemType: 'extract' } : null;
+                                        }
+                                        return null;
+                                    }).filter(Boolean);
+
+                                    return `
+                                        <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
+                                            <div class="bg-gradient-to-r from-mauve-400 to-mauve-600 p-4 cursor-pointer hover:from-mauve-500 hover:to-mauve-700 transition" onclick="toggleFolderExpanded(${group.id})">
+                                                <div class="flex items-center gap-3 text-white">
+                                                    <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                    </svg>
+                                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                                    </svg>
+                                                    <h3 class="text-lg font-bold flex-1">${group.name}</h3>
+                                                    <span class="text-sm opacity-90">${folderItems.length} items</span>
+                                                </div>
+                                            </div>
+                                            ${isExpanded ? `
+                                                <div class="p-4">
+                                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                        ${folderItems.map(item => {
+                                                            if (item.itemType === 'merger') {
+                                                                return renderMergerCard(item);
+                                                            } else if (item.itemType === 'extract') {
+                                                                return renderExtractCard(item);
+                                                            } else {
+                                                                return renderContestCard(item);
+                                                            }
+                                                        }).join('')}
+                                                    </div>
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    `;
+                                }).join('')}
+
+                                ${ungroupedItems.length > 0 ? `
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        ${ungroupedItems.map(item => {
+                                            if (item.itemType === 'merger') {
+                                                return renderMergerCard(item);
+                                            } else if (item.itemType === 'extract') {
+                                                return renderExtractCard(item);
+                                            } else {
+                                                return renderContestCard(item);
+                                            }
+                                        }).join('')}
+                                    </div>
+                                ` : ''}
+                            `;
+                        } else {
+                            // Show flat list when not using default sort or when no folders exist
+                            return `
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    ${allItems.map(item => {
+                                        if (item.itemType === 'merger') {
+                                            return renderMergerCard(item);
+                                        } else if (item.itemType === 'extract') {
+                                            return renderExtractCard(item);
+                                        } else {
+                                            return renderContestCard(item);
+                                        }
+                                    }).join('')}
+                                </div>
+                            `;
+                        }
+                    })()}
                 </div>
             `;
         }
@@ -5782,6 +6097,117 @@
             `;
         }
 
+        function renderManageFoldersModal() {
+            if (!state.showManageFoldersModal) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            // Get all items that are already in folders
+            const itemsInFolders = new Set();
+            state.groups.forEach(group => {
+                (group.items || []).forEach(item => {
+                    itemsInFolders.add(`${item.item_type}:${item.item_id}`);
+                });
+            });
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeManageFoldersModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-2xl font-bold text-gray-800">📁 Manage Folders</h3>
+                                <button onclick="closeManageFoldersModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="p-6 overflow-y-auto flex-1">
+                            <div class="mb-6">
+                                <button onclick="createFolder()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
+                                    + Create New Folder
+                                </button>
+                            </div>
+
+                            ${state.groups.length === 0 ? `
+                                <div class="text-center py-8 text-gray-500">
+                                    <p class="text-lg mb-2">No folders yet</p>
+                                    <p class="text-sm">Create a folder to organize your contests, mergers, and extracts</p>
+                                </div>
+                            ` : `
+                                <div class="space-y-4" id="folders-list">
+                                    ${state.groups.map(group => `
+                                        <div class="border border-gray-300 rounded-lg overflow-hidden">
+                                            <div class="bg-gray-50 p-4 flex items-center gap-3">
+                                                <div class="cursor-move text-gray-400 hover:text-gray-600">
+                                                    ⋮⋮
+                                                </div>
+                                                <div class="flex-1">
+                                                    <h4 class="font-semibold text-gray-800">${group.name}</h4>
+                                                    <p class="text-sm text-gray-600">${(group.items || []).length} items</p>
+                                                </div>
+                                                <button onclick="addItemToFolder(${group.id})" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm">
+                                                    + Add Item
+                                                </button>
+                                                <button onclick="deleteFolder(${group.id})" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 text-sm">
+                                                    Delete
+                                                </button>
+                                            </div>
+                                            ${(group.items || []).length > 0 ? `
+                                                <div class="p-4 bg-white space-y-2">
+                                                    ${(group.items || []).map(item => {
+                                                        // Find the actual item
+                                                        let itemData = null;
+                                                        let itemTitle = 'Unknown';
+                                                        if (item.item_type === 'contest') {
+                                                            itemData = state.contests.find(c => c.id === item.item_id);
+                                                            itemTitle = itemData?.title || 'Unknown Contest';
+                                                        } else if (item.item_type === 'merger') {
+                                                            itemData = state.mergers.find(m => m.id === item.item_id);
+                                                            itemTitle = itemData?.name || 'Unknown Merger';
+                                                        } else if (item.item_type === 'extract') {
+                                                            itemData = state.extracts.find(e => e.id === item.item_id);
+                                                            itemTitle = itemData?.name || 'Unknown Extract';
+                                                        }
+
+                                                        return `
+                                                            <div class="flex items-center gap-3 p-2 bg-gray-50 rounded">
+                                                                <div class="cursor-move text-gray-400 hover:text-gray-600 text-xs">
+                                                                    ⋮⋮
+                                                                </div>
+                                                                <div class="flex-1">
+                                                                    <span class="text-sm font-medium text-gray-800">${itemTitle}</span>
+                                                                    <span class="text-xs text-gray-500 ml-2">[${item.item_type.toUpperCase()}]</span>
+                                                                </div>
+                                                                <button onclick="removeItemFromFolder(${group.id}, '${item.item_id}', '${item.item_type}')" class="text-red-500 hover:text-red-700 text-sm">
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        `;
+                                                    }).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+
+                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
+                                <p class="text-sm text-blue-800">
+                                    💡 <strong>Note:</strong> Folders organize your contests, mergers, and extracts on the home page.
+                                    They appear as expandable cards when "Newest First" sort is selected.
+                                    Any other sort option will show all items in a flat list.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderMergedResults() {
             if (!state.mergedResults) {
                 return '<div class="text-center p-8">No merged results available</div>';
@@ -6149,7 +6575,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -6246,6 +6672,13 @@
         window.toggleExtractImage = toggleExtractImage;
         window.setExtractName = setExtractName;
         window.saveExtract = saveExtract;
+        window.openManageFoldersModal = openManageFoldersModal;
+        window.closeManageFoldersModal = closeManageFoldersModal;
+        window.createFolder = createFolder;
+        window.deleteFolder = deleteFolder;
+        window.addItemToFolder = addItemToFolder;
+        window.removeItemFromFolder = removeItemFromFolder;
+        window.toggleFolderExpanded = toggleFolderExpanded;
 
         // Initialize app
         // Check for existing session on load
