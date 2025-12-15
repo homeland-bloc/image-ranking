@@ -2574,6 +2574,17 @@
                     return;
                 }
 
+                // Check if results are public
+                const contestData = contests[0];
+                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                const isCreator = state.user && state.user.id === contestData.created_by;
+                const resultsPublic = contestData.results_public !== false;
+
+                if (!resultsPublic && !isAdmin && !isCreator) {
+                    showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                    return;
+                }
+
                 state.currentContest = contest;
                 const userVotes = state.userVotedContests[contest.id] || {};
                 state.votes = userVotes;
@@ -2592,6 +2603,16 @@
         }
 
         async function viewLockedResults(contest) {
+            // Check if results are public
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === contest.createdBy;
+            const resultsPublic = contest.resultsPublic !== false;
+
+            if (!resultsPublic && !isAdmin && !isCreator) {
+                showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                return;
+            }
+
             state.currentContest = contest;
             state.votes = {};
             await loadResults();
@@ -2669,6 +2690,53 @@
             } catch (error) {
                 console.error('Full lock toggle error:', error);
                 showAlert('Failed to update lock status: ' + error.message, '❌');
+            }
+        }
+
+        async function toggleResultsPublic(contestId) {
+            try {
+                const contest = state.contests.find(c => c.id === contestId);
+                if (!contest) {
+                    throw new Error('Contest not found');
+                }
+
+                // Check if user is creator or admin
+                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                const isCreator = state.user && state.user.id === contest.createdBy;
+
+                if (!isAdmin && !isCreator) {
+                    showAlert('Only the creator or admin can toggle results visibility', '❌');
+                    return;
+                }
+
+                const newPublicStatus = !contest.resultsPublic;
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: JSON.stringify({
+                        results_public: newPublicStatus
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Results public update failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to update results visibility');
+                }
+
+                // Update local state only if database update succeeded
+                contest.resultsPublic = newPublicStatus;
+                showToast(contest.resultsPublic ? '👁️ Results are now public' : '🔒 Results are now private', 'success');
+                render();
+            } catch (error) {
+                console.error('Results public toggle error:', error);
+                showAlert('Failed to update results visibility: ' + error.message, '❌');
             }
         }
 
@@ -5121,6 +5189,22 @@
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${(contest.createdBy === state.user.id || state.user.id === ADMIN_DISCORD_ID) ? `
                                         <button
+                                            onclick='toggleResultsPublic("${contest.id}")'
+                                            class="absolute top-3 right-14 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.resultsPublic !== false ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-500 hover:bg-gray-600'}"
+                                            title="${contest.resultsPublic !== false ? 'Results are public - Click to make private' : 'Results are private - Click to make public'}"
+                                        >
+                                            ${contest.resultsPublic !== false ? `
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                                </svg>
+                                            ` : `
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                                                </svg>
+                                            `}
+                                        </button>
+                                        <button
                                             onclick='toggleContestLock("${contest.id}")'
                                             class="absolute top-3 right-3 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-black hover:bg-gray-900' : 'bg-green-500 hover:bg-green-600'}"
                                             title="${contest.isLocked ? 'Click to unlock contest' : 'Click to lock contest'}"
@@ -6741,6 +6825,7 @@
         window.copyMergeLink = copyMergeLink;
         window.showBreakdownMerged = showBreakdownMerged;
         window.toggleContestLock = toggleContestLock;
+        window.toggleResultsPublic = toggleResultsPublic;
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
         window.jumpToImage = jumpToImage;
