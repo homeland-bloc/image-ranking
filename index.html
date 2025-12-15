@@ -2885,6 +2885,19 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
+            // Check if user can view results (admin, creator, or all source contests are public)
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === merger.createdBy;
+
+            if (!isAdmin && !isCreator) {
+                // Check if all source contests have public results
+                const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
+                if (hasPrivateContest) {
+                    showAlert('Some contests in this merger have private results. Only the creator or admin can view them.', '🔒');
+                    return;
+                }
+            }
+
             // Load merged results
             state.selectedContestsForMerge = merger.contestIds;
             await viewSelectedMerge();
@@ -3186,6 +3199,31 @@
             if (!extract) {
                 showToast('Extract not found', 'error');
                 return;
+            }
+
+            // Check if user can view results (admin, creator, or source has public results)
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === extract.createdBy;
+
+            if (!isAdmin && !isCreator) {
+                // Check source contest/merger results_public
+                if (extract.sourceType === 'contest') {
+                    const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                    if (sourceContest && sourceContest.resultsPublic === false && sourceContest.createdBy !== state.user.id) {
+                        showAlert('The source contest has private results. Only the creator or admin can view them.', '🔒');
+                        return;
+                    }
+                } else if (extract.sourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                    if (merger) {
+                        const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                        const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
+                        if (hasPrivateContest) {
+                            showAlert('Some contests in the source merger have private results. Only the creator or admin can view them.', '🔒');
+                            return;
+                        }
+                    }
+                }
             }
 
             // Get source contest
