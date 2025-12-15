@@ -35,6 +35,9 @@
     <!-- Supabase JS Client for Realtime -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+    <!-- SortableJS for drag-and-drop -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -759,6 +762,16 @@
 
             setLoading('Submitting votes...');
 
+            // Timeout fallback: force clear loading and show error if submission takes >10 seconds
+            const timeoutId = setTimeout(() => {
+                if (state.isLoading) {
+                    clearLoading();
+                    showAlert('Vote submission timed out. Please try again.', '❌');
+                    state.modalProcessing = false;
+                    render();
+                }
+            }, 10000);
+
             const votesToSubmit = [];
             state.shuffledImages.forEach(img => {
                 if (state.votes[img.id]) {
@@ -850,6 +863,7 @@
                 showAlert('Failed to submit votes: ' + error.message, '❌');
                 state.modalProcessing = false;
             } finally {
+                clearTimeout(timeoutId); // Clear timeout if submission completed
                 clearLoading();
             }
         }
@@ -1738,10 +1752,10 @@
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                        <span class="text-sm flex-1 truncate ${
-                                                            vote.isBlocked ? 'line-through text-gray-700' : 'text-gray-700'
-                                                        }">
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');" />
+                                                        <span class="text-sm flex-1 truncate cursor-pointer ${
+                                                            vote.isBlocked ? 'line-through text-gray-700' : 'text-gray-700 hover:text-mauve-600'
+                                                        }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}
                                                         </span>
                                                     </div>
@@ -2571,6 +2585,17 @@
                     return;
                 }
 
+                // Check if results are public
+                const contestData = contests[0];
+                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                const isCreator = state.user && state.user.id === contestData.created_by;
+                const resultsPublic = contestData.results_public !== false;
+
+                if (!resultsPublic && !isAdmin && !isCreator) {
+                    showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                    return;
+                }
+
                 state.currentContest = contest;
                 const userVotes = state.userVotedContests[contest.id] || {};
                 state.votes = userVotes;
@@ -2589,6 +2614,16 @@
         }
 
         async function viewLockedResults(contest) {
+            // Check if results are public
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === contest.createdBy;
+            const resultsPublic = contest.resultsPublic !== false;
+
+            if (!resultsPublic && !isAdmin && !isCreator) {
+                showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                return;
+            }
+
             state.currentContest = contest;
             state.votes = {};
             await loadResults();
@@ -2666,6 +2701,53 @@
             } catch (error) {
                 console.error('Full lock toggle error:', error);
                 showAlert('Failed to update lock status: ' + error.message, '❌');
+            }
+        }
+
+        async function toggleResultsPublic(contestId) {
+            try {
+                const contest = state.contests.find(c => c.id === contestId);
+                if (!contest) {
+                    throw new Error('Contest not found');
+                }
+
+                // Check if user is creator or admin
+                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                const isCreator = state.user && state.user.id === contest.createdBy;
+
+                if (!isAdmin && !isCreator) {
+                    showAlert('Only the creator or admin can toggle results visibility', '❌');
+                    return;
+                }
+
+                const newPublicStatus = !contest.resultsPublic;
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: JSON.stringify({
+                        results_public: newPublicStatus
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Results public update failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to update results visibility');
+                }
+
+                // Update local state only if database update succeeded
+                contest.resultsPublic = newPublicStatus;
+                showToast(contest.resultsPublic ? '👁️ Results are now public' : '🔒 Results are now private', 'success');
+                render();
+            } catch (error) {
+                console.error('Results public toggle error:', error);
+                showAlert('Failed to update results visibility: ' + error.message, '❌');
             }
         }
 
@@ -2802,6 +2884,19 @@
 
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+
+            // Check if user can view results (admin, creator, or all source contests are public)
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === merger.createdBy;
+
+            if (!isAdmin && !isCreator) {
+                // Check if all source contests have public results
+                const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
+                if (hasPrivateContest) {
+                    showAlert('Some contests in this merger have private results. Only the creator or admin can view them.', '🔒');
+                    return;
+                }
+            }
 
             // Load merged results
             state.selectedContestsForMerge = merger.contestIds;
@@ -3104,6 +3199,31 @@
             if (!extract) {
                 showToast('Extract not found', 'error');
                 return;
+            }
+
+            // Check if user can view results (admin, creator, or source has public results)
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === extract.createdBy;
+
+            if (!isAdmin && !isCreator) {
+                // Check source contest/merger results_public
+                if (extract.sourceType === 'contest') {
+                    const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                    if (sourceContest && sourceContest.resultsPublic === false && sourceContest.createdBy !== state.user.id) {
+                        showAlert('The source contest has private results. Only the creator or admin can view them.', '🔒');
+                        return;
+                    }
+                } else if (extract.sourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                    if (merger) {
+                        const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                        const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
+                        if (hasPrivateContest) {
+                            showAlert('Some contests in the source merger have private results. Only the creator or admin can view them.', '🔒');
+                            return;
+                        }
+                    }
+                }
             }
 
             // Get source contest
@@ -3650,10 +3770,238 @@
             }
         }
 
+        // ==================== FOLDER MANAGEMENT ====================
+
+        async function openManageFoldersModal() {
+            state.showManageFoldersModal = true;
+            state.showUserDropdown = false;
+            document.body.classList.add('modal-open');
+            await loadGroups();
+            render();
+        }
+
+        function closeManageFoldersModal() {
+            state.showManageFoldersModal = false;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        async function createFolder() {
+            const folderName = prompt('Enter folder name:');
+            if (!folderName || !folderName.trim()) return;
+
+            try {
+                setLoading('Creating folder...');
+                const maxOrder = state.groups.length > 0 ? Math.max(...state.groups.map(g => g.display_order || 0)) : 0;
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        name: folderName.trim(),
+                        display_order: maxOrder + 1
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create folder');
+                }
+
+                await loadGroups();
+                showToast('Folder created successfully', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error creating folder:', error);
+                showToast('Failed to create folder: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function deleteFolder(folderId) {
+            if (!confirm('Delete this folder? Items will not be deleted, only ungrouped.')) return;
+
+            try {
+                setLoading('Deleting folder...');
+
+                // First delete all contest_groups entries for this folder
+                await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${folderId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                // Then delete the group itself
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to delete folder');
+                }
+
+                await loadGroups();
+                showToast('Folder deleted successfully', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error deleting folder:', error);
+                showToast('Failed to delete folder: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function addItemToFolder(folderId) {
+            // Get all available items
+            const allItems = [
+                ...state.contests.map(c => ({ id: c.id, type: 'contest', title: c.title })),
+                ...state.mergers.map(m => ({ id: m.id, type: 'merger', title: m.name })),
+                ...state.extracts.map(e => ({ id: e.id, type: 'extract', title: e.name }))
+            ];
+
+            // Filter out items already in this folder
+            const folder = state.groups.find(g => g.id === folderId);
+            const folderItemIds = folder?.items?.map(i => `${i.item_type}:${i.item_id}`) || [];
+            const availableItems = allItems.filter(item => !folderItemIds.includes(`${item.type}:${item.id}`));
+
+            if (availableItems.length === 0) {
+                showToast('No items available to add', 'info');
+                return;
+            }
+
+            // Create a simple selection dialog
+            const itemsHTML = availableItems.map(item =>
+                `<option value="${item.type}:${item.id}">[${item.type.toUpperCase()}] ${item.title}</option>`
+            ).join('');
+
+            const selection = prompt('Enter item number from console (check browser console for list)');
+            console.log('Available items:', availableItems.map((item, idx) => `${idx}: [${item.type.toUpperCase()}] ${item.title}`));
+
+            if (!selection) return;
+
+            const idx = parseInt(selection);
+            if (isNaN(idx) || idx < 0 || idx >= availableItems.length) {
+                showToast('Invalid selection', 'error');
+                return;
+            }
+
+            const selectedItem = availableItems[idx];
+
+            try {
+                setLoading('Adding item to folder...');
+                const maxOrder = folder?.items?.length > 0 ? Math.max(...folder.items.map(i => i.display_order || 0)) : 0;
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        group_id: folderId,
+                        item_id: selectedItem.id,
+                        item_type: selectedItem.type,
+                        display_order: maxOrder + 1
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to add item to folder');
+                }
+
+                await loadGroups();
+                showToast('Item added to folder successfully', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error adding item to folder:', error);
+                showToast('Failed to add item to folder: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function removeItemFromFolder(groupId, itemId, itemType) {
+            try {
+                setLoading('Removing item from folder...');
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to remove item from folder');
+                }
+
+                await loadGroups();
+                showToast('Item removed from folder', 'success');
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error removing item from folder:', error);
+                showToast('Failed to remove item: ' + error.message, 'error');
+                clearLoading();
+            }
+        }
+
+        async function saveFolderOrder(folderId, newOrder) {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        display_order: newOrder
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update folder order');
+                }
+            } catch (error) {
+                console.error('Error saving folder order:', error);
+            }
+        }
+
+        function toggleFolderExpanded(folderId) {
+            const index = state.expandedFolderIds.indexOf(folderId);
+            if (index > -1) {
+                state.expandedFolderIds.splice(index, 1);
+            } else {
+                state.expandedFolderIds.push(folderId);
+            }
+            render();
+        }
+
 
         function viewAllByCreator(userId) {
             state.filters.createdBy = userId;
             state.view = 'home';
+            render();
+        }
+
+        async function viewUserProfile(userId) {
+            state.view = 'userProfile';
+            state.viewingUserId = userId;
             render();
         }
 
@@ -4405,6 +4753,9 @@
                                                 <button onclick="showAppSettings()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                     🔧 App Settings
                                                 </button>
+                                                <button onclick="openManageFoldersModal()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                    📁 Manage Folders
+                                                </button>
                                             ` : ''}
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 Logout
@@ -4635,19 +4986,227 @@
                         </div>
                     ` : ''}
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        ${(() => {
-                            // Combine contests, mergers, and extracts into a unified list
-                            const allItems = [
-                                ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
-                                ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
-                                ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
-                            ];
+                    ${(() => {
+                        // Combine contests, mergers, and extracts into a unified list
+                        const allItems = [
+                            ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
+                            ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
+                            ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
+                        ];
 
-                            // Sort by creation date (newest first by default)
-                            allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        // Sort by creation date (newest first by default)
+                        allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-                            return allItems.map(item => {
+                        // Check if we should show folders (only when sort is newest and no filters)
+                        const showFolders = state.filters.sortBy === 'newest' && !state.filters.createdBy && !state.filters.searchQuery;
+
+                        if (showFolders && state.groups.length > 0) {
+                            // Get items that are in folders
+                            const itemsInFolders = new Set();
+                            state.groups.forEach(group => {
+                                (group.items || []).forEach(item => {
+                                    itemsInFolders.add(`${item.item_type}:${item.item_id}`);
+                                });
+                            });
+
+                            // Get ungrouped items
+                            const ungroupedItems = allItems.filter(item =>
+                                !itemsInFolders.has(`${item.itemType}:${item.id}`)
+                            );
+
+                            return `
+                                ${state.groups.map(group => {
+                                    const isExpanded = state.expandedFolderIds.includes(group.id);
+                                    // Get actual items for this folder
+                                    const folderItems = (group.items || []).map(item => {
+                                        if (item.item_type === 'contest') {
+                                            const contest = state.contests.find(c => c.id === item.item_id);
+                                            return contest ? { ...contest, itemType: 'contest' } : null;
+                                        } else if (item.item_type === 'merger') {
+                                            const merger = state.mergers.find(m => m.id === item.item_id);
+                                            return merger ? { ...merger, itemType: 'merger' } : null;
+                                        } else if (item.item_type === 'extract') {
+                                            const extract = state.extracts.find(e => e.id === item.item_id);
+                                            return extract ? { ...extract, itemType: 'extract' } : null;
+                                        }
+                                        return null;
+                                    }).filter(Boolean);
+
+                                    return `
+                                        <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
+                                            <div class="bg-gradient-to-r from-mauve-400 to-mauve-600 p-4 cursor-pointer hover:from-mauve-500 hover:to-mauve-700 transition" onclick="toggleFolderExpanded(${group.id})">
+                                                <div class="flex items-center gap-3 text-white">
+                                                    <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                    </svg>
+                                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                                    </svg>
+                                                    <h3 class="text-lg font-bold flex-1">${group.name}</h3>
+                                                    <span class="text-sm opacity-90">${folderItems.length} items</span>
+                                                </div>
+                                            </div>
+                                            ${isExpanded ? `
+                                                <div class="p-4">
+                                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                        ${folderItems.map(item => {
+                                                            if (item.itemType === 'merger') {
+                                                                return renderMergerCard(item);
+                                                            } else if (item.itemType === 'extract') {
+                                                                return renderExtractCard(item);
+                                                            } else {
+                                                                return renderContestCard(item);
+                                                            }
+                                                        }).join('')}
+                                                    </div>
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    `;
+                                }).join('')}
+
+                                ${ungroupedItems.length > 0 ? `
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        ${ungroupedItems.map(item => {
+                                            if (item.itemType === 'merger') {
+                                                return renderMergerCard(item);
+                                            } else if (item.itemType === 'extract') {
+                                                return renderExtractCard(item);
+                                            } else {
+                                                return renderContestCard(item);
+                                            }
+                                        }).join('')}
+                                    </div>
+                                ` : ''}
+                            `;
+                        } else {
+                            // Show flat list when not using default sort or when no folders exist
+                            return `
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    ${allItems.map(item => {
+                                        if (item.itemType === 'merger') {
+                                            return renderMergerCard(item);
+                                        } else if (item.itemType === 'extract') {
+                                            return renderExtractCard(item);
+                                        } else {
+                                            return renderContestCard(item);
+                                        }
+                                    }).join('')}
+                                </div>
+                            `;
+                        }
+                    })()}
+                </div>
+            `;
+        }
+
+        function renderUserProfile() {
+            const userId = state.viewingUserId;
+            if (!userId) {
+                return '<div class="text-center p-8">User not found</div>';
+            }
+
+            // Find user info from allUsers or from contest data
+            let userInfo = state.allUsers.find(u => u.id === userId);
+
+            // If not in allUsers, try to find from contest votes
+            if (!userInfo) {
+                // Look through all contests to find this user's votes
+                for (const contest of state.contests) {
+                    const votes = contest.votes || [];
+                    const vote = votes.find(v => v.userId === userId);
+                    if (vote) {
+                        userInfo = { id: userId, username: vote.username, avatar: vote.avatar };
+                        break;
+                    }
+                }
+            }
+
+            if (!userInfo) {
+                return '<div class="text-center p-8">User not found</div>';
+            }
+
+            // Find all contests, mergers, and extracts this user has voted in
+            const votedContests = state.contests.filter(contest => {
+                const votes = contest.votes || [];
+                return votes.some(v => v.userId === userId);
+            });
+
+            const votedMergers = state.mergers.filter(merger => {
+                // Check if user voted in any of the source contests
+                const sourceContestIds = merger.contestIds || [];
+                return sourceContestIds.some(contestId => {
+                    const contest = state.contests.find(c => c.id === contestId);
+                    if (!contest) return false;
+                    const votes = contest.votes || [];
+                    return votes.some(v => v.userId === userId);
+                });
+            });
+
+            const votedExtracts = state.extracts.filter(extract => {
+                // Check if user voted in source contest/merger
+                if (extract.sourceType === 'contest') {
+                    const contest = state.contests.find(c => c.id === extract.sourceId);
+                    if (!contest) return false;
+                    const votes = contest.votes || [];
+                    return votes.some(v => v.userId === userId);
+                } else if (extract.sourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === extract.sourceId);
+                    if (!merger) return false;
+                    const sourceContestIds = merger.contestIds || [];
+                    return sourceContestIds.some(contestId => {
+                        const contest = state.contests.find(c => c.id === contestId);
+                        if (!contest) return false;
+                        const votes = contest.votes || [];
+                        return votes.some(v => v.userId === userId);
+                    });
+                }
+                return false;
+            });
+
+            const allVotedItems = [
+                ...votedContests.map(c => ({ ...c, itemType: 'contest' })),
+                ...votedMergers.map(m => ({ ...m, itemType: 'merger' })),
+                ...votedExtracts.map(e => ({ ...e, itemType: 'extract' }))
+            ];
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isBanned = state.bannedUsers.includes(userId);
+            const isCurrentUser = state.user && state.user.id === userId;
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <button onclick="state.view = 'home'; render();" class="mb-4 bg-gray-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-600 transition">
+                        ← Back to Home
+                    </button>
+
+                    <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+                        <div class="flex items-center gap-4 mb-4">
+                            <img src="${userInfo.avatar}" alt="${userInfo.username}" class="w-24 h-24 rounded-full" />
+                            <div class="flex-1">
+                                <h2 class="text-3xl font-bold text-gray-800">${userInfo.username}</h2>
+                                <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
+                                <p class="text-sm text-gray-500 mt-2">Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}</p>
+                            </div>
+                            ${isAdmin && !isCurrentUser && !isBanned ? `
+                                <button onclick="confirmBanUser('${userId}', '${userInfo.username}')" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition">
+                                    🚫 Ban User
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="text-2xl font-bold text-gray-800">Voting History</h3>
+                    </div>
+
+                    ${allVotedItems.length === 0 ? `
+                        <div class="bg-white rounded-xl shadow-lg p-8 text-center">
+                            <p class="text-gray-500">No voting history yet</p>
+                        </div>
+                    ` : `
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            ${allVotedItems.map(item => {
                                 if (item.itemType === 'merger') {
                                     return renderMergerCard(item);
                                 } else if (item.itemType === 'extract') {
@@ -4655,9 +5214,9 @@
                                 } else {
                                     return renderContestCard(item);
                                 }
-                            }).join('');
-                        })()}
-                    </div>
+                            }).join('')}
+                        </div>
+                    `}
                 </div>
             `;
         }
@@ -4678,6 +5237,22 @@
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${(contest.createdBy === state.user.id || state.user.id === ADMIN_DISCORD_ID) ? `
+                                        <button
+                                            onclick='toggleResultsPublic("${contest.id}")'
+                                            class="absolute top-3 right-14 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.resultsPublic !== false ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-500 hover:bg-gray-600'}"
+                                            title="${contest.resultsPublic !== false ? 'Results are public - Click to make private' : 'Results are private - Click to make public'}"
+                                        >
+                                            ${contest.resultsPublic !== false ? `
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                                </svg>
+                                            ` : `
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                                                </svg>
+                                            `}
+                                        </button>
                                         <button
                                             onclick='toggleContestLock("${contest.id}")'
                                             class="absolute top-3 right-3 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-black hover:bg-gray-900' : 'bg-green-500 hover:bg-green-600'}"
@@ -4701,13 +5276,13 @@
                                         </div>
                                     ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
                                                 <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate">by ${contest.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                                <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
                                                 <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
@@ -4809,13 +5384,13 @@
                         </button>
                     ` : ''}
                     <div class="flex items-start gap-2 mb-2 mt-6">
-                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by ${merger.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
                                 <span class="ml-auto whitespace-nowrap">${voterRange} ${totalImages}🖼️</span>
                             </div>
                         </div>
@@ -4906,13 +5481,13 @@
                         </button>
                     ` : ''}
                     <div class="flex items-start gap-2 mb-2 mt-6">
-                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-base font-bold text-yellow-900 truncate">${extract.name}</h3>
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by ${extract.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
                                 <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
                             </div>
                             <div class="text-xs text-yellow-600 mt-1">
@@ -5564,12 +6139,12 @@
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''}" />
-                                                        <span class="text-sm flex-1 truncate ${
+                                                        <img src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''} cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');" />
+                                                        <span class="text-sm flex-1 truncate cursor-pointer ${
                                                             vote.isBanned ? 'line-through text-red-600' :
                                                             vote.isBlocked ? 'line-through text-gray-700' :
-                                                            'text-gray-700'
-                                                        }">
+                                                            'text-gray-700 hover:text-mauve-600'
+                                                        }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBanned ? ' (BANNED)' : ''}
                                                         </span>
                                                         ${isAdmin ? `
@@ -5775,6 +6350,117 @@
                                         💡 <strong>Note:</strong> These settings affect all users globally. Disabled features will show informative messages to users.
                                     </p>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderManageFoldersModal() {
+            if (!state.showManageFoldersModal) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            // Get all items that are already in folders
+            const itemsInFolders = new Set();
+            state.groups.forEach(group => {
+                (group.items || []).forEach(item => {
+                    itemsInFolders.add(`${item.item_type}:${item.item_id}`);
+                });
+            });
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeManageFoldersModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-2xl font-bold text-gray-800">📁 Manage Folders</h3>
+                                <button onclick="closeManageFoldersModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="p-6 overflow-y-auto flex-1">
+                            <div class="mb-6">
+                                <button onclick="createFolder()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
+                                    + Create New Folder
+                                </button>
+                            </div>
+
+                            ${state.groups.length === 0 ? `
+                                <div class="text-center py-8 text-gray-500">
+                                    <p class="text-lg mb-2">No folders yet</p>
+                                    <p class="text-sm">Create a folder to organize your contests, mergers, and extracts</p>
+                                </div>
+                            ` : `
+                                <div class="space-y-4" id="folders-list">
+                                    ${state.groups.map(group => `
+                                        <div class="border border-gray-300 rounded-lg overflow-hidden">
+                                            <div class="bg-gray-50 p-4 flex items-center gap-3">
+                                                <div class="cursor-move text-gray-400 hover:text-gray-600">
+                                                    ⋮⋮
+                                                </div>
+                                                <div class="flex-1">
+                                                    <h4 class="font-semibold text-gray-800">${group.name}</h4>
+                                                    <p class="text-sm text-gray-600">${(group.items || []).length} items</p>
+                                                </div>
+                                                <button onclick="addItemToFolder(${group.id})" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm">
+                                                    + Add Item
+                                                </button>
+                                                <button onclick="deleteFolder(${group.id})" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 text-sm">
+                                                    Delete
+                                                </button>
+                                            </div>
+                                            ${(group.items || []).length > 0 ? `
+                                                <div class="p-4 bg-white space-y-2">
+                                                    ${(group.items || []).map(item => {
+                                                        // Find the actual item
+                                                        let itemData = null;
+                                                        let itemTitle = 'Unknown';
+                                                        if (item.item_type === 'contest') {
+                                                            itemData = state.contests.find(c => c.id === item.item_id);
+                                                            itemTitle = itemData?.title || 'Unknown Contest';
+                                                        } else if (item.item_type === 'merger') {
+                                                            itemData = state.mergers.find(m => m.id === item.item_id);
+                                                            itemTitle = itemData?.name || 'Unknown Merger';
+                                                        } else if (item.item_type === 'extract') {
+                                                            itemData = state.extracts.find(e => e.id === item.item_id);
+                                                            itemTitle = itemData?.name || 'Unknown Extract';
+                                                        }
+
+                                                        return `
+                                                            <div class="flex items-center gap-3 p-2 bg-gray-50 rounded">
+                                                                <div class="cursor-move text-gray-400 hover:text-gray-600 text-xs">
+                                                                    ⋮⋮
+                                                                </div>
+                                                                <div class="flex-1">
+                                                                    <span class="text-sm font-medium text-gray-800">${itemTitle}</span>
+                                                                    <span class="text-xs text-gray-500 ml-2">[${item.item_type.toUpperCase()}]</span>
+                                                                </div>
+                                                                <button onclick="removeItemFromFolder(${group.id}, '${item.item_id}', '${item.item_type}')" class="text-red-500 hover:text-red-700 text-sm">
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        `;
+                                                    }).join('')}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+
+                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
+                                <p class="text-sm text-blue-800">
+                                    💡 <strong>Note:</strong> Folders organize your contests, mergers, and extracts on the home page.
+                                    They appear as expandable cards when "Newest First" sort is selected.
+                                    Any other sort option will show all items in a flat list.
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -6145,11 +6831,14 @@
                 case 'mergedResults':
                     content = renderMergedResults();
                     break;
+                case 'userProfile':
+                    content = renderUserProfile();
+                    break;
                 default:
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -6185,6 +6874,7 @@
         window.copyMergeLink = copyMergeLink;
         window.showBreakdownMerged = showBreakdownMerged;
         window.toggleContestLock = toggleContestLock;
+        window.toggleResultsPublic = toggleResultsPublic;
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
         window.jumpToImage = jumpToImage;
@@ -6246,6 +6936,14 @@
         window.toggleExtractImage = toggleExtractImage;
         window.setExtractName = setExtractName;
         window.saveExtract = saveExtract;
+        window.openManageFoldersModal = openManageFoldersModal;
+        window.closeManageFoldersModal = closeManageFoldersModal;
+        window.createFolder = createFolder;
+        window.deleteFolder = deleteFolder;
+        window.addItemToFolder = addItemToFolder;
+        window.removeItemFromFolder = removeItemFromFolder;
+        window.toggleFolderExpanded = toggleFolderExpanded;
+        window.viewUserProfile = viewUserProfile;
 
         // Initialize app
         // Check for existing session on load
