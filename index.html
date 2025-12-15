@@ -344,6 +344,13 @@
             return newArray;
         }
 
+        function formatVoterCount(voterCount, voterCountMin, voterCountMax) {
+            if (voterCountMin !== undefined && voterCountMax !== undefined && voterCountMin !== voterCountMax) {
+                return `${voterCountMin}-${voterCountMax}`;
+            }
+            return voterCount;
+        }
+
         function setLoading(message) {
             state.isLoading = true;
             state.loadingMessage = message;
@@ -2312,6 +2319,103 @@
                 showAlert('Error: ' + error.message, '❌');
             } finally {
                 clearLoading();
+            }
+        }
+
+        async function loadMergers() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?select=*,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const mergers = await response.json();
+                if (Array.isArray(mergers)) {
+                    state.mergers = mergers.map(m => ({
+                        id: m.id,
+                        name: m.name,
+                        createdBy: m.created_by,
+                        creatorName: m.creator.username,
+                        creatorAvatar: m.creator.avatar,
+                        createdAt: m.created_at,
+                        contestIds: m.contest_ids,
+                        voterCountMin: m.voter_count_min,
+                        voterCountMax: m.voter_count_max,
+                        type: 'merger'
+                    }));
+                }
+            } catch (error) {
+                console.error('Error loading mergers:', error);
+            }
+        }
+
+        async function loadExtracts() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=*,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const extracts = await response.json();
+                if (Array.isArray(extracts)) {
+                    state.extracts = extracts.map(e => ({
+                        id: e.id,
+                        name: e.name,
+                        createdBy: e.created_by,
+                        creatorName: e.creator.username,
+                        creatorAvatar: e.creator.avatar,
+                        createdAt: e.created_at,
+                        sourceContestId: e.source_contest_id,
+                        sourceMergerId: e.source_merger_id,
+                        sourceType: e.source_type,
+                        imageIds: e.image_ids,
+                        type: 'extract'
+                    }));
+                }
+            } catch (error) {
+                console.error('Error loading extracts:', error);
+            }
+        }
+
+        async function loadGroups() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?select=*,items:contest_groups(*)&order=display_order.asc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const groups = await response.json();
+                if (Array.isArray(groups)) {
+                    state.groups = groups;
+                }
+            } catch (error) {
+                console.error('Error loading groups:', error);
+            }
+        }
+
+        async function loadAppSettings() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const settings = await response.json();
+                if (Array.isArray(settings)) {
+                    settings.forEach(s => {
+                        state.appSettings[s.setting_name] = s.value;
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading app settings:', error);
             }
         }
 
@@ -5006,7 +5110,13 @@
                 }
             }
 
-            await loadContests();
+            await Promise.all([
+                loadContests(),
+                loadMergers(),
+                loadExtracts(),
+                loadGroups(),
+                loadAppSettings()
+            ]);
             if (state.user) {
                 await loadUserVotes();
             }
