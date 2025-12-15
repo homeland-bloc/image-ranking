@@ -2641,6 +2641,399 @@
             }
         }
 
+        // ==================== MERGER SYSTEM FUNCTIONS ====================
+
+        function openCreateMergerModal() {
+            state.showCreateMergerModal = true;
+            state.selectedContestsForMerge = [];
+            state.newMergerName = '';
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeCreateMergerModal() {
+            state.showCreateMergerModal = false;
+            state.selectedContestsForMerge = [];
+            state.newMergerName = '';
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function toggleContestForMerger(contestId) {
+            if (!state.selectedContestsForMerge) {
+                state.selectedContestsForMerge = [];
+            }
+
+            const index = state.selectedContestsForMerge.indexOf(contestId);
+            if (index > -1) {
+                state.selectedContestsForMerge.splice(index, 1);
+            } else {
+                state.selectedContestsForMerge.push(contestId);
+            }
+            render();
+        }
+
+        function setMergerName(name) {
+            state.newMergerName = name;
+            render();
+        }
+
+        async function saveMerger() {
+            if (state.selectedContestsForMerge.length < 2) {
+                showToast('Please select at least 2 contests', 'error');
+                return;
+            }
+
+            if (!state.newMergerName || state.newMergerName.trim() === '') {
+                showToast('Please enter a name for the merger', 'error');
+                return;
+            }
+
+            setLoading('Creating merger...');
+
+            try {
+                // Calculate voter count min/max across selected contests
+                const selectedContests = state.contests.filter(c => state.selectedContestsForMerge.includes(c.id));
+                const voterCounts = selectedContests.map(c => c.voterCount || 0);
+                const voterCountMin = Math.min(...voterCounts);
+                const voterCountMax = Math.max(...voterCounts);
+
+                // Save to mergers table
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        name: state.newMergerName.trim(),
+                        created_by: state.user.id,
+                        contest_ids: state.selectedContestsForMerge,
+                        voter_count_min: voterCountMin,
+                        voter_count_max: voterCountMax
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Merger creation failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to create merger');
+                }
+
+                // Reload mergers
+                await loadMergers();
+
+                showToast('Merger created successfully!', 'success');
+                closeCreateMergerModal();
+            } catch (error) {
+                console.error('Error creating merger:', error);
+                showToast('Failed to create merger: ' + error.message, 'error');
+            } finally {
+                clearLoading();
+            }
+        }
+
+        async function deleteMerger(mergerId) {
+            if (!confirm('Are you sure you want to delete this merger? This action cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Merger deletion failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to delete merger');
+                }
+
+                // Reload mergers
+                await loadMergers();
+
+                showToast('Merger deleted successfully', 'success');
+                render();
+            } catch (error) {
+                console.error('Error deleting merger:', error);
+                showToast('Failed to delete merger: ' + error.message, 'error');
+            }
+        }
+
+        async function viewMergerResults(mergerId) {
+            const merger = state.mergers.find(m => m.id === mergerId);
+            if (!merger) {
+                showToast('Merger not found', 'error');
+                return;
+            }
+
+            // Get all contests in the merger
+            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+
+            // Load merged results
+            state.selectedContestsForMerge = merger.contestIds;
+            await viewSelectedMerge();
+        }
+
+        async function startMergerVoting(mergerId) {
+            const merger = state.mergers.find(m => m.id === mergerId);
+            if (!merger) {
+                showToast('Merger not found', 'error');
+                return;
+            }
+
+            // Get all contests in the merger
+            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+
+            // Filter out locked contests
+            const unlockedContests = mergedContests.filter(c => !c.isLocked);
+
+            if (unlockedContests.length === 0) {
+                showToast('All contests in this merger are locked', 'error');
+                return;
+            }
+
+            // Start voting on the first unlocked contest
+            startVoting(unlockedContests[0]);
+        }
+
+        function showMergerVoteModal(mergerId) {
+            const merger = state.mergers.find(m => m.id === mergerId);
+            if (!merger) {
+                showToast('Merger not found', 'error');
+                return;
+            }
+
+            // Get all contests in the merger
+            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+
+            // Find which contests user hasn't voted in
+            const unvotedContests = mergedContests.filter(c => !state.userVotedContests[c.id]);
+            const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+
+            // Show modal with options
+            const message = `You've voted in ${votedContests.length} out of ${mergedContests.length} contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
+
+            state.modal = {
+                title: 'Partial Votes - ' + merger.name,
+                message: message,
+                actions: [
+                    {
+                        text: 'Vote Missing Only',
+                        style: 'primary',
+                        action: () => {
+                            state.modal = null;
+                            document.body.classList.remove('modal-open');
+                            if (unvotedContests.length > 0) {
+                                startVoting(unvotedContests[0]);
+                            }
+                        }
+                    },
+                    {
+                        text: 'Revote All',
+                        style: 'warning',
+                        action: () => {
+                            state.modal = null;
+                            document.body.classList.remove('modal-open');
+                            if (mergedContests.length > 0) {
+                                startVoting(mergedContests[0]);
+                            }
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        style: 'secondary',
+                        action: () => {
+                            state.modal = null;
+                            document.body.classList.remove('modal-open');
+                            render();
+                        }
+                    }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        async function shareMerger(mergerId) {
+            try {
+                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${mergerId}`;
+
+                if (navigator.share) {
+                    await navigator.share({
+                        title: 'Peony - Merger',
+                        text: 'Check out this merged contest!',
+                        url: shareUrl
+                    });
+                    showToast('Share successful!', 'success');
+                } else {
+                    await navigator.clipboard.writeText(shareUrl);
+                    showToast('Link copied to clipboard!', 'success');
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    console.error('Share error:', error);
+                    showToast('Failed to share', 'error');
+                }
+            }
+        }
+
+        // ==================== END MERGER SYSTEM FUNCTIONS ====================
+
+        // ==================== EXTRACT SYSTEM FUNCTIONS ====================
+
+        function openCreateExtractModal() {
+            state.showCreateExtractModal = true;
+            state.extractSourceType = null;
+            state.extractSourceId = null;
+            state.extractSelectedImages = [];
+            state.newExtractName = '';
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeCreateExtractModal() {
+            state.showCreateExtractModal = false;
+            state.extractSourceType = null;
+            state.extractSourceId = null;
+            state.extractSelectedImages = [];
+            state.newExtractName = '';
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        async function deleteExtract(extractId) {
+            if (!confirm('Are you sure you want to delete this extract? This action cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Extract deletion failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to delete extract');
+                }
+
+                // Reload extracts
+                await loadExtracts();
+
+                showToast('Extract deleted successfully', 'success');
+                render();
+            } catch (error) {
+                console.error('Error deleting extract:', error);
+                showToast('Failed to delete extract: ' + error.message, 'error');
+            }
+        }
+
+        async function startExtractVoting(extractId) {
+            const extract = state.extracts.find(e => e.id === extractId);
+            if (!extract) {
+                showToast('Extract not found', 'error');
+                return;
+            }
+
+            // Get source contest to find the images
+            let sourceContest = null;
+            if (extract.sourceType === 'contest') {
+                sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+            } else if (extract.sourceType === 'merger') {
+                // For mergers, we need to get all images from all merged contests
+                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (merger) {
+                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                    // Create a temporary contest object with all merged images
+                    const allImages = mergedContests.flatMap(c => c.images);
+                    sourceContest = {
+                        id: 'extract_' + extractId,
+                        title: extract.name,
+                        images: allImages.filter(img => extract.imageIds.includes(img.id)),
+                        createdBy: extract.createdBy,
+                        creatorName: extract.creatorName,
+                        creatorAvatar: extract.creatorAvatar
+                    };
+                }
+            }
+
+            if (!sourceContest) {
+                showToast('Source not found', 'error');
+                return;
+            }
+
+            // Filter images to only those in the extract
+            const extractImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
+
+            // Create a temporary contest object for voting
+            const extractContest = {
+                ...sourceContest,
+                images: extractImages,
+                title: extract.name,
+                id: extract.sourceContestId || sourceContest.id
+            };
+
+            startVoting(extractContest);
+        }
+
+        async function viewExtractResults(extractId) {
+            const extract = state.extracts.find(e => e.id === extractId);
+            if (!extract) {
+                showToast('Extract not found', 'error');
+                return;
+            }
+
+            // Get source contest
+            let sourceContest = null;
+            if (extract.sourceType === 'contest') {
+                sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+            } else if (extract.sourceType === 'merger') {
+                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (merger) {
+                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                    const allImages = mergedContests.flatMap(c => c.images);
+                    sourceContest = {
+                        id: 'extract_' + extractId,
+                        title: extract.name,
+                        images: allImages.filter(img => extract.imageIds.includes(img.id)),
+                        createdBy: extract.createdBy,
+                        creatorName: extract.creatorName,
+                        creatorAvatar: extract.creatorAvatar
+                    };
+                }
+            }
+
+            if (!sourceContest) {
+                showToast('Source not found', 'error');
+                return;
+            }
+
+            // Filter images to only those in the extract
+            const extractImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
+
+            // Create a temporary contest object for results
+            const extractContest = {
+                ...sourceContest,
+                images: extractImages,
+                title: extract.name,
+                id: extract.sourceContestId || sourceContest.id
+            };
+
+            viewResults(extractContest);
+        }
+
+        // ==================== END EXTRACT SYSTEM FUNCTIONS ====================
+
         function handleVote(score) {
             if (state.isAnimating) return;
             
@@ -3366,6 +3759,121 @@
             `;
         }
 
+        function renderCreateMergerModal() {
+            if (!state.showCreateMergerModal) return '';
+
+            // State for selected contests for merging
+            const selectedContests = state.selectedContestsForMerge || [];
+
+            // Check if any selected contest has an extract that includes it
+            // This prevents duplicate images (extract + source contest)
+            const hasExtractConflict = selectedContests.some(contestId => {
+                const contest = state.contests.find(c => c.id === contestId);
+                if (!contest) return false;
+
+                // Check if any extract uses this contest as a source
+                return state.extracts.some(extract => {
+                    if (extract.sourceType === 'contest' && extract.sourceContestId === contestId) {
+                        // Check if any selected contest is in the extract's images
+                        return selectedContests.some(otherContestId => {
+                            if (otherContestId === contestId) return false;
+                            const otherContest = state.contests.find(c => c.id === otherContestId);
+                            if (!otherContest) return false;
+                            // Check if any image from other contest is in the extract
+                            return otherContest.images.some(img => extract.imageIds.includes(img.id));
+                        });
+                    }
+                    return false;
+                });
+            });
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeCreateMergerModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-800">Create Merge</h3>
+                                    <p class="text-sm text-gray-600 mt-1">
+                                        Select contests to merge together (${selectedContests.length} selected, min 2 required)
+                                    </p>
+                                </div>
+                                <button onclick="closeCreateMergerModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Contest List -->
+                        <div class="flex-1 overflow-y-auto p-6 space-y-2">
+                            ${state.contests.map(contest => {
+                                const isSelected = selectedContests.includes(contest.id);
+
+                                return `
+                                    <div class="border ${isSelected ? 'border-blue-400 bg-blue-50' : 'border-gray-200'} rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-blue-300"
+                                         onclick="toggleContestForMerger('${contest.id}')">
+                                        <input
+                                            type="checkbox"
+                                            ${isSelected ? 'checked' : ''}
+                                            class="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                            onclick="event.stopPropagation()"
+                                            onchange="toggleContestForMerger('${contest.id}')"
+                                        />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
+                                            </div>
+                                            <p class="text-xs text-gray-500">
+                                                ${contest.creatorName} • ${contest.images.length} images • ${contest.voterCount || 0} voters
+                                            </p>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+
+                        <!-- Name Input and Footer -->
+                        <div class="p-6 border-t border-gray-200">
+                            ${hasExtractConflict ? `
+                                <div class="mb-4 bg-red-50 border border-red-300 text-red-700 p-3 rounded-lg text-sm">
+                                    ⚠️ Warning: You've selected a contest and an extract that includes images from that contest. This will create duplicates.
+                                </div>
+                            ` : ''}
+                            <div class="mb-4">
+                                <label class="text-sm font-medium text-gray-700 mb-1 block">Merger Name</label>
+                                <input
+                                    type="text"
+                                    value="${state.newMergerName || ''}"
+                                    oninput="setMergerName(this.value)"
+                                    placeholder="Enter name for this merger..."
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                                />
+                            </div>
+                            <div class="flex gap-3">
+                                <button
+                                    onclick="closeCreateMergerModal()"
+                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onclick="saveMerger()"
+                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedContests.length >= 2 && state.newMergerName && !hasExtractConflict ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
+                                    ${selectedContests.length < 2 || !state.newMergerName || hasExtractConflict ? 'disabled' : ''}
+                                >
+                                    Create Merger
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderUploadProgressModal() {
             if (!state.uploadProgress) return '';
 
@@ -3657,15 +4165,25 @@
                 <div class="max-w-7xl mx-auto px-3 py-4">
                     <div class="flex justify-between items-center mb-4 gap-2 flex-wrap">
                         <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
-                        ${isBanned ? `
-                            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
-                                🚫 Your account has been restricted. Contact admin.
-                            </div>
-                        ` : `
-                            <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
-                                + Create Contest
-                            </button>
-                        `}
+                        <div class="flex gap-2 flex-wrap">
+                            ${isBanned ? `
+                                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
+                                    🚫 Your account has been restricted. Contact admin.
+                                </div>
+                            ` : `
+                                <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                                    + Create Contest
+                                </button>
+                            `}
+                            ${state.user.id === ADMIN_DISCORD_ID ? `
+                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-sm">
+                                    Create Merge
+                                </button>
+                                <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-sm">
+                                    Create Extract +
+                                </button>
+                            ` : ''}
+                        </div>
                     </div>
 
                     <div class="bg-white rounded-lg shadow-md p-3 mb-4">
@@ -3731,11 +4249,38 @@
                     ` : ''}
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        ${filteredContests.map(contest => {
-                            try {
+                        ${(() => {
+                            // Combine contests, mergers, and extracts into a unified list
+                            const allItems = [
+                                ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
+                                ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
+                                ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
+                            ];
+
+                            // Sort by creation date (newest first by default)
+                            allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+                            return allItems.map(item => {
+                                if (item.itemType === 'merger') {
+                                    return renderMergerCard(item);
+                                } else if (item.itemType === 'extract') {
+                                    return renderExtractCard(item);
+                                } else {
+                                    return renderContestCard(item);
+                                }
+                            }).join('');
+                        })()}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderContestCard(contest) {
+                        try {
                                 const hasVoted = state.userVotedContests[contest.id];
                                 const voterCount = contest.voterCount || 0;
                             const canDelete = canDeleteContest(contest);
+                            const isBanned = state.bannedUsers.includes(state.user.id);
                             // Format date as "day month year" (e.g., "30 Nov 2025")
                             const createdDate = contest.createdAt ? (() => {
                                 const date = new Date(contest.createdAt);
@@ -3826,7 +4371,7 @@
                                             </svg>
                                         </button>
                                         ${canDelete ? `
-                                            <button 
+                                            <button
                                                 onclick="deleteContest('${contest.id}')"
                                                 class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm"
                                                 title="Delete Contest"
@@ -3841,7 +4386,347 @@
                                 console.error('Error rendering contest:', contest?.id, error);
                                 return ''; // Skip this contest and continue
                             }
-                        }).join('')}
+        }
+
+        function renderMergerCard(merger) {
+            // Get contest details for the merged contests
+            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+            const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
+            const voterRange = merger.voterCountMin && merger.voterCountMax
+                ? `${merger.voterCountMin}-${merger.voterCountMax}👥`
+                : '0👥';
+
+            // Check if user has voted in all, some, or no merged contests
+            const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+            const hasVotedAll = votedContests.length === mergedContests.length && mergedContests.length > 0;
+            const hasVotedSome = votedContests.length > 0 && votedContests.length < mergedContests.length;
+            const hasVotedNone = votedContests.length === 0;
+
+            const isBanned = state.bannedUsers.includes(state.user.id);
+            const createdDate = merger.createdAt ? (() => {
+                const date = new Date(merger.createdAt);
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+            })() : '';
+
+            return `
+                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    <div class="absolute top-2 left-2 bg-blue-500 text-white px-2 py-0.5 rounded text-xs font-bold">MERGE</div>
+                    ${state.user.id === ADMIN_DISCORD_ID ? `
+                        <button
+                            onclick="deleteMerger('${merger.id}')"
+                            class="absolute top-3 right-3 bg-red-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-red-600 transition text-xs"
+                            title="Delete Merger"
+                        >
+                            🗑️
+                        </button>
+                    ` : ''}
+                    <div class="flex items-start gap-2 mb-2 mt-6">
+                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
+                            </div>
+                            <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
+                                <span class="truncate">by ${merger.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="ml-auto whitespace-nowrap">${voterRange} ${totalImages}🖼️</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dropdown of merged contests -->
+                    <details class="mb-2">
+                        <summary class="cursor-pointer text-xs text-blue-700 hover:text-blue-900 font-semibold">
+                            Merged Contests (${mergedContests.length})
+                        </summary>
+                        <div class="mt-1 pl-2 space-y-1">
+                            ${mergedContests.map(c => `
+                                <div class="text-xs text-blue-600">• ${c.title}</div>
+                            `).join('')}
+                        </div>
+                    </details>
+
+                    <div class="flex gap-2">
+                        ${isBanned ? `
+                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
+                                🚫 Account restricted
+                            </div>
+                        ` : hasVotedAll ? `
+                            <button
+                                onclick='viewMergerResults("${merger.id}")'
+                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
+                        ` : hasVotedNone ? `
+                            <button
+                                onclick='startMergerVoting("${merger.id}")'
+                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                            >
+                                Start Voting
+                            </button>
+                        ` : `
+                            <button
+                                onclick='showMergerVoteModal("${merger.id}")'
+                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                            >
+                                Partial Votes
+                            </button>
+                        `}
+                        <button
+                            onclick='shareMerger("${merger.id}")'
+                            class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md text-sm flex items-center gap-1"
+                            title="Share merger"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderExtractCard(extract) {
+            // Get source reference
+            let sourceRef = 'Unknown';
+            if (extract.sourceType === 'contest') {
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                sourceRef = sourceContest ? sourceContest.title : 'Unknown Contest';
+            } else if (extract.sourceType === 'merger') {
+                const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                sourceRef = sourceMerger ? sourceMerger.name : 'Unknown Merger';
+            }
+
+            const imageCount = extract.imageIds.length;
+            const isBanned = state.bannedUsers.includes(state.user.id);
+            const createdDate = extract.createdAt ? (() => {
+                const date = new Date(extract.createdAt);
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+            })() : '';
+
+            return `
+                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    <div class="absolute top-2 left-2 bg-yellow-500 text-white px-2 py-0.5 rounded text-xs font-bold">EXTRACT</div>
+                    ${state.user.id === ADMIN_DISCORD_ID ? `
+                        <button
+                            onclick="deleteExtract('${extract.id}')"
+                            class="absolute top-3 right-3 bg-red-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-red-600 transition text-xs"
+                            title="Delete Extract"
+                        >
+                            🗑️
+                        </button>
+                    ` : ''}
+                    <div class="flex items-start gap-2 mb-2 mt-6">
+                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-base font-bold text-yellow-900 truncate">${extract.name}</h3>
+                            </div>
+                            <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
+                                <span class="truncate">by ${extract.creatorName}${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
+                            </div>
+                            <div class="text-xs text-yellow-600 mt-1">
+                                From: ${sourceRef}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2">
+                        ${isBanned ? `
+                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
+                                🚫 Account restricted
+                            </div>
+                        ` : `
+                            <button
+                                onclick='startExtractVoting("${extract.id}")'
+                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                            >
+                                Start Voting
+                            </button>
+                            <button
+                                onclick='viewExtractResults("${extract.id}")'
+                                class="flex-1 bg-gradient-to-r from-green-500 to-green-600 text-white py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderHome() {
+            // Get unique creators
+            const creators = [...new Set(state.contests.map(c => ({ id: c.createdBy, name: c.creatorName })))];
+            const uniqueCreators = Array.from(new Map(creators.map(c => [c.id, c])).values());
+
+            // Filter contests
+            let filteredContests = state.contests;
+
+            // Filter by creator
+            if (state.filters.createdBy) {
+                filteredContests = filteredContests.filter(c => c.createdBy === state.filters.createdBy);
+            }
+
+            // Filter by search query
+            if (state.filters.searchQuery) {
+                const searchLower = state.filters.searchQuery.toLowerCase();
+                filteredContests = filteredContests.filter(c =>
+                    c.title.toLowerCase().includes(searchLower) ||
+                    (c.creatorName && c.creatorName.toLowerCase().includes(searchLower))
+                );
+            }
+
+            // Sort contests
+            filteredContests = [...filteredContests].sort((a, b) => {
+                const voterCountA = a.voterCount || 0;
+                const voterCountB = b.voterCount || 0;
+
+                switch (state.filters.sortBy) {
+                    case 'newest':
+                    case 'dateDesc':
+                        return (b.createdAt || 0) - (a.createdAt || 0);
+                    case 'oldest':
+                    case 'dateAsc':
+                        return (a.createdAt || 0) - (b.createdAt || 0);
+                    case 'titleAsc':
+                        return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+                    case 'titleDesc':
+                        return b.title.toLowerCase().localeCompare(a.title.toLowerCase());
+                    case 'mostVoted':
+                    case 'votersDesc':
+                        return voterCountB - voterCountA;
+                    case 'leastVoted':
+                    case 'votersAsc':
+                        return voterCountA - voterCountB;
+                    case 'imagesDesc':
+                        return b.images.length - a.images.length;
+                    case 'imagesAsc':
+                        return a.images.length - b.images.length;
+                    default:
+                        return 0;
+                }
+            });
+
+            const isBanned = state.bannedUsers.includes(state.user.id);
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="flex justify-between items-center mb-4 gap-2 flex-wrap">
+                        <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
+                        <div class="flex gap-2 flex-wrap">
+                            ${isBanned ? `
+                                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
+                                    🚫 Your account has been restricted. Contact admin.
+                                </div>
+                            ` : `
+                                <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                                    + Create Contest
+                                </button>
+                            `}
+                            ${state.user.id === ADMIN_DISCORD_ID ? `
+                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-sm">
+                                    Create Merge
+                                </button>
+                                <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-sm">
+                                    Create Extract +
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-lg shadow-md p-3 mb-4">
+                        <div class="mb-3">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
+                            <input
+                                type="text"
+                                value="${state.filters.searchQuery || ''}"
+                                oninput="setSearchQuery(this.value)"
+                                placeholder="Search by contest title or creator name..."
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
+                            />
+                        </div>
+                        <div class="flex gap-3 flex-wrap">
+                        <div class="flex-1 min-w-[200px]">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
+                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
+                                <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
+                                <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
+                                <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
+                                <option value="mostVoted" ${state.filters.sortBy === 'mostVoted' || state.filters.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
+                                <option value="leastVoted" ${state.filters.sortBy === 'leastVoted' || state.filters.sortBy === 'votersAsc' ? 'selected' : ''}>Fewest Voters</option>
+                                <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
+                                <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
+                            </select>
+                        </div>
+                        <div class="flex-1 min-w-[200px]">
+                            <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
+                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
+                                ${uniqueCreators.map(creator => `
+                                    <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
+                            <div class="flex items-end">
+                                <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                    Clear All Filters
+                                </button>
+                            </div>
+                        ` : ''}
+                        </div>
+                    </div>
+
+                    ${state.filters.createdBy || state.filters.searchQuery ? `
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex gap-2 items-center flex-wrap">
+                            <span class="text-sm font-medium text-blue-800">Active Filters:</span>
+                            ${state.filters.createdBy ? `
+                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                                    Creator: ${uniqueCreators.find(c => c.id === state.filters.createdBy)?.name || 'Unknown'}
+                                    <button onclick="setFilterCreator('all')" class="hover:text-blue-900">✕</button>
+                                </span>
+                            ` : ''}
+                            ${state.filters.searchQuery ? `
+                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                                    Search: "${state.filters.searchQuery}"
+                                    <button onclick="setSearchQuery('')" class="hover:text-blue-900">✕</button>
+                                </span>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        ${(() => {
+                            // Combine contests, mergers, and extracts into a unified list
+                            const allItems = [
+                                ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
+                                ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
+                                ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
+                            ];
+
+                            // Sort by creation date (newest first by default)
+                            allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+                            return allItems.map(item => {
+                                try {
+                                    if (item.itemType === 'merger') {
+                                        return renderMergerCard(item);
+                                    } else if (item.itemType === 'extract') {
+                                        return renderExtractCard(item);
+                                    } else {
+                                        return renderContestCard(item);
+                                    }
+                                } catch (error) {
+                                    console.error('Error rendering item:', item?.id, error);
+                                    return '';
+                                }
+                            }).join('');
+                        })()}
                     </div>
                 </div>
             `;
@@ -4973,7 +5858,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -5048,6 +5933,21 @@
         window.executeToggleBlockVote = executeToggleBlockVote;
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
         window.setResultsView = setResultsView;
+        window.openCreateMergerModal = openCreateMergerModal;
+        window.closeCreateMergerModal = closeCreateMergerModal;
+        window.toggleContestForMerger = toggleContestForMerger;
+        window.setMergerName = setMergerName;
+        window.saveMerger = saveMerger;
+        window.deleteMerger = deleteMerger;
+        window.viewMergerResults = viewMergerResults;
+        window.startMergerVoting = startMergerVoting;
+        window.showMergerVoteModal = showMergerVoteModal;
+        window.shareMerger = shareMerger;
+        window.openCreateExtractModal = openCreateExtractModal;
+        window.closeCreateExtractModal = closeCreateExtractModal;
+        window.deleteExtract = deleteExtract;
+        window.startExtractVoting = startExtractVoting;
+        window.viewExtractResults = viewExtractResults;
 
         // Initialize app
         // Check for existing session on load
