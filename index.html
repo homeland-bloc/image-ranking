@@ -228,6 +228,33 @@
             from { transform: translateX(0); opacity: 1; }
             to { transform: translateX(400px); opacity: 0; }
         }
+
+        /* Toggle Switch Styles */
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background-color: #ccc;
+            border-radius: 26px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .toggle-switch.active {
+            background-color: #4CAF50;
+        }
+        .toggle-slider {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background-color: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .toggle-switch.active .toggle-slider {
+            transform: translateX(24px);
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -303,6 +330,7 @@
             uploadProgress: null, // Upload progress tracking: { files: [{name, status, error, progress}], completed: false }
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
+            showAppSettingsModal: false, // Show app settings modal (admin only)
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             filters: {
                 createdBy: null,           // Username or null
@@ -3541,6 +3569,87 @@
             render();
         }
 
+        async function showAppSettings() {
+            state.showAppSettingsModal = true;
+            state.showUserDropdown = false;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeAppSettings() {
+            state.showAppSettingsModal = false;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        async function toggleAppSetting(settingName) {
+            try {
+                // Get current value (default to true if not set)
+                const currentValue = state.appSettings[settingName] !== false;
+                const newValue = !currentValue;
+
+                // Update in database
+                // First, check if setting exists
+                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?setting_name=eq.${settingName}`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                const existingSettings = await checkResponse.json();
+
+                if (existingSettings.length > 0) {
+                    // Update existing setting
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?setting_name=eq.${settingName}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        },
+                        body: JSON.stringify({
+                            value: newValue
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to update setting');
+                    }
+                } else {
+                    // Insert new setting
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        },
+                        body: JSON.stringify({
+                            setting_name: settingName,
+                            value: newValue
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to create setting');
+                    }
+                }
+
+                // Update local state
+                state.appSettings[settingName] = newValue;
+
+                showToast(
+                    `${settingName.replace(/_/g, ' ')} ${newValue ? 'enabled' : 'disabled'}`,
+                    'success'
+                );
+                render();
+            } catch (error) {
+                console.error('Error toggling app setting:', error);
+                showToast('Failed to update setting: ' + error.message, 'error');
+            }
+        }
+
 
         function viewAllByCreator(userId) {
             state.filters.createdBy = userId;
@@ -4293,6 +4402,9 @@
                                                 <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                     ⚙️ Admin Dashboard
                                                 </button>
+                                                <button onclick="showAppSettings()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                    🔧 App Settings
+                                                </button>
                                             ` : ''}
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 Logout
@@ -4432,11 +4544,24 @@
                                 <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
                                     🚫 Your account has been restricted. Contact admin.
                                 </div>
-                            ` : `
-                                <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
-                                    + Create Contest
-                                </button>
-                            `}
+                            ` : (() => {
+                                const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
+                                const isAdmin = state.user.id === ADMIN_DISCORD_ID;
+
+                                if (!contestCreationEnabled && !isAdmin) {
+                                    return `
+                                        <div class="bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-2 rounded-lg text-sm">
+                                            ℹ️ Contest creation is currently disabled
+                                        </div>
+                                    `;
+                                }
+
+                                return `
+                                    <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                                        + Create Contest
+                                    </button>
+                                `;
+                            })()}
                             ${state.user.id === ADMIN_DISCORD_ID ? `
                                 <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-sm">
                                     Create Merge
@@ -4815,180 +4940,6 @@
                                 View Results
                             </button>
                         `}
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderHome() {
-            // Get unique creators
-            const creators = [...new Set(state.contests.map(c => ({ id: c.createdBy, name: c.creatorName })))];
-            const uniqueCreators = Array.from(new Map(creators.map(c => [c.id, c])).values());
-
-            // Filter contests
-            let filteredContests = state.contests;
-
-            // Filter by creator
-            if (state.filters.createdBy) {
-                filteredContests = filteredContests.filter(c => c.createdBy === state.filters.createdBy);
-            }
-
-            // Filter by search query
-            if (state.filters.searchQuery) {
-                const searchLower = state.filters.searchQuery.toLowerCase();
-                filteredContests = filteredContests.filter(c =>
-                    c.title.toLowerCase().includes(searchLower) ||
-                    (c.creatorName && c.creatorName.toLowerCase().includes(searchLower))
-                );
-            }
-
-            // Sort contests
-            filteredContests = [...filteredContests].sort((a, b) => {
-                const voterCountA = a.voterCount || 0;
-                const voterCountB = b.voterCount || 0;
-
-                switch (state.filters.sortBy) {
-                    case 'newest':
-                    case 'dateDesc':
-                        return (b.createdAt || 0) - (a.createdAt || 0);
-                    case 'oldest':
-                    case 'dateAsc':
-                        return (a.createdAt || 0) - (b.createdAt || 0);
-                    case 'titleAsc':
-                        return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
-                    case 'titleDesc':
-                        return b.title.toLowerCase().localeCompare(a.title.toLowerCase());
-                    case 'mostVoted':
-                    case 'votersDesc':
-                        return voterCountB - voterCountA;
-                    case 'leastVoted':
-                    case 'votersAsc':
-                        return voterCountA - voterCountB;
-                    case 'imagesDesc':
-                        return b.images.length - a.images.length;
-                    case 'imagesAsc':
-                        return a.images.length - b.images.length;
-                    default:
-                        return 0;
-                }
-            });
-
-            const isBanned = state.bannedUsers.includes(state.user.id);
-
-            return `
-                <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="flex justify-between items-center mb-4 gap-2 flex-wrap">
-                        <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
-                        <div class="flex gap-2 flex-wrap">
-                            ${isBanned ? `
-                                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
-                                    🚫 Your account has been restricted. Contact admin.
-                                </div>
-                            ` : `
-                                <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
-                                    + Create Contest
-                                </button>
-                            `}
-                            ${state.user.id === ADMIN_DISCORD_ID ? `
-                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-sm">
-                                    Create Merge
-                                </button>
-                                <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-sm">
-                                    Create Extract +
-                                </button>
-                            ` : ''}
-                        </div>
-                    </div>
-
-                    <div class="bg-white rounded-lg shadow-md p-3 mb-4">
-                        <div class="mb-3">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
-                            <input
-                                type="text"
-                                value="${state.filters.searchQuery || ''}"
-                                oninput="setSearchQuery(this.value)"
-                                placeholder="Search by contest title or creator name..."
-                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
-                            />
-                        </div>
-                        <div class="flex gap-3 flex-wrap">
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
-                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
-                                <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
-                                <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
-                                <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
-                                <option value="mostVoted" ${state.filters.sortBy === 'mostVoted' || state.filters.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
-                                <option value="leastVoted" ${state.filters.sortBy === 'leastVoted' || state.filters.sortBy === 'votersAsc' ? 'selected' : ''}>Fewest Voters</option>
-                                <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
-                                <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
-                            </select>
-                        </div>
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
-                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
-                                ${uniqueCreators.map(creator => `
-                                    <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
-                                `).join('')}
-                            </select>
-                        </div>
-                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
-                            <div class="flex items-end">
-                                <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
-                                    Clear All Filters
-                                </button>
-                            </div>
-                        ` : ''}
-                        </div>
-                    </div>
-
-                    ${state.filters.createdBy || state.filters.searchQuery ? `
-                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex gap-2 items-center flex-wrap">
-                            <span class="text-sm font-medium text-blue-800">Active Filters:</span>
-                            ${state.filters.createdBy ? `
-                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
-                                    Creator: ${uniqueCreators.find(c => c.id === state.filters.createdBy)?.name || 'Unknown'}
-                                    <button onclick="setFilterCreator('all')" class="hover:text-blue-900">✕</button>
-                                </span>
-                            ` : ''}
-                            ${state.filters.searchQuery ? `
-                                <span class="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
-                                    Search: "${state.filters.searchQuery}"
-                                    <button onclick="setSearchQuery('')" class="hover:text-blue-900">✕</button>
-                                </span>
-                            ` : ''}
-                        </div>
-                    ` : ''}
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        ${(() => {
-                            // Combine contests, mergers, and extracts into a unified list
-                            const allItems = [
-                                ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
-                                ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
-                                ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
-                            ];
-
-                            // Sort by creation date (newest first by default)
-                            allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-                            return allItems.map(item => {
-                                try {
-                                    if (item.itemType === 'merger') {
-                                        return renderMergerCard(item);
-                                    } else if (item.itemType === 'extract') {
-                                        return renderExtractCard(item);
-                                    } else {
-                                        return renderContestCard(item);
-                                    }
-                                } catch (error) {
-                                    console.error('Error rendering item:', item?.id, error);
-                                    return '';
-                                }
-                            }).join('');
-                        })()}
                     </div>
                 </div>
             `;
@@ -5753,6 +5704,74 @@
             `;
         }
 
+        function renderAppSettingsModal() {
+            if (!state.showAppSettingsModal) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            // Get current settings values (default to true if not set)
+            const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
+            const revotingEnabled = state.appSettings.revoting_enabled !== false;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeAppSettings()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full modal-content" onclick="event.stopPropagation()">
+                        <div class="p-6">
+                            <div class="flex justify-between items-center mb-6">
+                                <h3 class="text-2xl font-bold text-gray-800">App Settings</h3>
+                                <button onclick="closeAppSettings()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="space-y-6">
+                                <!-- Contest Creation Toggle -->
+                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-gray-800">Contest Creation</h4>
+                                        <p class="text-sm text-gray-600 mt-1">
+                                            Allow users to create new contests
+                                        </p>
+                                    </div>
+                                    <div
+                                        class="toggle-switch ${contestCreationEnabled ? 'active' : ''}"
+                                        onclick="toggleAppSetting('contest_creation_enabled')"
+                                    >
+                                        <div class="toggle-slider"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Revoting Toggle -->
+                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-gray-800">Revoting</h4>
+                                        <p class="text-sm text-gray-600 mt-1">
+                                            Allow users to change their votes after submission
+                                        </p>
+                                    </div>
+                                    <div
+                                        class="toggle-switch ${revotingEnabled ? 'active' : ''}"
+                                        onclick="toggleAppSetting('revoting_enabled')"
+                                    >
+                                        <div class="toggle-slider"></div>
+                                    </div>
+                                </div>
+
+                                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                    <p class="text-sm text-blue-800">
+                                        💡 <strong>Note:</strong> These settings affect all users globally. Disabled features will show informative messages to users.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderMergedResults() {
             if (!state.mergedResults) {
                 return '<div class="text-center p-8">No merged results available</div>';
@@ -6120,7 +6139,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -6185,6 +6204,9 @@
         window.updateImageLabel = updateImageLabel;
         window.showAdminDashboard = showAdminDashboard;
         window.closeAdminDashboard = closeAdminDashboard;
+        window.showAppSettings = showAppSettings;
+        window.closeAppSettings = closeAppSettings;
+        window.toggleAppSetting = toggleAppSetting;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
