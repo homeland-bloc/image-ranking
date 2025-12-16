@@ -342,9 +342,7 @@
                 sortBy: 'newest',          // 'newest', 'oldest', 'mostVoted', 'leastVoted'
                 searchQuery: ''            // Search term for contest titles
             },
-            selectedContestsForMerge: [], // Array of contest IDs selected for merging
             mergedResults: null, // Results from merged contests
-            showMergeModal: false, // Show merge contest selection modal
             mergers: [], // Array of merger objects from database
             extracts: [], // Array of extract objects from database
             groups: [], // Array of group objects from database
@@ -359,8 +357,9 @@
             selectedFolderId: null, // Currently selected folder for viewing
             expandedFolderIds: [], // Array of folder IDs that are expanded
             appSettings: {}, // Global app settings (contest creation enabled, revoting enabled)
-            view: 'home', // Can also be 'userProfile'
+            view: 'home',
             viewingUserId: null, // User ID being viewed in profile
+            showUserProfileModal: false, // Show user profile modal
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -394,6 +393,37 @@
             state.isLoading = false;
             state.loadingMessage = '';
             render();
+        }
+
+        // ==================== HELPER FUNCTIONS ====================
+
+        // Generic Supabase fetch with cache-busting headers
+        async function fetchFromSupabase(endpoint, options = {}) {
+            const defaultHeaders = {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            };
+
+            return fetch(`${SUPABASE_URL}${endpoint}`, {
+                ...options,
+                headers: { ...defaultHeaders, ...options.headers }
+            });
+        }
+
+        // Format date as "day month year" (e.g., "30 Nov 2025")
+        function formatDate(dateString) {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+        }
+
+        // Safely stringify JSON for HTML attributes
+        function safeStringify(obj) {
+            return JSON.stringify(obj).replace(/'/g, "&apos;");
         }
 
         // ==================== TOAST NOTIFICATIONS ====================
@@ -449,24 +479,24 @@
             // Special styling for missing votes - black text on dark gray background
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
-            // Bright green with cyan/blue undertone for top scores (5.0)
-            if (min >= 4.5) return { color: 'text-emerald-800', bg: 'bg-emerald-200', textColor: 'rgb(6, 95, 70)', bgColor: 'rgb(167, 243, 208)' };
-            // Lime green (4.5)
-            if (min >= 4.0) return { color: 'text-lime-800', bg: 'bg-lime-200', textColor: 'rgb(63, 98, 18)', bgColor: 'rgb(217, 249, 157)' };
-            // Yellow-green blend (4.0)
-            if (min >= 3.5) return { color: 'text-lime-700', bg: 'bg-lime-200', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(217, 249, 157)' };
-            // Yellow with green hint (3.5)
-            if (min >= 3.0) return { color: 'text-yellow-800', bg: 'bg-yellow-200', textColor: 'rgb(133, 77, 14)', bgColor: 'rgb(254, 240, 138)' };
-            // Orange-yellow blend (3.0)
-            if (min >= 2.5) return { color: 'text-orange-700', bg: 'bg-orange-200', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(254, 215, 170)' };
-            // Orange (2.5)
-            if (min >= 2.0) return { color: 'text-orange-800', bg: 'bg-orange-200', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
-            // Red-orange blend (2.0)
-            if (min >= 1.5) return { color: 'text-red-700', bg: 'bg-red-200', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(254, 202, 202)' };
-            // Red (1.0)
-            if (min >= 1.0) return { color: 'text-red-800', bg: 'bg-red-200', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(254, 202, 202)' };
+            // Bright green for top scores (5.0) - reduced saturation
+            if (min >= 4.5) return { color: 'text-emerald-600', bg: 'bg-emerald-50', textColor: 'rgb(5, 150, 105)', bgColor: 'rgb(236, 253, 245)' };
+            // Lime green (4.0-4.49) - reduced saturation
+            if (min >= 4.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(247, 254, 231)' };
+            // Yellow (3.5-3.99) - lighter with reduced saturation
+            if (min >= 3.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
+            // Lime (3.0-3.49) - yellow-green mix with reduced saturation
+            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(247, 254, 231)' };
+            // Orange (2.5-2.99) - reduced saturation
+            if (min >= 2.5) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 247, 237)' };
+            // Orange (2.0-2.49) - reduced saturation
+            if (min >= 2.0) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 247, 237)' };
+            // Red (1.5-1.99) - reduced saturation
+            if (min >= 1.5) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 242, 242)' };
+            // Red (1.0-1.49) - reduced saturation
+            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 242, 242)' };
             // Fallback for any edge cases
-            return { color: 'text-gray-600', bg: 'bg-gray-200', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(229, 231, 235)' };
+            return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
 
 
@@ -721,6 +751,24 @@
                 type: 'alert',
                 icon,
                 message,
+                buttons: [{ text: 'OK', action: 'closeModal', primary: true }]
+            });
+        }
+
+        function showContestCreationDisabledModal() {
+            showModal({
+                type: 'alert',
+                icon: '🔒',
+                message: 'Contest creation is temporarily disabled. Contact admin for more information.',
+                buttons: [{ text: 'OK', action: 'closeModal', primary: true }]
+            });
+        }
+
+        function showRevotingDisabledModal() {
+            showModal({
+                type: 'alert',
+                icon: '🔒',
+                message: 'Revoting is temporarily disabled. Contact admin for more information.',
                 buttons: [{ text: 'OK', action: 'closeModal', primary: true }]
             });
         }
@@ -1875,70 +1923,6 @@
             }
         }
 
-        function toggleContestSelection(contestId) {
-            const index = state.selectedContestsForMerge.indexOf(contestId);
-            if (index > -1) {
-                state.selectedContestsForMerge.splice(index, 1);
-            } else {
-                state.selectedContestsForMerge.push(contestId);
-            }
-            render();
-        }
-
-        function openMergeModal() {
-            // Initialize with current contest pre-selected
-            if (state.currentContest) {
-                state.selectedContestsForMerge = [state.currentContest.id];
-            }
-            state.showMergeModal = true;
-            render();
-        }
-
-        function closeMergeModal() {
-            state.showMergeModal = false;
-            state.selectedContestsForMerge = [];
-            render();
-        }
-
-        async function viewSelectedMerge() {
-            if (state.selectedContestsForMerge.length < 2) {
-                showAlert('Please select at least 2 contests to merge', '❌');
-                return;
-            }
-
-            state.showMergeModal = false;
-            await loadSharedMerge(state.selectedContestsForMerge.join(','));
-        }
-
-        async function copyMergeLink() {
-            if (!state.mergedResults || !state.mergedResults.contestIds) {
-                showAlert('No merge data available', '❌');
-                return;
-            }
-
-            try {
-                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${state.mergedResults.contestIds.join(',')}`;
-
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(shareUrl);
-                } else {
-                    const textArea = document.createElement('textarea');
-                    textArea.value = shareUrl;
-                    textArea.style.position = 'fixed';
-                    textArea.style.left = '-9999px';
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textArea);
-                }
-
-                showToast('🔗 Merge link copied!', 'success');
-            } catch (error) {
-                console.error('Failed to copy merge link:', error);
-                showToast('Failed to copy link', 'error');
-            }
-        }
-
         function showBreakdownMerged(imageId) {
             state.showBreakdownModal = imageId;
             render();
@@ -2067,135 +2051,6 @@
             }
         }
 
-        async function viewMerge() {
-            if (state.selectedContestsForMerge.length < 2) {
-                showAlert('Please select at least 2 contests to merge', '❌');
-                return;
-            }
-
-            // Convert UUIDs to contest numbers for the URL
-            const contestNumbers = state.selectedContestsForMerge.map(id => {
-                const contest = state.contests.find(c => c.id === id);
-                return contest ? contest.contestNumber : null;
-            }).filter(n => n !== null);
-
-            await loadSharedMerge(contestNumbers.join(','));
-        }
-
-        async function loadSharedMerge(contestIdsStr) {
-            try {
-                console.log('Loading merged contests:', contestIdsStr);
-
-                const inputIds = contestIdsStr.split(',').map(id => id.trim());
-
-                if (inputIds.length < 2) {
-                    showAlert('At least 2 contests are required for merging', '❌');
-                    return;
-                }
-
-                state.isLoading = true;
-                state.loadingMessage = 'Loading merged results...';
-                render();
-
-                // Check if inputs are contest numbers (numeric) or UUIDs
-                const isNumeric = inputIds.every(id => /^\d+$/.test(id));
-                let contestIds;
-
-                if (isNumeric) {
-                    // Convert contest numbers to UUIDs
-                    const contestNumbers = inputIds.map(n => parseInt(n));
-                    const lookupResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests?contest_number=in.(${contestNumbers.join(',')})&select=id,contest_number`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                        }
-                    });
-
-                    if (!lookupResponse.ok) {
-                        throw new Error('Failed to lookup contests by number');
-                    }
-
-                    const contestsData = await lookupResponse.json();
-                    contestIds = contestsData.map(c => c.id);
-
-                    if (contestIds.length < 2) {
-                        showAlert('Could not find all contests. Please check the contest numbers.', '❌');
-                        state.isLoading = false;
-                        render();
-                        return;
-                    }
-                } else {
-                    // Already UUIDs, use as-is
-                    contestIds = inputIds;
-                }
-
-                // Call the PostgreSQL function to get merged results
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_merged_contest_results`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
-                    body: JSON.stringify({ contest_ids: contestIds })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch merged results: ${response.statusText}`);
-                }
-
-                const mergedData = await response.json();
-
-                if (!mergedData || mergedData.length === 0) {
-                    showAlert('No results found for the selected contests', '❌');
-                    state.isLoading = false;
-                    render();
-                    return;
-                }
-
-                // Fetch contest details for titles
-                const contestDetailsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=in.(${contestIds.join(',')})&select=id,title`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                const contestDetails = await contestDetailsResponse.json();
-                const contestTitles = {};
-                contestDetails.forEach(c => {
-                    contestTitles[c.id] = c.title;
-                });
-
-                // Transform the data for display
-                state.mergedResults = {
-                    contestIds: contestIds,
-                    contestTitles: contestTitles,
-                    images: mergedData.map(item => ({
-                        id: item.image_id,
-                        url: item.image_url,
-                        contestId: item.contest_id,
-                        averageScore: parseFloat(item.average_score).toFixed(2),
-                        totalVotes: item.total_votes,
-                        voteBreakdown: item.vote_breakdown
-                    }))
-                };
-
-                state.view = 'mergedResults';
-                state.isLoading = false;
-
-                // Update URL hash with merge
-                window.location.hash = `merge=${contestIds.join(',')}`;
-
-                render();
-            } catch (error) {
-                console.error('Error loading merged results:', error);
-                showAlert('Failed to load merged results: ' + error.message, '❌');
-                state.isLoading = false;
-                render();
-            }
-        }
-
         async function loadSharedContest(contestId) {
             try {
                 console.log('Loading shared contest:', contestId);
@@ -2274,27 +2129,6 @@
             const hash = window.location.hash.slice(1); // Remove '#'
 
             console.log('🔗 [NAVIGATION] Hash changed:', hash);
-
-            // Check for merge link: #merge=1,2,3
-            if (hash.startsWith('merge=')) {
-                const mergeValue = hash.replace('merge=', '');
-
-                // Check if it's a new-style merge (comma-separated numbers)
-                if (/^\d+(,\d+)*$/.test(mergeValue)) {
-                    console.log('🔗 [NAVIGATION] Detected new-style merge link');
-                    const contestNumbers = mergeValue.split(',').map(n => parseInt(n.trim()));
-                    loadMergedContestsFromNumbers(contestNumbers);
-                    return;
-                }
-                // Old-style merge (UUID) - kept for backward compatibility
-                else {
-                    console.log('🔗 [NAVIGATION] Detected old-style merge link');
-                    if (state.isLoggedIn) {
-                        loadSharedMerge(mergeValue);
-                    }
-                    return;
-                }
-            }
 
             // Check for single contest share: #contest={uuid}
             const params = new URLSearchParams(hash);
@@ -2534,15 +2368,7 @@
         async function loadContests() {
             setLoading('Loading contests...');
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
+                const response = await fetchFromSupabase('/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc');
 
                 const contests = await response.json();
 
@@ -2553,15 +2379,7 @@
                 }
 
                 // Fetch voter counts from the pre-calculated PostgreSQL view
-                const voterCountsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contest_voter_counts?select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
+                const voterCountsResponse = await fetchFromSupabase('/rest/v1/contest_voter_counts?select=*');
 
                 if (!voterCountsResponse.ok) {
                     console.error('Failed to fetch voter counts');
@@ -4301,8 +4119,16 @@
         }
 
         async function viewUserProfile(userId) {
-            state.view = 'userProfile';
             state.viewingUserId = userId;
+            state.showUserProfileModal = true;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeUserProfileModal() {
+            state.showUserProfileModal = false;
+            state.viewingUserId = null;
+            document.body.classList.remove('modal-open');
             render();
         }
 
@@ -4522,86 +4348,6 @@
             `;
         }
 
-        function renderMergeModal() {
-            if (!state.showMergeModal) return '';
-
-            const selectedCount = state.selectedContestsForMerge.length;
-            const currentContestId = state.currentContest?.id;
-
-            return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeMergeModal()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
-                        <!-- Header -->
-                        <div class="p-6 border-b border-gray-200">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <h3 class="text-xl font-bold text-gray-800">Merge Contests</h3>
-                                    <p class="text-sm text-gray-600 mt-1">
-                                        Select contests to merge (${selectedCount} selected, min 2 required)
-                                    </p>
-                                </div>
-                                <button onclick="closeMergeModal()" class="text-gray-500 hover:text-gray-700">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Contest List -->
-                        <div class="flex-1 overflow-y-auto p-6 space-y-2">
-                            ${state.contests.map(contest => {
-                                const isCurrentContest = contest.id === currentContestId;
-                                const isSelected = state.selectedContestsForMerge.includes(contest.id);
-                                const isDisabled = isCurrentContest;
-
-                                return `
-                                    <div class="border ${isSelected ? 'border-blue-400 bg-blue-50' : 'border-gray-200'} rounded-lg p-3 flex items-center gap-3 ${isDisabled ? 'opacity-75' : 'cursor-pointer hover:border-blue-300'}"
-                                         ${!isDisabled ? `onclick="toggleContestSelection('${contest.id}')"` : ''}>
-                                        <input
-                                            type="checkbox"
-                                            ${isSelected ? 'checked' : ''}
-                                            ${isDisabled ? 'disabled' : ''}
-                                            class="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}"
-                                            onclick="event.stopPropagation()"
-                                            onchange="toggleContestSelection('${contest.id}')"
-                                        />
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="flex items-center gap-2">
-                                                <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
-                                                ${isCurrentContest ? '<span class="text-xs bg-blue-500 text-white px-2 py-0.5 rounded">Current</span>' : ''}
-                                            </div>
-                                            <p class="text-xs text-gray-500">
-                                                ${contest.creatorName} • ${contest.imageCount || 0} images • ${contest.voterCount || 0} voters
-                                            </p>
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-
-                        <!-- Footer -->
-                        <div class="p-6 border-t border-gray-200 flex gap-3">
-                            <button
-                                onclick="closeMergeModal()"
-                                class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onclick="viewSelectedMerge()"
-                                class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount >= 2 ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
-                                ${selectedCount < 2 ? 'disabled' : ''}
-                            >
-                                Merge & View Results
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
         function renderCreateExtractModal() {
             if (!state.showCreateExtractModal) return '';
 
@@ -4771,7 +4517,7 @@
                                     return `
                                         <div
                                             class="relative cursor-pointer rounded-lg overflow-hidden border-2 ${isSelected ? 'border-yellow-500 ring-2 ring-yellow-300' : 'border-transparent hover:border-yellow-400'}"
-                                            onclick="toggleExtractImage('${image.id}')"
+                                            onclick="event.stopPropagation(); toggleExtractImage('${image.id}')"
                                         >
                                             <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
                                             ${image.label ? `
@@ -5195,10 +4941,10 @@
                 <header class="safe-header bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-2 sm:py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
-                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500">
+                            <div onclick="backToHome()" class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500 cursor-pointer hover:opacity-80 transition">
                                 <span class="text-xl">🌺</span>
                             </div>
-                            <h1 class="text-xl font-bold">Peony</h1>
+                            <h1 onclick="backToHome()" class="text-xl font-bold cursor-pointer hover:opacity-80 transition">Peony</h1>
                             ${showBackButton ? `
                                 <button onclick="backToHome()" class="ml-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 sm:py-1 rounded-lg font-semibold transition text-sm flex items-center gap-1 min-h-[36px] sm:min-h-0">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -5387,9 +5133,9 @@
 
                                 if (!contestCreationEnabled && !isAdmin) {
                                     return `
-                                        <div class="bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-2 rounded-lg text-sm">
-                                            ℹ️ Contest creation is currently disabled
-                                        </div>
+                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-sm">
+                                            + Create Contest
+                                        </button>
                                     `;
                                 }
 
@@ -5595,10 +5341,12 @@
             `;
         }
 
-        function renderUserProfile() {
+        function renderUserProfileModal() {
+            if (!state.showUserProfileModal) return '';
+
             const userId = state.viewingUserId;
             if (!userId) {
-                return '<div class="text-center p-8">User not found</div>';
+                return '';
             }
 
             // Find user info from allUsers or from contest data
@@ -5670,48 +5418,62 @@
             const isCurrentUser = state.user && state.user.id === userId;
 
             return `
-                <div class="max-w-7xl mx-auto px-3 py-4">
-                    <button onclick="state.view = 'home'; render();" class="mb-4 bg-gray-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-600 transition">
-                        ← Back to Home
-                    </button>
-
-                    <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
-                        <div class="flex items-center gap-4 mb-4">
-                            <img src="${userInfo.avatar}" alt="${userInfo.username}" class="w-24 h-24 rounded-full" />
-                            <div class="flex-1">
-                                <h2 class="text-3xl font-bold text-gray-800">${userInfo.username}</h2>
-                                <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
-                                <p class="text-sm text-gray-500 mt-2">Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}</p>
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeUserProfileModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200 flex-shrink-0">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-2xl font-bold text-gray-800">User Profile</h3>
+                                <button onclick="closeUserProfileModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
                             </div>
-                            ${isAdmin && !isCurrentUser && !isBanned ? `
-                                <button onclick="confirmBanUser('${userId}', '${userInfo.username}')" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition">
+                            <div class="flex items-center gap-4">
+                                <img src="${userInfo.avatar}" alt="${userInfo.username}" class="w-20 h-20 rounded-full" />
+                                <div class="flex-1">
+                                    <h2 class="text-2xl font-bold text-gray-800">${userInfo.username}</h2>
+                                    <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
+                                    <p class="text-sm text-gray-500 mt-1">Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Scrollable content -->
+                        <div class="flex-1 overflow-y-auto p-6">
+                            <div class="mb-4">
+                                <h3 class="text-lg font-bold text-gray-800">Voting History</h3>
+                            </div>
+
+                            ${allVotedItems.length === 0 ? `
+                                <div class="bg-gray-50 rounded-lg p-8 text-center">
+                                    <p class="text-gray-500">No voting history yet</p>
+                                </div>
+                            ` : `
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    ${allVotedItems.map(item => {
+                                        if (item.itemType === 'merger') {
+                                            return renderMergerCard(item);
+                                        } else if (item.itemType === 'extract') {
+                                            return renderExtractCard(item);
+                                        } else {
+                                            return renderContestCard(item);
+                                        }
+                                    }).join('')}
+                                </div>
+                            `}
+                        </div>
+
+                        <!-- Footer with ban button -->
+                        ${isAdmin && !isCurrentUser && !isBanned ? `
+                            <div class="p-4 border-t border-gray-200 flex-shrink-0">
+                                <button onclick="confirmBanUser('${userId}', '${userInfo.username}')" class="w-full bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition">
                                     🚫 Ban User
                                 </button>
-                            ` : ''}
-                        </div>
+                            </div>
+                        ` : ''}
                     </div>
-
-                    <div class="mb-4">
-                        <h3 class="text-2xl font-bold text-gray-800">Voting History</h3>
-                    </div>
-
-                    ${allVotedItems.length === 0 ? `
-                        <div class="bg-white rounded-xl shadow-lg p-8 text-center">
-                            <p class="text-gray-500">No voting history yet</p>
-                        </div>
-                    ` : `
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            ${allVotedItems.map(item => {
-                                if (item.itemType === 'merger') {
-                                    return renderMergerCard(item);
-                                } else if (item.itemType === 'extract') {
-                                    return renderExtractCard(item);
-                                } else {
-                                    return renderContestCard(item);
-                                }
-                            }).join('')}
-                        </div>
-                    `}
                 </div>
             `;
         }
@@ -5722,19 +5484,14 @@
                                 const voterCount = contest.voterCount || 0;
                             const canDelete = canDeleteContest(contest);
                             const isBanned = state.bannedUsers.includes(state.user.id);
-                            // Format date as "day month year" (e.g., "30 Nov 2025")
-                            const createdDate = contest.createdAt ? (() => {
-                                const date = new Date(contest.createdAt);
-                                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
-                            })() : '';
+                            const createdDate = formatDate(contest.createdAt);
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${(contest.createdBy === state.user.id || state.user.id === ADMIN_DISCORD_ID) ? `
                                         <button
                                             onclick='toggleResultsPublic("${contest.id}")'
-                                            class="absolute top-3 right-14 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.resultsPublic !== false ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-500 hover:bg-gray-600'}"
+                                            class="absolute top-3 right-14 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.resultsPublic !== false ? 'bg-green-500 hover:bg-green-600' : 'bg-black hover:bg-gray-900'}"
                                             title="${contest.resultsPublic !== false ? 'Results are public - Click to make private' : 'Results are private - Click to make public'}"
                                         >
                                             ${contest.resultsPublic !== false ? `
@@ -5786,7 +5543,7 @@
                                     <div class="flex gap-2">
                                         ${contest.isLocked ? `
                                             <button
-                                                onclick='viewLockedResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                                onclick='viewLockedResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -5794,14 +5551,14 @@
                                         ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCount > 0) ? `
                                             ${contest.createdBy === state.user.id && !hasVoted ? `
                                                 <button
-                                                    onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                                    onclick='startVoting(${safeStringify(contest)})'
                                                     class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                                                 >
                                                     Start Voting
                                                 </button>
                                             ` : ''}
                                             <button
-                                                onclick='viewResults(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                                onclick='viewResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -5812,7 +5569,7 @@
                                             </div>
                                         ` : `
                                             <button
-                                                onclick='startVoting(${JSON.stringify(contest).replace(/'/g, "&apos;")})'
+                                                onclick='startVoting(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                                             >
                                                 Start Voting
@@ -5860,11 +5617,7 @@
             const hasVotedNone = votedContests.length === 0;
 
             const isBanned = state.bannedUsers.includes(state.user.id);
-            const createdDate = merger.createdAt ? (() => {
-                const date = new Date(merger.createdAt);
-                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
-            })() : '';
+            const createdDate = formatDate(merger.createdAt);
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
@@ -5960,11 +5713,7 @@
 
             const imageCount = extract.imageIds.length;
             const isBanned = state.bannedUsers.includes(state.user.id);
-            const createdDate = extract.createdAt ? (() => {
-                const date = new Date(extract.createdAt);
-                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
-            })() : '';
+            const createdDate = formatDate(extract.createdAt);
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
@@ -6340,7 +6089,7 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="bg-white rounded-xl shadow-xl p-4 pb-8 fade-in min-h-screen">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
                         <div class="text-center mb-4">
                             <div class="flex items-center justify-center gap-2 mb-2">
                                 <span class="text-4xl">🎆</span>
@@ -6352,6 +6101,24 @@
                                 'Total votes from all participants'
                             }</p>
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
+
+                            ${(() => {
+                                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                                const isCreator = state.user && state.user.id === state.currentContest.createdBy;
+                                const isPrivate = state.currentContest.resultsPublic === false;
+
+                                if (isPrivate && isAdmin && !isCreator) {
+                                    return `
+                                        <div class="mt-3 mb-2 max-w-2xl mx-auto">
+                                            <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+                                                <span class="text-lg flex-shrink-0">⚠️</span>
+                                                <p class="flex-1">These results are private. Only you and the contest creator can view them.</p>
+                                            </div>
+                                        </div>
+                                    `;
+                                }
+                                return '';
+                            })()}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <!-- First row: View tabs -->
@@ -6375,25 +6142,32 @@
                                         Average
                                     </button>
                                 </div>
-                                <!-- Second row: Action buttons (only show if user has voted or contest is locked) -->
-                                ${state.userVotedContests[state.currentContest.id] || state.currentContest.isLocked ? `
+                                <!-- Second row: Action buttons (only show if user has voted and contest is not locked) -->
+                                ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
                                     <div class="flex items-center justify-center gap-3">
-                                        ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
-                                            <button
-                                                onclick="startRevote()"
-                                                class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
-                                                title="Re-vote from scratch"
-                                            >
-                                                🔄 Revote
-                                            </button>
-                                        ` : ''}
-                                        <button
-                                            onclick="openMergeModal()"
-                                            class="px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition text-sm"
-                                            title="Merge with other contests"
-                                        >
-                                            🔗 Merge with Other Contests
-                                        </button>
+                                        ${(() => {
+                                            const revotingEnabled = state.appSettings.revoting_enabled !== false;
+                                            if (!revotingEnabled) {
+                                                return `
+                                                    <button
+                                                        onclick="showRevotingDisabledModal()"
+                                                        class="px-3 py-1 rounded-lg bg-gray-400 text-gray-200 opacity-50 cursor-not-allowed transition text-sm"
+                                                        title="Revoting is temporarily disabled"
+                                                    >
+                                                        🔄 Revote
+                                                    </button>
+                                                `;
+                                            }
+                                            return `
+                                                <button
+                                                    onclick="startRevote()"
+                                                    class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
+                                                    title="Re-vote from scratch"
+                                                >
+                                                    🔄 Revote
+                                                </button>
+                                            `;
+                                        })()}
                                     </div>
                                 ` : ''}
                             </div>
@@ -7348,19 +7122,18 @@
                 case 'mergedResults':
                     content = renderMergedResults();
                     break;
-                case 'userProfile':
-                    content = renderUserProfile();
-                    break;
                 default:
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderMergeModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
         window.logout = logout;
         window.startCreateContest = startCreateContest;
+        window.showContestCreationDisabledModal = showContestCreationDisabledModal;
+        window.showRevotingDisabledModal = showRevotingDisabledModal;
         window.handleContestTitle = handleContestTitle;
         window.confirmCreateWithDuplicateTitle = confirmCreateWithDuplicateTitle;
         window.cancelCreateContest = cancelCreateContest;
@@ -7382,13 +7155,7 @@
         window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
         window.shareContest = shareContest;
-        window.toggleContestSelection = toggleContestSelection;
         window.shareMerge = shareMerge;
-        window.viewMerge = viewMerge;
-        window.openMergeModal = openMergeModal;
-        window.closeMergeModal = closeMergeModal;
-        window.viewSelectedMerge = viewSelectedMerge;
-        window.copyMergeLink = copyMergeLink;
         window.showBreakdownMerged = showBreakdownMerged;
         window.toggleContestLock = toggleContestLock;
         window.toggleResultsPublic = toggleResultsPublic;
@@ -7469,6 +7236,7 @@
         window.removeItemFromFolder = removeItemFromFolder;
         window.toggleFolderExpanded = toggleFolderExpanded;
         window.viewUserProfile = viewUserProfile;
+        window.closeUserProfileModal = closeUserProfileModal;
 
         // Initialize app
         // Check for existing session on load
