@@ -300,8 +300,11 @@
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
 
-        // Initialize Supabase client
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // Initialize Supabase client (only if not already initialized to prevent duplicate declaration errors)
+        if (typeof window.supabaseClient === 'undefined') {
+            window.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        }
+        const supabase = window.supabaseClient;
 
         let state = {
             isLoggedIn: false,
