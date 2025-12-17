@@ -4048,10 +4048,53 @@
             render();
         }
 
-        async function createFolder() {
-            const folderName = prompt('Enter folder name:');
-            if (!folderName || !folderName.trim()) return;
+        function showCreateFolderModal() {
+            state.modal = {
+                icon: '📁',
+                title: 'Create New Folder',
+                type: 'input',
+                placeholder: 'Enter folder name...',
+                inputValue: '',
+                buttons: [
+                    {
+                        text: 'Cancel',
+                        primary: false,
+                        action: 'cancelCreateFolder'
+                    },
+                    {
+                        text: 'Create',
+                        primary: true,
+                        action: 'confirmCreateFolder'
+                    }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+            // Focus the input after render
+            setTimeout(() => {
+                const input = document.getElementById('modal-input');
+                if (input) input.focus();
+            }, 100);
+        }
 
+        function cancelCreateFolder() {
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        async function confirmCreateFolder() {
+            const folderName = document.getElementById('modal-input')?.value;
+            if (!folderName || !folderName.trim()) {
+                showToast('❌ Please enter a folder name');
+                return;
+            }
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            await createFolder(folderName.trim());
+        }
+
+        async function createFolder(folderName) {
             try {
                 setLoading('Creating folder...');
                 const maxOrder = state.groups.length > 0 ? Math.max(...state.groups.map(g => g.display_order || 0)) : 0;
@@ -4065,7 +4108,7 @@
                         'Prefer': 'return=representation'
                     },
                     body: JSON.stringify({
-                        name: folderName.trim(),
+                        name: folderName,
                         display_order: maxOrder + 1
                     })
                 });
@@ -4075,12 +4118,12 @@
                 }
 
                 await loadGroups();
-                showToast('Folder created successfully', 'success');
+                showToast('✅ Folder created successfully');
                 clearLoading();
                 render();
             } catch (error) {
                 console.error('Error creating folder:', error);
-                showToast('Failed to create folder: ' + error.message, 'error');
+                showToast('❌ Failed to create folder: ' + error.message);
                 clearLoading();
             }
         }
@@ -4446,7 +4489,7 @@
                             <div class="text-5xl mb-2">${state.modal.icon}</div>
                             ${isInput ? `
                                 <h3 class="text-xl font-bold text-gray-800 mb-2">${state.modal.title}</h3>
-                                <input type="text" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-mauve-400 focus:outline-none" placeholder="${state.modal.placeholder}" />
+                                <input id="modal-input" type="text" value="${state.modal.inputValue || ''}" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-mauve-400 focus:outline-none" placeholder="${state.modal.placeholder}" />
                             ` : `
                                 <p class="text-base font-bold text-gray-800 whitespace-pre-line">${state.modal.message}</p>
                             `}
@@ -6824,7 +6867,7 @@
 
                         <div class="p-6 overflow-y-auto flex-1">
                             <div class="mb-6">
-                                <button onclick="createFolder()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
+                                <button onclick="showCreateFolderModal()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
                                     + Create New Folder
                                 </button>
                             </div>
@@ -7376,6 +7419,9 @@
         window.saveExtract = saveExtract;
         window.openManageFoldersModal = openManageFoldersModal;
         window.closeManageFoldersModal = closeManageFoldersModal;
+        window.showCreateFolderModal = showCreateFolderModal;
+        window.cancelCreateFolder = cancelCreateFolder;
+        window.confirmCreateFolder = confirmCreateFolder;
         window.createFolder = createFolder;
         window.deleteFolder = deleteFolder;
         window.addItemToFolder = addItemToFolder;
