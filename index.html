@@ -626,15 +626,33 @@
                 });
                 const contests = await contestsResponse.json();
 
-                // Fetch all votes for these contests
-                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=10000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                // Fetch ALL votes for these contests using pagination
+                let allVotes = [];
+                let offset = 0;
+                const limit = 1000;
+                let hasMore = true;
+
+                while (hasMore) {
+                    setLoading(`Loading votes... (${allVotes.length} loaded)`);
+
+                    const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=${limit}&offset=${offset}&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+                    const votes = await votesResponse.json();
+
+                    allVotes = allVotes.concat(votes);
+
+                    // If we got fewer results than the limit, we've reached the end
+                    if (votes.length < limit) {
+                        hasMore = false;
+                    } else {
+                        offset += limit;
                     }
-                });
-                const allVotes = await votesResponse.json();
+                }
 
                 // Build image scores from votes
                 const imageScores = {};
@@ -1007,22 +1025,35 @@
 
                 await loadUserVotes();
                 state.hasSubmitted = true;
+
+                // Switch to results view
                 state.view = 'results';
+
+                // Load results data
                 await loadResults();
 
                 // Refresh contest list to update voter counts
                 await loadContests();
 
+                // Clear processing state and clear loading before final render
                 state.modalProcessing = false;
+                clearTimeout(timeoutId);
+                clearLoading();
+
+                // Final render to show results view
                 render();
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
-                state.modalProcessing = false;
-                showAlert('Failed to submit votes: ' + error.message, '❌');
-            } finally {
-                clearTimeout(timeoutId); // Clear timeout if submission completed
+
+                // Ensure loading is cleared and modal processing is reset
+                clearTimeout(timeoutId);
                 clearLoading();
+                state.modalProcessing = false;
+
+                // Show error to user
+                showAlert('Failed to submit votes: ' + error.message, '❌');
+                render();
             }
         }
 
@@ -3029,10 +3060,23 @@
             }
         }
 
-        async function deleteMerger(mergerId) {
-            if (!confirm('Are you sure you want to delete this merger? This action cannot be undone.')) {
-                return;
-            }
+        function confirmDeleteMerger(mergerId) {
+            state.mergerToDelete = mergerId;
+            showConfirm(
+                'Are you sure you want to delete this merger? This action cannot be undone.',
+                'executeDeleteMerger',
+                '🗑️'
+            );
+        }
+
+        async function executeDeleteMerger() {
+            if (state.modalProcessing) return;
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            const mergerId = state.mergerToDelete;
+            state.mergerToDelete = null;
 
             try {
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
@@ -3053,11 +3097,18 @@
                 await loadMergers();
 
                 showToast('Merger deleted successfully', 'success');
-                render();
             } catch (error) {
                 console.error('Error deleting merger:', error);
                 showToast('Failed to delete merger: ' + error.message, 'error');
+            } finally {
+                state.modalProcessing = false;
+                render();
             }
+        }
+
+        // Legacy function name for backwards compatibility
+        async function deleteMerger(mergerId) {
+            confirmDeleteMerger(mergerId);
         }
 
         async function viewMergerResults(mergerId) {
@@ -3070,11 +3121,24 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Check if user can view results (admin, creator, or all source contests are public)
+            // Check if user has voted on ALL contests (unless admin/creator)
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isCreator = state.user && state.user.id === merger.createdBy;
 
             if (!isAdmin && !isCreator) {
+                // Check if user has voted on all contests
+                const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+                const unvotedContests = mergedContests.filter(c => !state.userVotedContests[c.id]);
+
+                if (unvotedContests.length > 0) {
+                    const contestTitles = unvotedContests.map(c => `• ${c.title}`).join('\n');
+                    showAlert(
+                        `You must vote on all ${mergedContests.length} contests before viewing merge results.\n\nRemaining contests:\n${contestTitles}`,
+                        '🗳️'
+                    );
+                    return;
+                }
+
                 // Check if all source contests have public results
                 const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
                 if (hasPrivateContest) {
@@ -3082,6 +3146,9 @@
                     return;
                 }
             }
+
+            // Store current merger for revote functionality
+            state.currentMergerId = mergerId;
 
             // Load merged results and display
             await loadMergedResults(merger.contestIds);
@@ -3093,6 +3160,33 @@
 
         async function startMergerVoting(mergerId) {
             const merger = state.mergers.find(m => m.id === mergerId);
+            if (!merger) {
+                showToast('Merger not found', 'error');
+                return;
+            }
+
+            // Get all contests in the merger
+            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+
+            // Filter out locked contests
+            const unlockedContests = mergedContests.filter(c => !c.isLocked);
+
+            if (unlockedContests.length === 0) {
+                showToast('All contests in this merger are locked', 'error');
+                return;
+            }
+
+            // Start voting on the first unlocked contest
+            startVoting(unlockedContests[0]);
+        }
+
+        function revoteMerge() {
+            if (!state.currentMergerId) {
+                showToast('No merger context found', 'error');
+                return;
+            }
+
+            const merger = state.mergers.find(m => m.id === state.currentMergerId);
             if (!merger) {
                 showToast('Merger not found', 'error');
                 return;
@@ -3320,12 +3414,20 @@
                     image_ids: state.extractSelectedImages
                 };
 
+                // Only set source_contest_id for contest sources (UUID field)
+                // For other sources, set to null to avoid UUID type errors
                 if (state.extractSourceType === 'contest') {
-                    extractData.source_contest_id = state.extractSourceId;
-                } else if (state.extractSourceType === 'merger') {
-                    extractData.source_contest_id = state.extractSourceId;
-                } else if (state.extractSourceType === 'extract') {
-                    extractData.source_contest_id = state.extractSourceId;
+                    // Ensure we're using the UUID, not contest number
+                    const contest = state.contests.find(c => c.id === state.extractSourceId);
+                    if (contest) {
+                        extractData.source_contest_id = contest.id;
+                    } else {
+                        throw new Error('Contest not found');
+                    }
+                } else {
+                    // For mergers and extracts, set source_contest_id to null
+                    // The source type is already stored in source_type field
+                    extractData.source_contest_id = null;
                 }
 
                 // Save to extracts table
@@ -3358,10 +3460,23 @@
             }
         }
 
-        async function deleteExtract(extractId) {
-            if (!confirm('Are you sure you want to delete this extract? This action cannot be undone.')) {
-                return;
-            }
+        function confirmDeleteExtract(extractId) {
+            state.extractToDelete = extractId;
+            showConfirm(
+                'Are you sure you want to delete this extract? This action cannot be undone.',
+                'executeDeleteExtract',
+                '🗑️'
+            );
+        }
+
+        async function executeDeleteExtract() {
+            if (state.modalProcessing) return;
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            const extractId = state.extractToDelete;
+            state.extractToDelete = null;
 
             try {
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}`, {
@@ -3382,11 +3497,18 @@
                 await loadExtracts();
 
                 showToast('Extract deleted successfully', 'success');
-                render();
             } catch (error) {
                 console.error('Error deleting extract:', error);
                 showToast('Failed to delete extract: ' + error.message, 'error');
+            } finally {
+                state.modalProcessing = false;
+                render();
             }
+        }
+
+        // Legacy function name for backwards compatibility
+        async function deleteExtract(extractId) {
+            confirmDeleteExtract(extractId);
         }
 
         async function startExtractVoting(extractId) {
@@ -4190,8 +4312,23 @@
             }
         }
 
-        async function deleteFolder(folderId) {
-            if (!confirm('Delete this folder? Items will not be deleted, only ungrouped.')) return;
+        function confirmDeleteFolder(folderId) {
+            state.folderToDelete = folderId;
+            showConfirm(
+                'Delete this folder? Items will not be deleted, only ungrouped.',
+                'executeDeleteFolder',
+                '🗑️'
+            );
+        }
+
+        async function executeDeleteFolder() {
+            if (state.modalProcessing) return;
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            const folderId = state.folderToDelete;
+            state.folderToDelete = null;
 
             try {
                 setLoading('Deleting folder...');
@@ -4220,13 +4357,19 @@
 
                 await loadGroups();
                 showToast('Folder deleted successfully', 'success');
-                clearLoading();
-                render();
             } catch (error) {
                 console.error('Error deleting folder:', error);
                 showToast('Failed to delete folder: ' + error.message, 'error');
+            } finally {
+                state.modalProcessing = false;
                 clearLoading();
+                render();
             }
+        }
+
+        // Legacy function name for backwards compatibility
+        async function deleteFolder(folderId) {
+            confirmDeleteFolder(folderId);
         }
 
         async function addItemToFolder(folderId) {
@@ -4247,26 +4390,37 @@
                 return;
             }
 
-            // Create a simple selection dialog
-            const itemsHTML = availableItems.map(item =>
-                `<option value="${item.type}:${item.id}">[${item.type.toUpperCase()}] ${item.title}</option>`
-            ).join('');
+            // Store data in state for the modal
+            state.folderItemsToAdd = availableItems;
+            state.targetFolderId = folderId;
 
-            const selection = prompt('Enter item number from console (check browser console for list)');
-            console.log('Available items:', availableItems.map((item, idx) => `${idx}: [${item.type.toUpperCase()}] ${item.title}`));
+            // Show custom selection modal
+            state.modal = {
+                type: 'selectItem',
+                icon: '📁',
+                title: 'Add Item to Folder',
+                message: 'Select an item to add to this folder:',
+                items: availableItems,
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
 
-            if (!selection) return;
+        async function selectFolderItem(itemIndex) {
+            if (state.modalProcessing) return;
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
 
-            const idx = parseInt(selection);
-            if (isNaN(idx) || idx < 0 || idx >= availableItems.length) {
-                showToast('Invalid selection', 'error');
-                return;
-            }
-
-            const selectedItem = availableItems[idx];
+            const selectedItem = state.folderItemsToAdd[itemIndex];
+            const folderId = state.targetFolderId;
 
             try {
                 setLoading('Adding item to folder...');
+                const folder = state.groups.find(g => g.id === folderId);
                 const maxOrder = folder?.items?.length > 0 ? Math.max(...folder.items.map(i => i.display_order || 0)) : 0;
 
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
@@ -4291,12 +4445,13 @@
 
                 await loadGroups();
                 showToast('Item added to folder successfully', 'success');
-                clearLoading();
-                render();
             } catch (error) {
                 console.error('Error adding item to folder:', error);
                 showToast('Failed to add item to folder: ' + error.message, 'error');
+            } finally {
+                state.modalProcessing = false;
                 clearLoading();
+                render();
             }
         }
 
@@ -4392,6 +4547,25 @@
             state.viewingUserId = userId;
             state.showUserProfileModal = true;
             document.body.classList.add('modal-open');
+
+            // Fetch user's voting history
+            try {
+                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&select=contest_id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const userVotes = await votesResponse.json();
+
+                // Store unique contest IDs this user has voted on
+                state.userProfileVotedContests = [...new Set(userVotes.map(v => v.contest_id))];
+            } catch (error) {
+                console.error('Error loading user voting history:', error);
+                state.userProfileVotedContests = [];
+            }
+
             render();
         }
 
@@ -4565,20 +4739,47 @@
             if (!state.modal) return '';
 
             const isInput = state.modal.type === 'input';
+            const isSelectItem = state.modal.type === 'selectItem';
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeModal()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
-                        <div class="text-center mb-2">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-${isSelectItem ? '2xl' : 'md'} w-full ${isSelectItem ? 'max-h-[80vh]' : ''} p-6 modal-content ${isSelectItem ? 'flex flex-col' : ''}" onclick="event.stopPropagation()">
+                        <div class="text-center mb-2 ${isSelectItem ? 'flex-shrink-0' : ''}">
                             <div class="text-5xl mb-2">${state.modal.icon}</div>
                             ${isInput ? `
                                 <h3 class="text-xl font-bold text-gray-800 mb-2">${state.modal.title}</h3>
                                 <input id="modal-input" type="text" value="${state.modal.inputValue || ''}" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-mauve-400 focus:outline-none" placeholder="${state.modal.placeholder}" />
+                            ` : isSelectItem ? `
+                                <h3 class="text-xl font-bold text-gray-800 mb-2">${state.modal.title}</h3>
+                                <p class="text-sm text-gray-600 mb-2">${state.modal.message}</p>
                             ` : `
                                 <p class="text-base font-bold text-gray-800 whitespace-pre-line">${state.modal.message}</p>
                             `}
                         </div>
-                        <div class="flex gap-2 justify-center">
+                        ${isSelectItem ? `
+                            <div class="flex-1 overflow-y-auto mb-4">
+                                <div class="space-y-2">
+                                    ${state.modal.items.map((item, idx) => {
+                                        const typeColor = item.type === 'contest' ? 'mauve' : item.type === 'merger' ? 'blue' : 'yellow';
+                                        return `
+                                            <div class="border-2 border-gray-200 rounded-lg p-3 cursor-pointer hover:border-${typeColor}-400 hover:bg-${typeColor}-50 transition"
+                                                 onclick="selectFolderItem(${idx})">
+                                                <div class="flex items-center justify-between">
+                                                    <div>
+                                                        <div class="font-semibold text-gray-800">${item.title}</div>
+                                                        <div class="text-xs text-gray-500 uppercase">${item.type}</div>
+                                                    </div>
+                                                    <div class="text-2xl">
+                                                        ${item.type === 'contest' ? '🎨' : item.type === 'merger' ? '🔀' : '⭐'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                        <div class="flex gap-2 justify-center ${isSelectItem ? 'flex-shrink-0' : ''}">
                             ${state.modal.buttons.map(btn => {
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
                                 const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
@@ -5643,43 +5844,45 @@
                 return '<div class="text-center p-8">User not found</div>';
             }
 
-            // Find all contests, mergers, and extracts this user has voted in
-            const votedContests = state.contests.filter(contest => {
-                const votes = contest.votes || [];
-                return votes.some(v => v.userId === userId);
-            });
+            // Find items created by this user
+            const createdContests = state.contests.filter(c => c.createdBy === userId);
+            const createdMergers = state.mergers.filter(m => m.createdBy === userId);
+            const createdExtracts = state.extracts.filter(e => e.createdBy === userId);
 
+            // Find items voted on by this user (using fetched vote data)
+            const userVotedContestIds = state.userProfileVotedContests || [];
+
+            // Get contests this user has voted on (excluding ones they created to avoid duplication)
+            const votedContests = state.contests.filter(contest =>
+                userVotedContestIds.includes(contest.id) && contest.createdBy !== userId
+            );
+
+            // Get mergers where user voted on source contests (excluding ones they created)
             const votedMergers = state.mergers.filter(merger => {
-                // Check if user voted in any of the source contests
+                if (merger.createdBy === userId) return false;
                 const sourceContestIds = merger.contestIds || [];
-                return sourceContestIds.some(contestId => {
-                    const contest = state.contests.find(c => c.id === contestId);
-                    if (!contest) return false;
-                    const votes = contest.votes || [];
-                    return votes.some(v => v.userId === userId);
-                });
+                return sourceContestIds.some(contestId => userVotedContestIds.includes(contestId));
             });
 
+            // Get extracts where user voted on source (excluding ones they created)
             const votedExtracts = state.extracts.filter(extract => {
-                // Check if user voted in source contest/merger
+                if (extract.createdBy === userId) return false;
                 if (extract.sourceType === 'contest') {
-                    const contest = state.contests.find(c => c.id === extract.sourceId);
-                    if (!contest) return false;
-                    const votes = contest.votes || [];
-                    return votes.some(v => v.userId === userId);
+                    return userVotedContestIds.includes(extract.sourceContestId);
                 } else if (extract.sourceType === 'merger') {
-                    const merger = state.mergers.find(m => m.id === extract.sourceId);
+                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
                     if (!merger) return false;
                     const sourceContestIds = merger.contestIds || [];
-                    return sourceContestIds.some(contestId => {
-                        const contest = state.contests.find(c => c.id === contestId);
-                        if (!contest) return false;
-                        const votes = contest.votes || [];
-                        return votes.some(v => v.userId === userId);
-                    });
+                    return sourceContestIds.some(contestId => userVotedContestIds.includes(contestId));
                 }
                 return false;
             });
+
+            const allCreatedItems = [
+                ...createdContests.map(c => ({ ...c, itemType: 'contest' })),
+                ...createdMergers.map(m => ({ ...m, itemType: 'merger' })),
+                ...createdExtracts.map(e => ({ ...e, itemType: 'extract' }))
+            ];
 
             const allVotedItems = [
                 ...votedContests.map(c => ({ ...c, itemType: 'contest' })),
@@ -5709,15 +5912,37 @@
                                 <div class="flex-1">
                                     <h2 class="text-2xl font-bold text-gray-800">${userInfo.username}</h2>
                                     <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
-                                    <p class="text-sm text-gray-500 mt-1">Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}</p>
+                                    <p class="text-sm text-gray-500 mt-1">
+                                        Created ${allCreatedItems.length} ${allCreatedItems.length === 1 ? 'item' : 'items'} •
+                                        Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}
+                                    </p>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Scrollable content -->
                         <div class="flex-1 overflow-y-auto p-6">
+                            <!-- Created Items Section -->
+                            ${allCreatedItems.length > 0 ? `
+                                <div class="mb-6">
+                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Created (${allCreatedItems.length})</h3>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        ${allCreatedItems.map(item => {
+                                            if (item.itemType === 'merger') {
+                                                return renderMergerCard(item);
+                                            } else if (item.itemType === 'extract') {
+                                                return renderExtractCard(item);
+                                            } else {
+                                                return renderContestCard(item);
+                                            }
+                                        }).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            <!-- Voting History Section -->
                             <div class="mb-4">
-                                <h3 class="text-lg font-bold text-gray-800">Voting History</h3>
+                                <h3 class="text-lg font-bold text-gray-800 mb-3">Voting History (${allVotedItems.length})</h3>
                             </div>
 
                             ${allVotedItems.length === 0 ? `
@@ -5896,16 +6121,7 @@
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     <div class="absolute top-2 left-2 bg-blue-500 text-white px-2 py-0.5 rounded text-xs font-bold">MERGE</div>
-                    ${state.user.id === ADMIN_DISCORD_ID ? `
-                        <button
-                            onclick="deleteMerger('${merger.id}')"
-                            class="absolute top-3 right-3 bg-red-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-red-600 transition text-xs"
-                            title="Delete Merger"
-                        >
-                            🗑️
-                        </button>
-                    ` : ''}
-                    <div class="flex items-start gap-2 mb-2 mt-6">
+                    <div class="flex items-start gap-2 mb-2">
                         <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
@@ -5966,6 +6182,15 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
                             </svg>
                         </button>
+                        ${state.user.id === ADMIN_DISCORD_ID ? `
+                            <button
+                                onclick="deleteMerger('${merger.id}')"
+                                class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm"
+                                title="Delete Merger"
+                            >
+                                🗑️
+                            </button>
+                        ` : ''}
                     </div>
                 </div>
             `;
@@ -6637,7 +6862,6 @@
                             }
                         }).join('')}
                     </div>
-
                     ${state.showBreakdownModal ? renderBreakdownModal() : ''}
                 </div>
             `;
@@ -7007,7 +7231,7 @@
                                                                     <span class="text-sm font-medium text-gray-800">${itemTitle}</span>
                                                                     <span class="text-xs text-gray-500 ml-2">[${item.item_type.toUpperCase()}]</span>
                                                                 </div>
-                                                                <button onclick="removeItemFromFolder(${group.id}, '${item.item_id}', '${item.item_type}')" class="text-red-500 hover:text-red-700 text-sm">
+                                                                <button onclick="removeItemFromFolder('${group.id}', '${item.item_id}', '${item.item_type}')" class="text-red-500 hover:text-red-700 text-sm">
                                                                     Remove
                                                                 </button>
                                                             </div>
@@ -7183,14 +7407,14 @@
                                         Average
                                     </button>
                                 </div>
-                                <!-- Share button row -->
+                                <!-- Revote button row -->
                                 <div class="flex items-center justify-center gap-3">
                                     <button
-                                        onclick="copyMergeLink()"
-                                        class="px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition text-sm"
-                                        title="Copy merge link to clipboard"
+                                        onclick="revoteMerge()"
+                                        class="px-3 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition text-sm"
+                                        title="Re-vote on all merged contests"
                                     >
-                                        📋 Share Merge Link
+                                        🔄 Revote
                                     </button>
                                 </div>
                                 <!-- User selector dropdown for User Votes view -->
@@ -7492,6 +7716,7 @@
         window.startMergerVoting = startMergerVoting;
         window.showMergerVoteModal = showMergerVoteModal;
         window.shareMerger = shareMerger;
+        window.revoteMerge = revoteMerge;
         window.openCreateExtractModal = openCreateExtractModal;
         window.closeCreateExtractModal = closeCreateExtractModal;
         window.deleteExtract = deleteExtract;
@@ -7509,11 +7734,18 @@
         window.confirmCreateFolder = confirmCreateFolder;
         window.createFolder = createFolder;
         window.deleteFolder = deleteFolder;
+        window.confirmDeleteFolder = confirmDeleteFolder;
+        window.executeDeleteFolder = executeDeleteFolder;
         window.addItemToFolder = addItemToFolder;
+        window.selectFolderItem = selectFolderItem;
         window.removeItemFromFolder = removeItemFromFolder;
         window.toggleFolderExpanded = toggleFolderExpanded;
         window.viewUserProfile = viewUserProfile;
         window.closeUserProfileModal = closeUserProfileModal;
+        window.confirmDeleteMerger = confirmDeleteMerger;
+        window.executeDeleteMerger = executeDeleteMerger;
+        window.confirmDeleteExtract = confirmDeleteExtract;
+        window.executeDeleteExtract = executeDeleteExtract;
 
         // Initialize app
         // Check for existing session on load
