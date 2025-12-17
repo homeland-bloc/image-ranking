@@ -4034,12 +4034,70 @@
 
         // ==================== FOLDER MANAGEMENT ====================
 
+        function initializeFolderSortable() {
+            const foldersList = document.getElementById('folders-list');
+            if (!foldersList || typeof Sortable === 'undefined') return;
+
+            // Initialize folder reordering
+            new Sortable(foldersList, {
+                animation: 150,
+                handle: '.cursor-move',
+                ghostClass: 'bg-blue-100',
+                onEnd: async (evt) => {
+                    // Reorder the state.groups array
+                    const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
+                    state.groups.splice(evt.newIndex, 0, movedFolder);
+
+                    // Update display_order for all folders
+                    for (let i = 0; i < state.groups.length; i++) {
+                        await saveFolderOrder(state.groups[i].id, i);
+                    }
+
+                    await loadGroups();
+                    render();
+                    setTimeout(initializeFolderSortable, 100);
+                }
+            });
+
+            // Initialize item reordering within each folder
+            state.groups.forEach(group => {
+                const itemsList = document.getElementById(`folder-items-${group.id}`);
+                if (itemsList) {
+                    new Sortable(itemsList, {
+                        animation: 150,
+                        handle: '.cursor-move',
+                        ghostClass: 'bg-blue-100',
+                        onEnd: async (evt) => {
+                            const folderId = itemsList.dataset.folderId;
+                            const folder = state.groups.find(g => g.id === folderId);
+                            if (!folder) return;
+
+                            // Reorder the items array
+                            const movedItem = folder.items.splice(evt.oldIndex, 1)[0];
+                            folder.items.splice(evt.newIndex, 0, movedItem);
+
+                            // Update display_order for all items in this folder
+                            for (let i = 0; i < folder.items.length; i++) {
+                                await saveItemOrder(folderId, folder.items[i].item_id, folder.items[i].item_type, i);
+                            }
+
+                            await loadGroups();
+                            render();
+                            setTimeout(initializeFolderSortable, 100);
+                        }
+                    });
+                }
+            });
+        }
+
         async function openManageFoldersModal() {
             state.showManageFoldersModal = true;
             state.showUserDropdown = false;
             document.body.classList.add('modal-open');
             await loadGroups();
             render();
+            // Initialize SortableJS after render
+            setTimeout(initializeFolderSortable, 100);
         }
 
         function closeManageFoldersModal() {
@@ -4284,6 +4342,28 @@
                 }
             } catch (error) {
                 console.error('Error saving folder order:', error);
+            }
+        }
+
+        async function saveItemOrder(groupId, itemId, itemType, newOrder) {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        display_order: newOrder
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update item order');
+                }
+            } catch (error) {
+                console.error('Error saving item order:', error);
             }
         }
 
@@ -6898,7 +6978,7 @@
                                                 </button>
                                             </div>
                                             ${(group.items || []).length > 0 ? `
-                                                <div class="p-4 bg-white space-y-2">
+                                                <div class="p-4 bg-white space-y-2" id="folder-items-${group.id}" data-folder-id="${group.id}">
                                                     ${(group.items || []).map(item => {
                                                         // Find the actual item
                                                         let itemData = null;
