@@ -264,7 +264,8 @@
     <div id="app"></div>
 
     <script>
-        // Emergency error handler to catch JavaScript errors
+        window.addEventListener('DOMContentLoaded', function() {
+            // Emergency error handler to catch JavaScript errors
         window.addEventListener('error', function(e) {
             console.error('Global error caught:', e);
             const app = document.getElementById('app');
@@ -7603,6 +7604,7 @@
                 handleHashChange();
             }
         })();
+        }); // End DOMContentLoaded event listener
     </script>
 </body>
 </html>
