@@ -339,7 +339,7 @@
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             filters: {
                 createdBy: null,           // Username or null
-                sortBy: 'newest',          // 'newest', 'oldest', 'mostVoted', 'leastVoted'
+                sortBy: 'withFolders',     // 'withFolders', 'newest', 'oldest', 'mostVoted', 'leastVoted', etc.
                 searchQuery: ''            // Search term for contest titles
             },
             mergedResults: null, // Results from merged contests
@@ -479,22 +479,22 @@
             // Special styling for missing votes - black text on dark gray background
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
-            // Bright green for top scores (5.0) - reduced saturation
-            if (min >= 4.5) return { color: 'text-emerald-600', bg: 'bg-emerald-50', textColor: 'rgb(5, 150, 105)', bgColor: 'rgb(236, 253, 245)' };
-            // Lime green (4.0-4.49) - reduced saturation
-            if (min >= 4.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(247, 254, 231)' };
-            // Yellow (3.5-3.99) - lighter with reduced saturation
-            if (min >= 3.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
-            // Lime (3.0-3.49) - yellow-green mix with reduced saturation
-            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(247, 254, 231)' };
-            // Orange (2.5-2.99) - reduced saturation
-            if (min >= 2.5) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 247, 237)' };
-            // Orange (2.0-2.49) - reduced saturation
-            if (min >= 2.0) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 247, 237)' };
-            // Red (1.5-1.99) - reduced saturation
-            if (min >= 1.5) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 242, 242)' };
-            // Red (1.0-1.49) - reduced saturation
-            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 242, 242)' };
+            // Blue (4.5-5.0) - matches View Results button color
+            if (min >= 4.5) return { color: 'text-blue-600', bg: 'bg-blue-50', textColor: 'rgb(37, 99, 235)', bgColor: 'rgb(239, 246, 255)' };
+            // Cyan (4.0-4.49) - blue-green/aqua
+            if (min >= 4.0) return { color: 'text-cyan-600', bg: 'bg-cyan-50', textColor: 'rgb(8, 145, 178)', bgColor: 'rgb(236, 254, 255)' };
+            // Green (3.5-3.99) - pure green
+            if (min >= 3.5) return { color: 'text-green-600', bg: 'bg-green-50', textColor: 'rgb(22, 163, 74)', bgColor: 'rgb(240, 253, 244)' };
+            // Lime (3.0-3.49) - yellow-green
+            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-100', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(236, 252, 203)' };
+            // Yellow (2.5-2.99) - pure yellow
+            if (min >= 2.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
+            // Light orange (2.0-2.49) - yellow-orange
+            if (min >= 2.0) return { color: 'text-orange-500', bg: 'bg-orange-100', textColor: 'rgb(249, 115, 22)', bgColor: 'rgb(255, 237, 213)' };
+            // Orange (1.5-1.99) - pure orange
+            if (min >= 1.5) return { color: 'text-orange-600', bg: 'bg-orange-200', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(254, 215, 170)' };
+            // Red (1.0-1.49) - pure red
+            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
@@ -604,6 +604,98 @@
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
+            } finally {
+                clearLoading();
+            }
+        }
+
+        async function loadMergedResults(contestIds) {
+            setLoading('Loading merged results...');
+            try {
+                // Fetch contests with their images
+                const contestsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=in.(${contestIds.join(',')})&select=*,images(*)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const contests = await contestsResponse.json();
+
+                // Fetch all votes for these contests
+                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=10000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const allVotes = await votesResponse.json();
+
+                // Build image scores from votes
+                const imageScores = {};
+                allVotes.forEach(vote => {
+                    if (!imageScores[vote.image_id]) {
+                        imageScores[vote.image_id] = {
+                            scores: [],
+                            breakdown: []
+                        };
+                    }
+
+                    const isBlocked = vote.is_blocked || false;
+                    const voterIsBanned = vote.voter?.is_banned || false;
+
+                    // Only include non-blocked AND non-banned votes in score calculations
+                    if (!isBlocked && !voterIsBanned) {
+                        imageScores[vote.image_id].scores.push(vote.score);
+                    }
+
+                    // Include ALL votes in breakdown
+                    imageScores[vote.image_id].breakdown.push({
+                        userId: vote.user_id,
+                        username: vote.voter.username,
+                        avatar: vote.voter.avatar,
+                        score: vote.score,
+                        isCurrentUser: vote.user_id === state.user?.id,
+                        isBlocked: isBlocked,
+                        isBanned: voterIsBanned
+                    });
+                });
+
+                // Collect all images from all contests
+                const allImages = [];
+                const contestTitles = [];
+
+                contests.forEach(contest => {
+                    contestTitles.push(contest.title);
+                    contest.images.forEach(img => {
+                        const scores = imageScores[img.id]?.scores || [];
+                        const sum = scores.reduce((acc, s) => acc + s, 0);
+                        const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
+
+                        allImages.push({
+                            id: img.id,
+                            url: img.url,
+                            author: img.author,
+                            contestId: contest.id,
+                            contestTitle: contest.title,
+                            averageScore: average,
+                            totalVotes: scores.length,
+                            voteBreakdown: imageScores[img.id]?.breakdown || []
+                        });
+                    });
+                });
+
+                // Set merged results
+                state.mergedResults = {
+                    contestIds: contestIds,
+                    contestTitles: contestTitles,
+                    images: allImages.sort((a, b) => b.averageScore - a.averageScore)
+                };
+
+            } catch (error) {
+                console.error('Error loading merged results:', error);
+                showAlert('Error loading merged results: ' + error.message, '❌');
             } finally {
                 clearLoading();
             }
@@ -2811,7 +2903,7 @@
 
                 // Update local state only if database update succeeded
                 contest.resultsPublic = newPublicStatus;
-                showToast(contest.resultsPublic ? '👁️ Results are now public' : '🔒 Results are now private', 'success');
+                showAlert(contest.resultsPublic ? '👁️ Results public - Everyone can view' : '🔒 Results hidden - Only you can view', contest.resultsPublic ? '👁️' : '🔒');
                 render();
             } catch (error) {
                 console.error('Results public toggle error:', error);
@@ -2987,9 +3079,12 @@
                 }
             }
 
-            // Load merged results
-            state.selectedContestsForMerge = merger.contestIds;
-            await viewSelectedMerge();
+            // Load merged results and display
+            await loadMergedResults(merger.contestIds);
+            state.view = 'mergedResults';
+            state.resultsView = 'average';
+            state.showMyVotes = false;
+            render();
         }
 
         async function startMergerVoting(mergerId) {
@@ -3137,7 +3232,54 @@
             } else {
                 state.extractSelectedImages.push(imageId);
             }
-            render();
+
+            // Update the count display and button state without full re-render to prevent blink
+            const countDisplay = document.querySelector('[data-extract-count]');
+            if (countDisplay) {
+                countDisplay.textContent = `From: ${state.extractSourceType === 'contest' ? state.contests.find(c => c.id === state.extractSourceId)?.title : state.extractSourceType === 'merger' ? state.mergers.find(m => m.id === state.extractSourceId)?.name : state.extracts.find(e => e.id === state.extractSourceId)?.name} (${state.extractSelectedImages.length} selected)`;
+            }
+
+            // Update save button state
+            const saveButton = document.querySelector('[data-extract-save]');
+            if (saveButton) {
+                const canSave = state.extractSelectedImages.length > 0 && state.newExtractName;
+                saveButton.disabled = !canSave;
+                if (canSave) {
+                    saveButton.className = 'flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-yellow-500 to-yellow-600 text-white hover:from-yellow-600 hover:to-yellow-700';
+                } else {
+                    saveButton.className = 'flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-300 text-gray-500 cursor-not-allowed';
+                }
+            }
+
+            // Update the specific checkbox visual
+            const imageElement = event?.target?.closest('[data-image-id]');
+            if (imageElement) {
+                const isSelected = state.extractSelectedImages.includes(imageId);
+                const borderDiv = imageElement.querySelector('.relative.cursor-pointer');
+                const checkboxDiv = imageElement.querySelector('.absolute.top-2');
+
+                if (borderDiv) {
+                    if (isSelected) {
+                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-2 border-yellow-500 ring-2 ring-yellow-300';
+                    } else {
+                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-2 border-transparent hover:border-yellow-400';
+                    }
+                }
+
+                if (checkboxDiv) {
+                    if (isSelected) {
+                        checkboxDiv.innerHTML = `
+                            <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        `;
+                        checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-yellow-500';
+                    } else {
+                        checkboxDiv.innerHTML = '<div class="w-4 h-4 border-2 border-gray-400 rounded"></div>';
+                        checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-gray-300';
+                    }
+                }
+            }
         }
 
         function setExtractName(name) {
@@ -3878,9 +4020,10 @@
                 // Update local state
                 state.appSettings[settingName] = newValue;
 
+                // Format setting name properly
+                const formattedName = settingName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 showToast(
-                    `${settingName.replace(/_/g, ' ')} ${newValue ? 'enabled' : 'disabled'}`,
-                    'success'
+                    `✅ ${formattedName} ${newValue ? 'enabled' : 'disabled'}`
                 );
                 render();
             } catch (error) {
@@ -3891,12 +4034,70 @@
 
         // ==================== FOLDER MANAGEMENT ====================
 
+        function initializeFolderSortable() {
+            const foldersList = document.getElementById('folders-list');
+            if (!foldersList || typeof Sortable === 'undefined') return;
+
+            // Initialize folder reordering
+            new Sortable(foldersList, {
+                animation: 150,
+                handle: '.cursor-move',
+                ghostClass: 'bg-blue-100',
+                onEnd: async (evt) => {
+                    // Reorder the state.groups array
+                    const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
+                    state.groups.splice(evt.newIndex, 0, movedFolder);
+
+                    // Update display_order for all folders
+                    for (let i = 0; i < state.groups.length; i++) {
+                        await saveFolderOrder(state.groups[i].id, i);
+                    }
+
+                    await loadGroups();
+                    render();
+                    setTimeout(initializeFolderSortable, 100);
+                }
+            });
+
+            // Initialize item reordering within each folder
+            state.groups.forEach(group => {
+                const itemsList = document.getElementById(`folder-items-${group.id}`);
+                if (itemsList) {
+                    new Sortable(itemsList, {
+                        animation: 150,
+                        handle: '.cursor-move',
+                        ghostClass: 'bg-blue-100',
+                        onEnd: async (evt) => {
+                            const folderId = itemsList.dataset.folderId;
+                            const folder = state.groups.find(g => g.id === folderId);
+                            if (!folder) return;
+
+                            // Reorder the items array
+                            const movedItem = folder.items.splice(evt.oldIndex, 1)[0];
+                            folder.items.splice(evt.newIndex, 0, movedItem);
+
+                            // Update display_order for all items in this folder
+                            for (let i = 0; i < folder.items.length; i++) {
+                                await saveItemOrder(folderId, folder.items[i].item_id, folder.items[i].item_type, i);
+                            }
+
+                            await loadGroups();
+                            render();
+                            setTimeout(initializeFolderSortable, 100);
+                        }
+                    });
+                }
+            });
+        }
+
         async function openManageFoldersModal() {
             state.showManageFoldersModal = true;
             state.showUserDropdown = false;
             document.body.classList.add('modal-open');
             await loadGroups();
             render();
+            // Initialize SortableJS after render
+            setTimeout(initializeFolderSortable, 100);
         }
 
         function closeManageFoldersModal() {
@@ -3905,10 +4106,53 @@
             render();
         }
 
-        async function createFolder() {
-            const folderName = prompt('Enter folder name:');
-            if (!folderName || !folderName.trim()) return;
+        function showCreateFolderModal() {
+            state.modal = {
+                icon: '📁',
+                title: 'Create New Folder',
+                type: 'input',
+                placeholder: 'Enter folder name...',
+                inputValue: '',
+                buttons: [
+                    {
+                        text: 'Cancel',
+                        primary: false,
+                        action: 'cancelCreateFolder'
+                    },
+                    {
+                        text: 'Create',
+                        primary: true,
+                        action: 'confirmCreateFolder'
+                    }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+            // Focus the input after render
+            setTimeout(() => {
+                const input = document.getElementById('modal-input');
+                if (input) input.focus();
+            }, 100);
+        }
 
+        function cancelCreateFolder() {
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        async function confirmCreateFolder() {
+            const folderName = document.getElementById('modal-input')?.value;
+            if (!folderName || !folderName.trim()) {
+                showToast('❌ Please enter a folder name');
+                return;
+            }
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            await createFolder(folderName.trim());
+        }
+
+        async function createFolder(folderName) {
             try {
                 setLoading('Creating folder...');
                 const maxOrder = state.groups.length > 0 ? Math.max(...state.groups.map(g => g.display_order || 0)) : 0;
@@ -3922,7 +4166,7 @@
                         'Prefer': 'return=representation'
                     },
                     body: JSON.stringify({
-                        name: folderName.trim(),
+                        name: folderName,
                         display_order: maxOrder + 1
                     })
                 });
@@ -3932,12 +4176,12 @@
                 }
 
                 await loadGroups();
-                showToast('Folder created successfully', 'success');
+                showToast('✅ Folder created successfully');
                 clearLoading();
                 render();
             } catch (error) {
                 console.error('Error creating folder:', error);
-                showToast('Failed to create folder: ' + error.message, 'error');
+                showToast('❌ Failed to create folder: ' + error.message);
                 clearLoading();
             }
         }
@@ -4098,6 +4342,28 @@
                 }
             } catch (error) {
                 console.error('Error saving folder order:', error);
+            }
+        }
+
+        async function saveItemOrder(groupId, itemId, itemType, newOrder) {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify({
+                        display_order: newOrder
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update item order');
+                }
+            } catch (error) {
+                console.error('Error saving item order:', error);
             }
         }
 
@@ -4303,7 +4569,7 @@
                             <div class="text-5xl mb-2">${state.modal.icon}</div>
                             ${isInput ? `
                                 <h3 class="text-xl font-bold text-gray-800 mb-2">${state.modal.title}</h3>
-                                <input type="text" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-mauve-400 focus:outline-none" placeholder="${state.modal.placeholder}" />
+                                <input id="modal-input" type="text" value="${state.modal.inputValue || ''}" class="modal-input w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-mauve-400 focus:outline-none" placeholder="${state.modal.placeholder}" />
                             ` : `
                                 <p class="text-base font-bold text-gray-800 whitespace-pre-line">${state.modal.message}</p>
                             `}
@@ -4497,7 +4763,7 @@
                             <div class="flex items-center justify-between">
                                 <div>
                                     <h3 class="text-xl font-bold text-gray-800">Create Extract - Select Images</h3>
-                                    <p class="text-sm text-gray-600 mt-1">
+                                    <p class="text-sm text-gray-600 mt-1" data-extract-count>
                                         From: ${sourceName} (${selectedCount} selected)
                                     </p>
                                 </div>
@@ -4515,10 +4781,11 @@
                                 ${sourceImages.map(image => {
                                     const isSelected = (state.extractSelectedImages || []).includes(image.id);
                                     return `
-                                        <div
-                                            class="relative cursor-pointer rounded-lg overflow-hidden border-2 ${isSelected ? 'border-yellow-500 ring-2 ring-yellow-300' : 'border-transparent hover:border-yellow-400'}"
-                                            onclick="event.stopPropagation(); toggleExtractImage('${image.id}')"
-                                        >
+                                        <div data-image-id="${image.id}">
+                                            <div
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-2 ${isSelected ? 'border-yellow-500 ring-2 ring-2 ring-yellow-300' : 'border-transparent hover:border-yellow-400'}"
+                                                onclick="toggleExtractImage('${image.id}')"
+                                            >
                                             <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
                                             ${image.label ? `
                                                 <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 truncate">
@@ -4533,6 +4800,7 @@
                                                 ` : `
                                                     <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
                                                 `}
+                                            </div>
                                             </div>
                                         </div>
                                     `;
@@ -4562,6 +4830,7 @@
                                     Cancel
                                 </button>
                                 <button
+                                    data-extract-save
                                     onclick="saveExtract()"
                                     class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount > 0 && state.newExtractName ? 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-white hover:from-yellow-600 hover:to-yellow-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
                                     ${selectedCount === 0 || !state.newExtractName ? 'disabled' : ''}
@@ -5054,7 +5323,7 @@
 
         function clearAllFilters() {
             state.filters.createdBy = null;
-            state.filters.sortBy = 'newest';
+            state.filters.sortBy = 'withFolders';
             state.filters.searchQuery = '';
             // Clear URL parameter
             const url = new URL(window.location);
@@ -5180,6 +5449,7 @@
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
                             <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                <option value="withFolders" ${state.filters.sortBy === 'withFolders' ? 'selected' : ''}>With Folders</option>
                                 <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
                                 <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
                                 <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
@@ -5199,7 +5469,7 @@
                                 `).join('')}
                             </select>
                         </div>
-                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
+                        ${state.filters.createdBy || state.filters.sortBy !== 'withFolders' || state.filters.searchQuery ? `
                             <div class="flex items-end">
                                 <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
                                     Clear All Filters
@@ -5238,8 +5508,8 @@
                         // Sort by creation date (newest first by default)
                         allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-                        // Check if we should show folders (only when sort is newest and no filters)
-                        const showFolders = state.filters.sortBy === 'newest' && !state.filters.createdBy && !state.filters.searchQuery;
+                        // Check if we should show folders (only when sort is withFolders and no filters)
+                        const showFolders = state.filters.sortBy === 'withFolders' && !state.filters.createdBy && !state.filters.searchQuery;
 
                         if (showFolders && state.groups.length > 0) {
                             // Get items that are in folders
@@ -5275,7 +5545,7 @@
 
                                     return `
                                         <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
-                                            <div class="bg-gradient-to-r from-mauve-400 to-mauve-600 p-4 cursor-pointer hover:from-mauve-500 hover:to-mauve-700 transition" onclick="toggleFolderExpanded(${group.id})">
+                                            <div class="bg-gradient-to-r from-mauve-400 to-mauve-600 p-4 cursor-pointer hover:from-mauve-500 hover:to-mauve-700 transition" onclick="toggleFolderExpanded('${group.id}')">
                                                 <div class="flex items-center gap-3 text-white">
                                                     <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -6678,7 +6948,7 @@
 
                         <div class="p-6 overflow-y-auto flex-1">
                             <div class="mb-6">
-                                <button onclick="createFolder()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
+                                <button onclick="showCreateFolderModal()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg">
                                     + Create New Folder
                                 </button>
                             </div>
@@ -6700,15 +6970,15 @@
                                                     <h4 class="font-semibold text-gray-800">${group.name}</h4>
                                                     <p class="text-sm text-gray-600">${(group.items || []).length} items</p>
                                                 </div>
-                                                <button onclick="addItemToFolder(${group.id})" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm">
+                                                <button onclick="addItemToFolder('${group.id}')" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm">
                                                     + Add Item
                                                 </button>
-                                                <button onclick="deleteFolder(${group.id})" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 text-sm">
+                                                <button onclick="deleteFolder('${group.id}')" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 text-sm">
                                                     Delete
                                                 </button>
                                             </div>
                                             ${(group.items || []).length > 0 ? `
-                                                <div class="p-4 bg-white space-y-2">
+                                                <div class="p-4 bg-white space-y-2" id="folder-items-${group.id}" data-folder-id="${group.id}">
                                                     ${(group.items || []).map(item => {
                                                         // Find the actual item
                                                         let itemData = null;
@@ -6749,7 +7019,7 @@
                             <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
                                 <p class="text-sm text-blue-800">
                                     💡 <strong>Note:</strong> Folders organize your contests, mergers, and extracts on the home page.
-                                    They appear as expandable cards when "Newest First" sort is selected.
+                                    They appear as expandable cards when "With Folders" sort is selected.
                                     Any other sort option will show all items in a flat list.
                                 </p>
                             </div>
@@ -7230,6 +7500,9 @@
         window.saveExtract = saveExtract;
         window.openManageFoldersModal = openManageFoldersModal;
         window.closeManageFoldersModal = closeManageFoldersModal;
+        window.showCreateFolderModal = showCreateFolderModal;
+        window.cancelCreateFolder = cancelCreateFolder;
+        window.confirmCreateFolder = confirmCreateFolder;
         window.createFolder = createFolder;
         window.deleteFolder = deleteFolder;
         window.addItemToFolder = addItemToFolder;
