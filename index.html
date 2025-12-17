@@ -479,22 +479,22 @@
             // Special styling for missing votes - black text on dark gray background
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
-            // Bright green for top scores (5.0) - reduced saturation
-            if (min >= 4.5) return { color: 'text-emerald-600', bg: 'bg-emerald-50', textColor: 'rgb(5, 150, 105)', bgColor: 'rgb(236, 253, 245)' };
-            // Lime green (4.0-4.49) - reduced saturation
-            if (min >= 4.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(247, 254, 231)' };
-            // Yellow (3.5-3.99) - lighter with reduced saturation
-            if (min >= 3.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
-            // Lime (3.0-3.49) - yellow-green mix with reduced saturation
-            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-50', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(247, 254, 231)' };
-            // Orange (2.5-2.99) - reduced saturation
-            if (min >= 2.5) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 247, 237)' };
-            // Orange (2.0-2.49) - reduced saturation
-            if (min >= 2.0) return { color: 'text-orange-600', bg: 'bg-orange-50', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(255, 247, 237)' };
-            // Red (1.5-1.99) - reduced saturation
-            if (min >= 1.5) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 242, 242)' };
-            // Red (1.0-1.49) - reduced saturation
-            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-50', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 242, 242)' };
+            // Blue (4.5-5.0) - matches View Results button color
+            if (min >= 4.5) return { color: 'text-blue-600', bg: 'bg-blue-50', textColor: 'rgb(37, 99, 235)', bgColor: 'rgb(239, 246, 255)' };
+            // Cyan (4.0-4.49) - blue-green/aqua
+            if (min >= 4.0) return { color: 'text-cyan-600', bg: 'bg-cyan-50', textColor: 'rgb(8, 145, 178)', bgColor: 'rgb(236, 254, 255)' };
+            // Green (3.5-3.99) - pure green
+            if (min >= 3.5) return { color: 'text-green-600', bg: 'bg-green-50', textColor: 'rgb(22, 163, 74)', bgColor: 'rgb(240, 253, 244)' };
+            // Lime (3.0-3.49) - yellow-green
+            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-100', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(236, 252, 203)' };
+            // Yellow (2.5-2.99) - pure yellow
+            if (min >= 2.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
+            // Light orange (2.0-2.49) - yellow-orange
+            if (min >= 2.0) return { color: 'text-orange-500', bg: 'bg-orange-100', textColor: 'rgb(249, 115, 22)', bgColor: 'rgb(255, 237, 213)' };
+            // Orange (1.5-1.99) - pure orange
+            if (min >= 1.5) return { color: 'text-orange-600', bg: 'bg-orange-200', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(254, 215, 170)' };
+            // Red (1.0-1.49) - pure red
+            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
@@ -2903,7 +2903,7 @@
 
                 // Update local state only if database update succeeded
                 contest.resultsPublic = newPublicStatus;
-                showToast(contest.resultsPublic ? '👁️ Results are now public' : '🔒 Results are now private', 'success');
+                showAlert(contest.resultsPublic ? '👁️ Results public - Everyone can view' : '🔒 Results hidden - Only you can view', contest.resultsPublic ? '👁️' : '🔒');
                 render();
             } catch (error) {
                 console.error('Results public toggle error:', error);
@@ -4020,9 +4020,10 @@
                 // Update local state
                 state.appSettings[settingName] = newValue;
 
+                // Format setting name properly
+                const formattedName = settingName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 showToast(
-                    `${settingName.replace(/_/g, ' ')} ${newValue ? 'enabled' : 'disabled'}`,
-                    'success'
+                    `✅ ${formattedName} ${newValue ? 'enabled' : 'disabled'}`
                 );
                 render();
             } catch (error) {
