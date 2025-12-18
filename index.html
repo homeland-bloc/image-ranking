@@ -604,7 +604,7 @@
                         totalVotes: scores.length,
                         breakdown: imageScores[img.id]?.breakdown || []
                     };
-                }).sort((a, b) => b.averageScore - a.averageScore);
+                }).sort(compareWithTieBreaking);
 
                 console.log('🔍 DEBUG: Final results:', state.results);
             } catch (error) {
@@ -715,7 +715,7 @@
                 state.mergedResults = {
                     contestIds: contestIds,
                     contestTitles: contestTitles,
-                    images: allImages.sort((a, b) => b.averageScore - a.averageScore)
+                    images: allImages.sort(compareWithTieBreaking)
                 };
 
             } catch (error) {
@@ -2136,6 +2136,58 @@
             }
         }
 
+        async function showContestInfoModal(item, itemType) {
+            try {
+                // Fetch voters for this contest/merger/extract
+                const contestId = item.id;
+                let voters = [];
+
+                // Query for voters who have completed voting
+                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const votesData = await votesResponse.json();
+
+                // Deduplicate voters and sort by username
+                if (Array.isArray(votesData)) {
+                    const uniqueVotersMap = new Map();
+                    votesData.forEach(vote => {
+                        if (vote.users) {
+                            uniqueVotersMap.set(vote.user_id, vote.users);
+                        }
+                    });
+                    voters = Array.from(uniqueVotersMap.values())
+                        .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                }
+
+                // Set state for modal
+                state.contestInfoModal = {
+                    item,
+                    itemType,
+                    voters
+                };
+
+                render();
+            } catch (error) {
+                console.error('Error loading contest info:', error);
+                showAlert('Failed to load contest info: ' + error.message, '❌');
+            }
+        }
+
+        function closeContestInfoModal() {
+            state.contestInfoModal = null;
+            render();
+        }
+
+        async function shareContestFromModal() {
+            if (!state.contestInfoModal) return;
+            await shareContest(state.contestInfoModal.item.id);
+        }
+
         function showBreakdownMerged(imageId) {
             state.showBreakdownModal = imageId;
             render();
@@ -2701,6 +2753,44 @@
                 }
             } catch (error) {
                 console.error('Error loading extracts:', error);
+            }
+        }
+
+        async function ensurePinnedFolder() {
+            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
+
+            try {
+                // Check if pinned folder exists
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${PINNED_FOLDER_ID}&select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const existing = await response.json();
+
+                // If doesn't exist, create it
+                if (!existing || existing.length === 0) {
+                    console.log('Creating Pinned folder...');
+                    await fetch(`${SUPABASE_URL}/rest/v1/groups`, {
+                        method: 'POST',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({
+                            id: PINNED_FOLDER_ID,
+                            name: 'Pinned',
+                            display_order: 0
+                        })
+                    });
+                    console.log('Pinned folder created successfully');
+                }
+            } catch (error) {
+                console.error('Error ensuring pinned folder:', error);
             }
         }
 
@@ -3873,7 +3963,7 @@
                 }
                 return null;
             }).filter(img => img !== null)
-            .sort((a, b) => b.averageScore - a.averageScore);
+            .sort(compareWithTieBreaking);
 
             render();
         }
@@ -4795,6 +4885,13 @@
         }
 
         function toggleFolderExpanded(folderId) {
+            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
+
+            // Pinned folder cannot be collapsed
+            if (folderId === PINNED_FOLDER_ID) {
+                return;
+            }
+
             const index = state.expandedFolderIds.indexOf(folderId);
             if (index > -1) {
                 state.expandedFolderIds.splice(index, 1);
@@ -6132,6 +6229,185 @@
             `;
         }
 
+        function renderContestInfoModal() {
+            if (!state.contestInfoModal) return '';
+
+            const { item, itemType, voters } = state.contestInfoModal;
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === item.createdBy;
+            const canManageSettings = isAdmin || isCreator;
+
+            // Format date
+            const createdDate = formatDate(item.createdAt);
+
+            // Get voter count display
+            let voterCountDisplay;
+            if (itemType === 'merger') {
+                voterCountDisplay = item.voterCountMin && item.voterCountMax
+                    ? `${item.voterCountMin}-${item.voterCountMax}👥`
+                    : '0👥';
+            } else {
+                voterCountDisplay = `${item.voterCount || 0}👥`;
+            }
+
+            // Get merged contests info (for mergers)
+            let mergedContestsHTML = '';
+            if (itemType === 'merger' && item.contestIds && item.contestIds.length > 0) {
+                const mergedContests = state.contests.filter(c => item.contestIds.includes(c.id));
+                mergedContestsHTML = `
+                    <details class="mt-2">
+                        <summary class="cursor-pointer font-semibold text-gray-700 hover:text-mauve-600 transition">
+                            Merged Contests (${mergedContests.length})
+                        </summary>
+                        <ul class="mt-2 ml-4 space-y-1">
+                            ${mergedContests.map(c => `
+                                <li class="text-sm text-gray-600">• ${c.title}</li>
+                            `).join('')}
+                        </ul>
+                    </details>
+                `;
+            }
+
+            // Get source info (for extracts)
+            let sourceHTML = '';
+            if (itemType === 'extract' && item.sourceType && item.sourceId) {
+                const sourceItem = item.sourceType === 'contest'
+                    ? state.contests.find(c => c.id === item.sourceId)
+                    : state.mergers.find(m => m.id === item.sourceId);
+                if (sourceItem) {
+                    const sourceName = sourceItem.title || sourceItem.name;
+                    sourceHTML = `
+                        <div class="mt-2">
+                            <span class="font-semibold text-gray-700">Source:</span>
+                            <span class="text-sm text-gray-600">${sourceName}</span>
+                        </div>
+                    `;
+                }
+            }
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeContestInfoModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200 flex-shrink-0">
+                            <div class="flex items-start justify-between gap-4">
+                                <h2 class="text-2xl font-bold text-gray-800 flex-1">${item.title || item.name}</h2>
+                                <button onclick="closeContestInfoModal()" class="p-2 hover:bg-gray-100 rounded-lg transition flex-shrink-0">
+                                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Scrollable Content -->
+                        <div class="flex-1 overflow-y-auto p-6">
+                            <!-- Main Info Section -->
+                            <div class="mb-6">
+                                <div class="flex items-center gap-3 mb-3">
+                                    <img src="${item.creatorAvatar}" alt="${item.creatorName}" class="w-12 h-12 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="viewUserProfile('${item.createdBy}')" />
+                                    <div>
+                                        <div class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition" onclick="viewUserProfile('${item.createdBy}')">${item.creatorName}</div>
+                                        <div class="text-sm text-gray-500">${createdDate || 'Date unknown'}</div>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                        <span class="font-semibold text-gray-700">Images:</span>
+                                        <span class="text-gray-600">${item.images?.length || 0}🖼️</span>
+                                    </div>
+                                    <div>
+                                        <span class="font-semibold text-gray-700">Voters:</span>
+                                        <span class="text-gray-600">${voterCountDisplay}</span>
+                                    </div>
+                                </div>
+                                ${mergedContestsHTML}
+                                ${sourceHTML}
+                            </div>
+
+                            <!-- Actions Section (visible to all) -->
+                            <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                                <h3 class="font-semibold text-gray-800 mb-3">Actions</h3>
+                                <button
+                                    onclick="shareContestFromModal()"
+                                    class="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md flex items-center justify-center gap-2"
+                                >
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                                    </svg>
+                                    Share
+                                </button>
+                            </div>
+
+                            <!-- Admin/Creator Settings Section -->
+                            ${canManageSettings ? `
+                                <div class="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <h3 class="font-semibold text-gray-800 mb-3">Settings (Creator/Admin Only)</h3>
+                                    <div class="space-y-3">
+                                        <!-- Lock Toggle -->
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-2">
+                                                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                                </svg>
+                                                <span class="font-medium text-gray-700">Lock Contest</span>
+                                            </div>
+                                            <button
+                                                onclick="toggleContestLock('${item.id}'); closeContestInfoModal();"
+                                                class="px-3 py-1 rounded-lg font-semibold transition text-sm ${item.isLocked ? 'bg-black text-white hover:bg-gray-900' : 'bg-green-500 text-white hover:bg-green-600'}"
+                                            >
+                                                ${item.isLocked ? '🔒 Locked' : '🔓 Unlocked'}
+                                            </button>
+                                        </div>
+                                        <!-- Results Visibility Toggle -->
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-2">
+                                                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                                </svg>
+                                                <span class="font-medium text-gray-700">Results Visibility</span>
+                                            </div>
+                                            <button
+                                                onclick="toggleResultsPublic('${item.id}'); closeContestInfoModal();"
+                                                class="px-3 py-1 rounded-lg font-semibold transition text-sm ${item.resultsPublic !== false ? 'bg-green-500 text-white hover:bg-green-600' : 'bg-black text-white hover:bg-gray-900'}"
+                                            >
+                                                ${item.resultsPublic !== false ? '👁️ Public' : '🔒 Private'}
+                                            </button>
+                                        </div>
+                                        <!-- Delete Button -->
+                                        <button
+                                            onclick="deleteContest('${item.id}'); closeContestInfoModal();"
+                                            class="w-full px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition text-sm"
+                                        >
+                                            🗑️ Delete ${itemType === 'contest' ? 'Contest' : itemType === 'merger' ? 'Merger' : 'Extract'}
+                                        </button>
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            <!-- Voters Section -->
+                            <div class="p-4 bg-blue-50 rounded-lg">
+                                <h3 class="font-semibold text-gray-800 mb-3">Voters (${voters.length})</h3>
+                                ${voters.length > 0 ? `
+                                    <div class="space-y-2 max-h-64 overflow-y-auto">
+                                        ${voters.map(voter => `
+                                            <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
+                                                <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full" />
+                                                <span class="text-sm font-medium text-gray-700">${voter.username}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                ` : `
+                                    <p class="text-sm text-gray-600 text-center py-4">No votes yet</p>
+                                `}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderUserProfileModal() {
             if (!state.showUserProfileModal) return '';
 
@@ -6303,39 +6579,7 @@
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                                    ${(contest.createdBy === state.user.id || state.user.id === ADMIN_DISCORD_ID) ? `
-                                        <button
-                                            onclick='toggleResultsPublic("${contest.id}")'
-                                            class="absolute top-3 right-14 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.resultsPublic !== false ? 'bg-green-500 hover:bg-green-600' : 'bg-black hover:bg-gray-900'}"
-                                            title="${contest.resultsPublic !== false ? 'Results are public - Click to make private' : 'Results are private - Click to make public'}"
-                                        >
-                                            ${contest.resultsPublic !== false ? `
-                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                                                </svg>
-                                            ` : `
-                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
-                                                </svg>
-                                            `}
-                                        </button>
-                                        <button
-                                            onclick='toggleContestLock("${contest.id}")'
-                                            class="absolute top-3 right-3 p-1.5 rounded-full shadow-lg transition-all hover:scale-110 ${contest.isLocked ? 'bg-black hover:bg-gray-900' : 'bg-green-500 hover:bg-green-600'}"
-                                            title="${contest.isLocked ? 'Click to unlock contest' : 'Click to lock contest'}"
-                                        >
-                                            ${contest.isLocked ? `
-                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                                                </svg>
-                                            ` : `
-                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
-                                                </svg>
-                                            `}
-                                        </button>
-                                    ` : contest.isLocked ? `
+                                    ${contest.isLocked ? `
                                         <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
@@ -6349,7 +6593,7 @@
                                                 <h3 class="text-base font-bold text-gray-800 line-clamp-2">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
+                                                <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
                                                 <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
@@ -6391,23 +6635,12 @@
                                             </button>
                                         `}
                                         <button
-                                            onclick='shareContest("${contest.id}")'
-                                            class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md text-sm flex items-center gap-1"
-                                            title="Share contest"
+                                            onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
+                                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                                            title="Contest Info"
                                         >
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
-                                            </svg>
+                                            ℹ️
                                         </button>
-                                        ${canDelete ? `
-                                            <button
-                                                onclick="deleteContest('${contest.id}')"
-                                                class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm"
-                                                title="Delete Contest"
-                                            >
-                                                🗑️
-                                            </button>
-                                        ` : ''}
                                     </div>
                                 </div>
                             `;
@@ -6448,18 +6681,6 @@
                         </div>
                     </div>
 
-                    <!-- Dropdown of merged contests -->
-                    <details class="mb-2">
-                        <summary class="cursor-pointer text-xs text-blue-700 hover:text-blue-900 font-semibold">
-                            Merged Contests (${mergedContests.length})
-                        </summary>
-                        <div class="mt-1 pl-2 space-y-1">
-                            ${mergedContests.map(c => `
-                                <div class="text-xs text-blue-600">• ${c.title}</div>
-                            `).join('')}
-                        </div>
-                    </details>
-
                     <div class="flex gap-2">
                         ${isBanned ? `
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
@@ -6488,23 +6709,12 @@
                             </button>
                         `}
                         <button
-                            onclick='shareMerger("${merger.id}")'
-                            class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md text-sm flex items-center gap-1"
-                            title="Share merger"
+                            onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
+                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                            title="Merger Info"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
-                            </svg>
+                            ℹ️
                         </button>
-                        ${state.user.id === ADMIN_DISCORD_ID ? `
-                            <button
-                                onclick="deleteMerger('${merger.id}')"
-                                class="bg-red-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm"
-                                title="Delete Merger"
-                            >
-                                🗑️
-                            </button>
-                        ` : ''}
                     </div>
                 </div>
             `;
@@ -6531,15 +6741,6 @@
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     <div class="absolute top-2 left-2 bg-yellow-500 text-white px-2 py-0.5 rounded text-xs font-bold">EXTRACT</div>
-                    ${state.user.id === ADMIN_DISCORD_ID ? `
-                        <button
-                            onclick="deleteExtract('${extract.id}')"
-                            class="absolute top-3 right-3 bg-red-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-red-600 transition text-xs"
-                            title="Delete Extract"
-                        >
-                            🗑️
-                        </button>
-                    ` : ''}
                     <div class="flex items-start gap-2 mb-2 mt-6">
                         <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
                         <div class="flex-1 min-w-0">
@@ -6547,7 +6748,7 @@
                                 <h3 class="text-base font-bold text-yellow-900 truncate">${extract.name}</h3>
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
                                 <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
                             </div>
                             <div class="text-xs text-yellow-600 mt-1">
@@ -6575,6 +6776,13 @@
                                 View Results
                             </button>
                         `}
+                        <button
+                            onclick='showContestInfoModal(${safeStringify(extract)}, "extract")'
+                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                            title="Extract Info"
+                        >
+                            ℹ️
+                        </button>
                     </div>
                 </div>
             `;
@@ -8014,7 +8222,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -8022,6 +8230,9 @@
         window.startCreateContest = startCreateContest;
         window.showContestCreationDisabledModal = showContestCreationDisabledModal;
         window.showRevotingDisabledModal = showRevotingDisabledModal;
+        window.showContestInfoModal = showContestInfoModal;
+        window.closeContestInfoModal = closeContestInfoModal;
+        window.shareContestFromModal = shareContestFromModal;
         window.handleContestTitle = handleContestTitle;
         window.confirmCreateWithDuplicateTitle = confirmCreateWithDuplicateTitle;
         window.cancelCreateContest = cancelCreateContest;
@@ -8205,7 +8416,7 @@
                 loadContests(),
                 loadMergers(),
                 loadExtracts(),
-                loadGroups(),
+                ensurePinnedFolder().then(() => loadGroups()),
                 loadAppSettings()
             ]);
             if (state.user) {
