@@ -486,22 +486,22 @@
             // Special styling for missing votes - black text on dark gray background
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
-            // Blue (4.5-5.0) - matches View Results button color
-            if (min >= 4.5) return { color: 'text-blue-600', bg: 'bg-blue-50', textColor: 'rgb(37, 99, 235)', bgColor: 'rgb(239, 246, 255)' };
-            // Cyan (4.0-4.49) - blue-green/aqua
-            if (min >= 4.0) return { color: 'text-cyan-600', bg: 'bg-cyan-50', textColor: 'rgb(8, 145, 178)', bgColor: 'rgb(236, 254, 255)' };
-            // Green (3.5-3.99) - pure green
-            if (min >= 3.5) return { color: 'text-green-600', bg: 'bg-green-50', textColor: 'rgb(22, 163, 74)', bgColor: 'rgb(240, 253, 244)' };
-            // Lime (3.0-3.49) - yellow-green
-            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-100', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(236, 252, 203)' };
-            // Yellow (2.5-2.99) - pure yellow
-            if (min >= 2.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
-            // Light orange (2.0-2.49) - yellow-orange
-            if (min >= 2.0) return { color: 'text-orange-500', bg: 'bg-orange-100', textColor: 'rgb(249, 115, 22)', bgColor: 'rgb(255, 237, 213)' };
-            // Orange (1.5-1.99) - pure orange
-            if (min >= 1.5) return { color: 'text-orange-600', bg: 'bg-orange-200', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(254, 215, 170)' };
-            // Red (1.0-1.49) - pure red
-            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
+            // Strong blue (4.5-5.0) - highest scores
+            if (min >= 4.5) return { color: 'text-blue-700', bg: 'bg-blue-100', textColor: 'rgb(29, 78, 216)', bgColor: 'rgb(219, 234, 254)' };
+            // Saturated cyan (4.0-4.49) - very good scores
+            if (min >= 4.0) return { color: 'text-cyan-700', bg: 'bg-cyan-100', textColor: 'rgb(14, 116, 144)', bgColor: 'rgb(207, 250, 254)' };
+            // Bright green (3.5-3.99) - good scores
+            if (min >= 3.5) return { color: 'text-green-700', bg: 'bg-green-100', textColor: 'rgb(21, 128, 61)', bgColor: 'rgb(220, 252, 231)' };
+            // Lime-green (3.0-3.49) - above average, MUST be green
+            if (min >= 3.0) return { color: 'text-lime-700', bg: 'bg-lime-100', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
+            // Lemon yellow (2.5-2.99) - average, more saturated
+            if (min >= 2.5) return { color: 'text-yellow-700', bg: 'bg-yellow-100', textColor: 'rgb(161, 98, 7)', bgColor: 'rgb(254, 249, 195)' };
+            // Gold/amber (2.0-2.49) - below average, distinct from orange
+            if (min >= 2.0) return { color: 'text-amber-700', bg: 'bg-amber-100', textColor: 'rgb(180, 83, 9)', bgColor: 'rgb(254, 243, 199)' };
+            // Orange (1.5-1.99) - low scores, distinct from red
+            if (min >= 1.5) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
+            // Strong red (1.0-1.49) - lowest scores, bolder background
+            if (min >= 1.0) return { color: 'text-red-700', bg: 'bg-red-200', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(254, 202, 202)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
@@ -6791,6 +6791,52 @@
         }
 
         function renderResults() {
+            // Check privacy settings
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === state.currentContest.createdBy;
+            const isPrivate = state.currentContest.resultsPublic === false;
+            const canViewPrivateResults = isAdmin || isCreator;
+
+            // Block unauthorized users from viewing private results
+            if (isPrivate && !canViewPrivateResults) {
+                return `
+                    <div class="max-w-7xl mx-auto px-3 py-4">
+                        <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                            <div class="text-center mb-4">
+                                <div class="flex items-center justify-center gap-2 mb-2">
+                                    <span class="text-4xl">🎆</span>
+                                    <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
+                                </div>
+                            </div>
+
+                            <div class="mt-3 flex flex-col items-center justify-center gap-2 mb-4">
+                                <!-- Disabled tabs -->
+                                <div class="flex items-center justify-center gap-3 opacity-50">
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        Total
+                                    </button>
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        By User
+                                    </button>
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        Average
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Privacy message -->
+                            <div class="text-center py-16">
+                                <div class="text-8xl mb-6">🔒</div>
+                                <h3 class="text-2xl font-bold text-gray-800 mb-3">Results are Private</h3>
+                                <p class="text-gray-600 max-w-md mx-auto">
+                                    Only the contest creator can view results. Contact the creator if you believe you should have access.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             let displayResults, grouped, sortedKeys, voterStats;
 
             // === BY VOTER VIEW ===
@@ -6862,16 +6908,15 @@
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
                             ${(() => {
-                                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                                const isCreator = state.user && state.user.id === state.currentContest.createdBy;
-                                const isPrivate = state.currentContest.resultsPublic === false;
-
-                                if (isPrivate && isAdmin && !isCreator) {
+                                if (isPrivate) {
+                                    const message = isCreator
+                                        ? "These results are private. Only you can view them."
+                                        : "These results are private. Only you and the creator can view them.";
                                     return `
                                         <div class="mt-3 mb-2 max-w-2xl mx-auto">
                                             <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
                                                 <span class="text-lg flex-shrink-0">⚠️</span>
-                                                <p class="flex-1">These results are private. Only you and the contest creator can view them.</p>
+                                                <p class="flex-1">${message}</p>
                                             </div>
                                         </div>
                                     `;
