@@ -496,12 +496,12 @@
             if (min >= 3.0) return { color: 'text-lime-700', bg: 'bg-lime-100', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
             // Lemon yellow (2.5-2.99) - average, more saturated
             if (min >= 2.5) return { color: 'text-yellow-700', bg: 'bg-yellow-100', textColor: 'rgb(161, 98, 7)', bgColor: 'rgb(254, 249, 195)' };
-            // Gold/amber (2.0-2.49) - below average, distinct from orange
-            if (min >= 2.0) return { color: 'text-amber-700', bg: 'bg-amber-100', textColor: 'rgb(180, 83, 9)', bgColor: 'rgb(254, 243, 199)' };
-            // Orange (1.5-1.99) - low scores, distinct from red
-            if (min >= 1.5) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
-            // Strong red (1.0-1.49) - lowest scores, bolder background
-            if (min >= 1.0) return { color: 'text-red-700', bg: 'bg-red-200', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(254, 202, 202)' };
+            // Gold/amber (2.0-2.49) - below average, warmer gold to distinguish from orange
+            if (min >= 2.0) return { color: 'text-amber-800', bg: 'bg-amber-100', textColor: 'rgb(146, 64, 14)', bgColor: 'rgb(254, 243, 199)' };
+            // Deep orange (1.5-1.99) - low scores, darker orange between red and amber
+            if (min >= 1.5) return { color: 'text-orange-800', bg: 'bg-orange-200', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
+            // Deep red (1.0-1.49) - lowest scores, much redder and darker
+            if (min >= 1.0) return { color: 'text-red-800', bg: 'bg-red-300', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(252, 165, 165)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
@@ -1473,6 +1473,10 @@
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
 
+                        // Preserve original file type (important for PNG transparency)
+                        const outputType = file.type || 'image/jpeg';
+                        const supportsQuality = outputType === 'image/jpeg' || outputType === 'image/webp';
+
                         // Helper to resize and draw
                         const drawResized = (maxSize) => {
                             let w = img.width;
@@ -1498,13 +1502,15 @@
                         const tryCompress = (quality, maxDimension) => {
                             return new Promise((res) => {
                                 drawResized(maxDimension);
+                                // Only use quality parameter for formats that support it
+                                const blobOptions = supportsQuality ? quality : undefined;
                                 canvas.toBlob((blob) => {
                                     if (blob) {
                                         res({ blob, quality, maxDimension });
                                     } else {
                                         res(null);
                                     }
-                                }, 'image/jpeg', quality);
+                                }, outputType, blobOptions);
                             });
                         };
 
@@ -1555,7 +1561,7 @@
                         // Check final result
                         if (result && result.blob.size <= maxSizeBytes) {
                             const compressedFile = new File([result.blob], file.name, {
-                                type: 'image/jpeg',
+                                type: outputType,
                                 lastModified: Date.now()
                             });
                             const savingsPercent = Math.round((1 - result.blob.size / file.size) * 100);
@@ -1573,7 +1579,7 @@
                             const finalSize = result ? result.blob.size : file.size;
                             reject({
                                 message: `${file.name}: ${formatFileSize(finalSize)} - too large even after compression (max ${maxSizeKB} KB)`,
-                                file: result ? new File([result.blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }) : file,
+                                file: result ? new File([result.blob], file.name, { type: outputType, lastModified: Date.now() }) : file,
                                 originalSize: file.size,
                                 compressedSize: finalSize,
                                 success: false,
@@ -2643,29 +2649,7 @@
                     throw new Error(contests.message || 'Failed to load contests');
                 }
 
-                // Fetch voter counts from the pre-calculated PostgreSQL view
-                const voterCountsResponse = await fetchFromSupabase('/rest/v1/contest_voter_counts?select=*');
-
-                if (!voterCountsResponse.ok) {
-                    console.error('Failed to fetch voter counts');
-                    throw new Error('Failed to load voter counts');
-                }
-
-                const voterCountsArray = await voterCountsResponse.json();
-
-                // Check if voter counts response is valid
-                if (!Array.isArray(voterCountsArray)) {
-                    console.error('Invalid voter counts response:', voterCountsArray);
-                    throw new Error(voterCountsArray.message || 'Failed to load voter counts');
-                }
-
-                // Create a map of contest_id to voter_count for efficient lookup
-                const voterCountsMap = {};
-                voterCountsArray.forEach(row => {
-                    voterCountsMap[row.contest_id] = row.voter_count;
-                });
-
-                // Map contests with their voter counts from the view
+                // Map contests with their voter counts from database fields
                 state.contests = contests.map(contest => ({
                     id: contest.id,
                     contestNumber: contest.contest_number,
@@ -2676,7 +2660,8 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
-                    voterCount: voterCountsMap[contest.id] || 0,
+                    voterCountMin: contest.voter_count_min || 0,
+                    voterCountMax: contest.voter_count_max || 0,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -2718,6 +2703,8 @@
                         contestIds: m.contest_ids,
                         voterCountMin: m.voter_count_min,
                         voterCountMax: m.voter_count_max,
+                        isLocked: m.is_locked || false,
+                        resultsPublic: m.results_public !== false,
                         type: 'merger'
                     }));
                 }
@@ -2748,6 +2735,8 @@
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
+                        isLocked: e.is_locked || false,
+                        resultsPublic: e.results_public !== false,
                         type: 'extract'
                     }));
                 }
@@ -3036,21 +3025,35 @@
             render();
         }
 
-        async function toggleContestLock(contestId) {
-            const contest = state.contests.find(c => c.id === contestId);
-            if (!contest) return;
+        async function toggleContestLock(itemId) {
+            // Find item across all types
+            let item = state.contests.find(c => c.id === itemId);
+            let itemType = 'contest';
+            let tableName = 'contests';
+
+            if (!item) {
+                item = state.mergers.find(m => m.id === itemId);
+                itemType = 'merger';
+                tableName = 'mergers';
+            }
+            if (!item) {
+                item = state.extracts.find(e => e.id === itemId);
+                itemType = 'extract';
+                tableName = 'extracts';
+            }
+            if (!item) return;
 
             // Only the creator or admin can lock/unlock
-            if (contest.createdBy !== state.user.id && state.user.id !== ADMIN_DISCORD_ID) {
-                showAlert('Only the creator or admin can lock/unlock this contest.', '🔒');
+            if (item.createdBy !== state.user.id && state.user.id !== ADMIN_DISCORD_ID) {
+                showAlert('Only the creator or admin can lock/unlock this item.', '🔒');
                 return;
             }
 
-            const newLockStatus = !contest.isLocked;
+            const newLockStatus = !item.isLocked;
 
             try {
                 // Update database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?id=eq.${itemId}`, {
                     method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3070,8 +3073,9 @@
                 }
 
                 // Update local state only if database update succeeded
-                contest.isLocked = newLockStatus;
-                showAlert(contest.isLocked ? '🔒 Contest locked - Users cannot vote' : '🔓 Contest unlocked - Users can now vote', contest.isLocked ? '🚨' : '✅');
+                item.isLocked = newLockStatus;
+                const itemLabel = itemType.charAt(0).toUpperCase() + itemType.slice(1);
+                showAlert(item.isLocked ? `🔒 ${itemLabel} locked - Users cannot vote` : `🔓 ${itemLabel} unlocked - Users can now vote`, item.isLocked ? '🚨' : '✅');
                 render();
             } catch (error) {
                 console.error('Full lock toggle error:', error);
@@ -3079,25 +3083,37 @@
             }
         }
 
-        async function toggleResultsPublic(contestId) {
+        async function toggleResultsPublic(itemId) {
             try {
-                const contest = state.contests.find(c => c.id === contestId);
-                if (!contest) {
-                    throw new Error('Contest not found');
+                // Find item across all types
+                let item = state.contests.find(c => c.id === itemId);
+                let tableName = 'contests';
+
+                if (!item) {
+                    item = state.mergers.find(m => m.id === itemId);
+                    tableName = 'mergers';
+                }
+                if (!item) {
+                    item = state.extracts.find(e => e.id === itemId);
+                    tableName = 'extracts';
+                }
+
+                if (!item) {
+                    throw new Error('Item not found');
                 }
 
                 // Check if user is creator or admin
                 const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                const isCreator = state.user && state.user.id === contest.createdBy;
+                const isCreator = state.user && state.user.id === item.createdBy;
 
                 if (!isAdmin && !isCreator) {
                     showAlert('Only the creator or admin can toggle results visibility', '❌');
                     return;
                 }
 
-                const newPublicStatus = !contest.resultsPublic;
+                const newPublicStatus = !item.resultsPublic;
 
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?id=eq.${itemId}`, {
                     method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3117,8 +3133,8 @@
                 }
 
                 // Update local state only if database update succeeded
-                contest.resultsPublic = newPublicStatus;
-                showAlert(contest.resultsPublic ? '👁️ Results public - Everyone can view' : '🔒 Results hidden - Only you can view', contest.resultsPublic ? '👁️' : '🔒');
+                item.resultsPublic = newPublicStatus;
+                showAlert(item.resultsPublic ? '👁️ Results public - Everyone can view' : '🔒 Results hidden - Only you can view', item.resultsPublic ? '👁️' : '🔒');
                 render();
             } catch (error) {
                 console.error('Results public toggle error:', error);
@@ -3621,17 +3637,7 @@
             setLoading('Creating extract...');
 
             try {
-                // Validate that all image IDs are valid UUIDs
-                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-                const invalidIds = state.extractSelectedImages.filter(id => {
-                    return typeof id !== 'string' || !uuidRegex.test(id);
-                });
-
-                if (invalidIds.length > 0) {
-                    console.error('Invalid image IDs found:', invalidIds);
-                    throw new Error(`Database schema error: Image IDs must be UUIDs. Found invalid IDs: ${invalidIds.join(', ')}. Please contact the administrator to migrate the images table to use UUID primary keys.`);
-                }
-
+                // Image IDs are integers in the database
                 const extractData = {
                     name: state.newExtractName.trim(),
                     created_by: state.user.id,
@@ -4401,6 +4407,15 @@
                 handle: '.cursor-move',
                 ghostClass: 'bg-blue-100',
                 onEnd: async (evt) => {
+                    // Skip if dropped at the same position
+                    if (evt.oldIndex === evt.newIndex) {
+                        return;
+                    }
+
+                    // Save scroll position before re-render
+                    const modalContent = document.querySelector('.overflow-y-auto');
+                    const scrollPos = modalContent ? modalContent.scrollTop : 0;
+
                     try {
                         // Reorder the state.groups array
                         const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
@@ -4417,14 +4432,26 @@
                         // Only reload and re-render after successful save
                         await loadGroups();
                         render();
-                        setTimeout(initializeFolderSortable, 100);
+
+                        // Restore scroll position after render
+                        setTimeout(() => {
+                            const newModalContent = document.querySelector('.overflow-y-auto');
+                            if (newModalContent) newModalContent.scrollTop = scrollPos;
+                            initializeFolderSortable();
+                        }, 100);
                     } catch (error) {
                         console.error('Failed to save folder order:', error);
                         showToast('Failed to save folder order', 'error');
                         // Reload to revert visual state
                         await loadGroups();
                         render();
-                        setTimeout(initializeFolderSortable, 100);
+
+                        // Restore scroll position after render
+                        setTimeout(() => {
+                            const newModalContent = document.querySelector('.overflow-y-auto');
+                            if (newModalContent) newModalContent.scrollTop = scrollPos;
+                            initializeFolderSortable();
+                        }, 100);
                     }
                 }
             });
@@ -4438,6 +4465,15 @@
                         handle: '.cursor-move',
                         ghostClass: 'bg-blue-100',
                         onEnd: async (evt) => {
+                            // Skip if dropped at the same position
+                            if (evt.oldIndex === evt.newIndex) {
+                                return;
+                            }
+
+                            // Save scroll position before re-render
+                            const modalContent = document.querySelector('.overflow-y-auto');
+                            const scrollPos = modalContent ? modalContent.scrollTop : 0;
+
                             try {
                                 const folderId = itemsList.dataset.folderId;
                                 const folder = state.groups.find(g => g.id === folderId);
@@ -4458,14 +4494,26 @@
                                 // Only reload and re-render after successful save
                                 await loadGroups();
                                 render();
-                                setTimeout(initializeFolderSortable, 100);
+
+                                // Restore scroll position after render
+                                setTimeout(() => {
+                                    const newModalContent = document.querySelector('.overflow-y-auto');
+                                    if (newModalContent) newModalContent.scrollTop = scrollPos;
+                                    initializeFolderSortable();
+                                }, 100);
                             } catch (error) {
                                 console.error('Failed to save item order:', error);
                                 showToast('Failed to save item order', 'error');
                                 // Reload to revert visual state
                                 await loadGroups();
                                 render();
-                                setTimeout(initializeFolderSortable, 100);
+
+                                // Restore scroll position after render
+                                setTimeout(() => {
+                                    const newModalContent = document.querySelector('.overflow-y-auto');
+                                    if (newModalContent) newModalContent.scrollTop = scrollPos;
+                                    initializeFolderSortable();
+                                }, 100);
                             }
                         }
                     });
@@ -4913,6 +4961,32 @@
             state.showUserProfileModal = true;
             document.body.classList.add('modal-open');
 
+            // Ensure allUsers is loaded
+            if (!state.allUsers || state.allUsers.length === 0) {
+                try {
+                    const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+
+                    if (usersResponse.ok) {
+                        const users = await usersResponse.json();
+                        state.allUsers = users.map(user => ({
+                            id: user.id,
+                            username: user.username,
+                            avatar: user.avatar,
+                            isBanned: user.is_banned || false
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Error loading users:', error);
+                    state.allUsers = [];
+                }
+            }
+
             // Fetch user's voting history
             try {
                 const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&select=contest_id`, {
@@ -4937,6 +5011,7 @@
         function closeUserProfileModal() {
             state.showUserProfileModal = false;
             state.viewingUserId = null;
+            state.userProfileVotedContests = [];
             document.body.classList.remove('modal-open');
             render();
         }
@@ -6002,23 +6077,23 @@
 
                                 if (!contestCreationEnabled && !isAdmin) {
                                     return `
-                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-sm">
+                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
                                             + Create Contest
                                         </button>
                                     `;
                                 }
 
                                 return `
-                                    <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm">
+                                    <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                         + Create Contest
                                     </button>
                                 `;
                             })()}
                             ${state.user.id === ADMIN_DISCORD_ID ? `
-                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-lg text-sm">
+                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                     + Create Merge
                                 </button>
-                                <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-sm">
+                                <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                     + Create Extract
                                 </button>
                             ` : ''}
@@ -6105,8 +6180,56 @@
                             ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
                         ];
 
-                        // Sort by creation date (newest first by default)
-                        allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        // Apply sorting based on selected sort option
+                        allItems.sort((a, b) => {
+                            // Get voter counts (handle both single voterCount and min/max ranges)
+                            const getVoterCount = (item) => {
+                                if (item.voterCountMax !== undefined) return item.voterCountMax;
+                                if (item.voterCount !== undefined) return item.voterCount;
+                                return 0;
+                            };
+                            const voterCountA = getVoterCount(a);
+                            const voterCountB = getVoterCount(b);
+
+                            // Get image/item counts
+                            const getItemCount = (item) => {
+                                if (item.images) return item.images.length;
+                                if (item.imageIds) return item.imageIds.length;
+                                return 0;
+                            };
+                            const itemCountA = getItemCount(a);
+                            const itemCountB = getItemCount(b);
+
+                            // Get titles/names for sorting
+                            const titleA = (a.title || a.name || '').toLowerCase();
+                            const titleB = (b.title || b.name || '').toLowerCase();
+
+                            switch (state.filters.sortBy) {
+                                case 'newest':
+                                case 'dateDesc':
+                                case 'withFolders':
+                                    return (b.createdAt || 0) - (a.createdAt || 0);
+                                case 'oldest':
+                                case 'dateAsc':
+                                    return (a.createdAt || 0) - (b.createdAt || 0);
+                                case 'titleAsc':
+                                    return titleA.localeCompare(titleB);
+                                case 'titleDesc':
+                                    return titleB.localeCompare(titleA);
+                                case 'mostVoted':
+                                case 'votersDesc':
+                                    return voterCountB - voterCountA;
+                                case 'leastVoted':
+                                case 'votersAsc':
+                                    return voterCountA - voterCountB;
+                                case 'imagesDesc':
+                                    return itemCountB - itemCountA;
+                                case 'imagesAsc':
+                                    return itemCountA - itemCountB;
+                                default:
+                                    return (b.createdAt || 0) - (a.createdAt || 0);
+                            }
+                        });
 
                         // Check if we should show folders (only when sort is withFolders and no filters)
                         const showFolders = state.filters.sortBy === 'withFolders' && !state.filters.createdBy && !state.filters.searchQuery;
@@ -6168,10 +6291,17 @@
                                                     <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                                     </svg>
-                                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                                                    </svg>
-                                                    <h3 class="text-lg font-bold flex-1">${group.name}</h3>
+                                                    ${isPinned ? `
+                                                        <span class="text-2xl">📌</span>
+                                                    ` : `
+                                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                                        </svg>
+                                                    `}
+                                                    <div class="flex-1">
+                                                        <h3 class="text-lg font-bold">${group.name}</h3>
+                                                        ${isPinned ? `<p class="text-xs opacity-90 mt-0.5">Trending Must-Votes 🔥</p>` : ''}
+                                                    </div>
                                                     <span class="text-sm opacity-90">${folderItems.length} items</span>
                                                 </div>
                                             </div>
@@ -6433,7 +6563,19 @@
             }
 
             if (!userInfo) {
-                return '<div class="text-center p-8">User not found</div>';
+                return `
+                    <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeUserProfileModal()">
+                        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 modal-content flex flex-col" onclick="event.stopPropagation()">
+                            <div class="text-center">
+                                <p class="text-xl font-bold text-gray-800 mb-4">User Not Found</p>
+                                <p class="text-gray-600 mb-6">The requested user profile could not be loaded.</p>
+                                <button onclick="closeUserProfileModal()" class="bg-mauve-500 text-white px-6 py-2 rounded-lg hover:bg-mauve-600 transition">
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
             }
 
             // Find items created by this user
@@ -6444,21 +6586,19 @@
             // Find items voted on by this user (using fetched vote data)
             const userVotedContestIds = state.userProfileVotedContests || [];
 
-            // Get contests this user has voted on (excluding ones they created to avoid duplication)
+            // Get contests this user has voted on (INCLUDING ones they created)
             const votedContests = state.contests.filter(contest =>
-                userVotedContestIds.includes(contest.id) && contest.createdBy !== userId
+                userVotedContestIds.includes(contest.id)
             );
 
-            // Get mergers where user voted on source contests (excluding ones they created)
+            // Get mergers where user voted on source contests (INCLUDING ones they created)
             const votedMergers = state.mergers.filter(merger => {
-                if (merger.createdBy === userId) return false;
                 const sourceContestIds = merger.contestIds || [];
                 return sourceContestIds.some(contestId => userVotedContestIds.includes(contestId));
             });
 
-            // Get extracts where user voted on source (excluding ones they created)
+            // Get extracts where user voted on source (INCLUDING ones they created)
             const votedExtracts = state.extracts.filter(extract => {
-                if (extract.createdBy === userId) return false;
                 if (extract.sourceType === 'contest') {
                     return userVotedContestIds.includes(extract.sourceContestId);
                 } else if (extract.sourceType === 'merger') {
@@ -6517,16 +6657,15 @@
                             <!-- Created Items Section -->
                             ${allCreatedItems.length > 0 ? `
                                 <div class="mb-6">
-                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Created (${allCreatedItems.length})</h3>
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Created (${allCreatedItems.length})</h3>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                         ${allCreatedItems.map(item => {
-                                            if (item.itemType === 'merger') {
-                                                return renderMergerCard(item);
-                                            } else if (item.itemType === 'extract') {
-                                                return renderExtractCard(item);
-                                            } else {
-                                                return renderContestCard(item);
-                                            }
+                                            const title = item.title || item.name;
+                                            return `
+                                                <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                                    • ${title}
+                                                </div>
+                                            `;
                                         }).join('')}
                                     </div>
                                 </div>
@@ -6534,7 +6673,7 @@
 
                             <!-- Voting History Section -->
                             <div class="mb-4">
-                                <h3 class="text-lg font-bold text-gray-800 mb-3">Voting History (${allVotedItems.length})</h3>
+                                <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Voted On (${allVotedItems.length})</h3>
                             </div>
 
                             ${allVotedItems.length === 0 ? `
@@ -6542,15 +6681,14 @@
                                     <p class="text-gray-500">No voting history yet</p>
                                 </div>
                             ` : `
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     ${allVotedItems.map(item => {
-                                        if (item.itemType === 'merger') {
-                                            return renderMergerCard(item);
-                                        } else if (item.itemType === 'extract') {
-                                            return renderExtractCard(item);
-                                        } else {
-                                            return renderContestCard(item);
-                                        }
+                                        const title = item.title || item.name;
+                                        return `
+                                            <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                                • ${title}
+                                            </div>
+                                        `;
                                     }).join('')}
                                 </div>
                             `}
@@ -6572,7 +6710,12 @@
         function renderContestCard(contest) {
                         try {
                                 const hasVoted = state.userVotedContests[contest.id];
-                                const voterCount = contest.voterCount || 0;
+                                // Display voter range (min-max) or single value if they're equal
+                                const voterDisplay = contest.voterCountMin !== undefined && contest.voterCountMax !== undefined
+                                    ? (contest.voterCountMin === contest.voterCountMax
+                                        ? `${contest.voterCountMax}👥`
+                                        : `${contest.voterCountMin}-${contest.voterCountMax}👥`)
+                                    : '0👥';
                             const canDelete = canDeleteContest(contest);
                             const isBanned = state.bannedUsers.includes(state.user.id);
                             const createdDate = formatDate(contest.createdAt);
@@ -6594,7 +6737,7 @@
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${voterCount}👥 ${contest.images.length}🖼️</span>
+                                                <span class="ml-auto whitespace-nowrap">${voterDisplay} ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
                                     </div>
@@ -6696,7 +6839,7 @@
                         ` : hasVotedNone ? `
                             <button
                                 onclick='startMergerVoting("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                             >
                                 Start Voting
                             </button>
@@ -6922,6 +7065,13 @@
             const currentVote = state.votes[currentImage.id];
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
 
+            // Determine voting context (contest or merger)
+            const isMergerVoting = state.currentMergerId && !state.currentContest;
+            const votingTitle = isMergerVoting
+                ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
+                : (state.currentContest?.title || 'Voting');
+            const labelsEnabled = state.currentContest?.labelsEnabled || false;
+
             // Adaptive progress bar logic - ensure EXACTLY segmentCount dashes
             const imageCount = state.shuffledImages.length;
             const segmentCount = Math.min(imageCount, 20);
@@ -6971,12 +7121,12 @@
 
                         <div class="p-3">
                             <div class="flex justify-between items-center mb-3 gap-2">
-                                <h2 class="text-lg font-bold text-gray-800">${state.currentContest.title}</h2>
+                                <h2 class="text-lg font-bold text-gray-800">${votingTitle}</h2>
                                 <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
                             </div>
 
                             <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="height: 55vh;">
-                                ${state.currentContest.labelsEnabled && currentImage.label ? `
+                                ${labelsEnabled && currentImage.label ? `
                                     <div class="absolute top-0 left-0 right-0 bg-white px-4 py-2 text-center border-b border-gray-200 z-10">
                                         <span class="text-sm font-semibold text-gray-800">${currentImage.label}</span>
                                     </div>
