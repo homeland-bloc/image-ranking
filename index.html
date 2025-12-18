@@ -728,6 +728,44 @@
 
         // Temporary stub for merge functionality - returns empty results
         // TODO: Implement proper async merge functionality with database queries
+        // Tie-breaking logic: when scores are equal, count 5s, 4s, 3s, 2s, 1s
+        function compareWithTieBreaking(a, b) {
+            // First, compare by average score
+            const scoreDiff = b.averageScore - a.averageScore;
+            if (Math.abs(scoreDiff) > 0.001) return scoreDiff; // Not a tie
+
+            // Tie detected - count votes by score level
+            const getVoteCounts = (item) => {
+                const counts = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+                if (item.breakdown && Array.isArray(item.breakdown)) {
+                    item.breakdown.forEach(vote => {
+                        if (!vote.isBlocked && counts[vote.score] !== undefined) {
+                            counts[vote.score]++;
+                        }
+                    });
+                }
+                return counts;
+            };
+
+            const countsA = getVoteCounts(a);
+            const countsB = getVoteCounts(b);
+
+            // Compare 5s, then 4s, then 3s, etc.
+            for (let score = 5; score >= 1; score--) {
+                if (countsB[score] !== countsA[score]) {
+                    return countsB[score] - countsA[score];
+                }
+            }
+
+            // If still equal, use total vote count
+            const totalA = a.breakdown?.filter(v => !v.isBlocked).length || 0;
+            const totalB = b.breakdown?.filter(v => !v.isBlocked).length || 0;
+            if (totalB !== totalA) return totalB - totalA;
+
+            // If still equal, maintain original order
+            return 0;
+        }
+
         function groupByScoreRange(results) {
             const ranges = [
                 { min: 4.5, max: 5.0 },
@@ -759,7 +797,7 @@
                 const items = results.filter(r => r.averageScore > 0 && r.averageScore >= range.min && r.averageScore <= range.max);
                 if (items.length > 0) {
                     grouped[key] = {
-                        items: items.sort((a, b) => b.averageScore - a.averageScore),
+                        items: items.sort(compareWithTieBreaking),
                         min: range.min,
                         max: range.max
                     };
