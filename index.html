@@ -5792,10 +5792,14 @@
 
             // Filter contests
             let filteredContests = state.contests;
+            let filteredMergers = state.mergers;
+            let filteredExtracts = state.extracts;
 
             // Filter by creator
             if (state.filters.createdBy) {
                 filteredContests = filteredContests.filter(c => c.createdBy === state.filters.createdBy);
+                filteredMergers = filteredMergers.filter(m => m.createdBy === state.filters.createdBy);
+                filteredExtracts = filteredExtracts.filter(e => e.createdBy === state.filters.createdBy);
             }
 
             // Filter by search query
@@ -5804,6 +5808,14 @@
                 filteredContests = filteredContests.filter(c =>
                     c.title.toLowerCase().includes(searchLower) ||
                     (c.creatorName && c.creatorName.toLowerCase().includes(searchLower))
+                );
+                filteredMergers = filteredMergers.filter(m =>
+                    m.name.toLowerCase().includes(searchLower) ||
+                    (m.creatorName && m.creatorName.toLowerCase().includes(searchLower))
+                );
+                filteredExtracts = filteredExtracts.filter(e =>
+                    e.name.toLowerCase().includes(searchLower) ||
+                    (e.creatorName && e.creatorName.toLowerCase().includes(searchLower))
                 );
             }
 
@@ -5951,10 +5963,10 @@
                     ` : ''}
 
                     ${(() => {
-                        // Combine contests, mergers, and extracts into a unified list
+                        // Combine filtered contests, mergers, and extracts into a unified list
                         const allItems = [
-                            ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
-                            ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
+                            ...filteredMergers.map(m => ({ ...m, itemType: 'merger' })),
+                            ...filteredExtracts.map(e => ({ ...e, itemType: 'extract' })),
                             ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
                         ];
 
