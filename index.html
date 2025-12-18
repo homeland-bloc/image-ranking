@@ -6942,31 +6942,31 @@
                         </div>
 
                         ${state.resultsView !== 'byVoter' ? `
-                        <div class="mb-4 max-w-md mx-auto">
-                            <div class="flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
-                                <button
-                                    onclick="adjustScale(-1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Decrease scale"
-                                >−</button>
-                                <input
-                                    type="range"
-                                    id="scaleSlider"
-                                    min="40"
-                                    max="200"
-                                    value="${state.imageScale}"
-                                    oninput="updateScale(this.value)"
-                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
-                                />
-                                <button
-                                    onclick="adjustScale(1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Increase scale"
-                                >+</button>
-                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            <div class="mb-4 max-w-md mx-auto">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                    <button
+                                        onclick="adjustScale(-1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Decrease scale"
+                                    >−</button>
+                                    <input
+                                        type="range"
+                                        id="scaleSlider"
+                                        min="40"
+                                        max="200"
+                                        value="${state.imageScale}"
+                                        oninput="updateScale(this.value)"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                    />
+                                    <button
+                                        onclick="adjustScale(1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Increase scale"
+                                    >+</button>
+                                    <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                                </div>
                             </div>
-                        </div>
                         ` : ''}
 
                         ${state.resultsView === 'byVoter' ? `
@@ -7689,31 +7689,31 @@
                         </div>
 
                         ${state.resultsView !== 'byVoter' ? `
-                        <div class="mb-4 max-w-md mx-auto">
-                            <div class="flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
-                                <button
-                                    onclick="adjustScale(-1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Decrease scale"
-                                >−</button>
-                                <input
-                                    type="range"
-                                    id="scaleSlider"
-                                    min="40"
-                                    max="200"
-                                    value="${state.imageScale}"
-                                    oninput="updateScale(this.value)"
-                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
-                                />
-                                <button
-                                    onclick="adjustScale(1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Increase scale"
-                                >+</button>
-                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            <div class="mb-4 max-w-md mx-auto">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                    <button
+                                        onclick="adjustScale(-1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Decrease scale"
+                                    >−</button>
+                                    <input
+                                        type="range"
+                                        id="scaleSlider"
+                                        min="40"
+                                        max="200"
+                                        value="${state.imageScale}"
+                                        oninput="updateScale(this.value)"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                    />
+                                    <button
+                                        onclick="adjustScale(1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Increase scale"
+                                    >+</button>
+                                    <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                                </div>
                             </div>
-                        </div>
                         ` : ''}
 
                         ${state.resultsView === 'byVoter' ? `
@@ -7953,6 +7953,7 @@
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
         window.setResultsView = setResultsView;
         window.setVoterSortBy = setVoterSortBy;
+        window.toggleMergedContestsDropdown = toggleMergedContestsDropdown;
         window.openCreateMergerModal = openCreateMergerModal;
         window.closeCreateMergerModal = closeCreateMergerModal;
         window.toggleContestForMerger = toggleContestForMerger;
