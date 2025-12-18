@@ -368,7 +368,9 @@
             isLoading: false,
             loadingMessage: '',
             showUserDropdown: false,  // User menu dropdown state
-            showMergedContestsDropdown: false  // Merged contests dropdown state
+            showMergedContestsDropdown: false,  // Merged contests dropdown state
+            currentMergerId: null,  // ID of current merger being voted on
+            mergerContestIds: []  // Array of contest IDs in current merger voting session
         };
 
         function shuffleArray(array) {
@@ -948,89 +950,134 @@
                 }
             }, 10000);
 
+            // Check if we're in merger voting mode
+            const isMergerVoting = state.currentMergerId && state.mergerContestIds.length > 0;
+
             const votesToSubmit = [];
             state.shuffledImages.forEach(img => {
                 if (state.votes[img.id]) {
+                    // Find which contest this image belongs to
+                    let contestId;
+                    if (isMergerVoting) {
+                        // In merger mode, find the original contest for each image
+                        const contest = state.contests.find(c =>
+                            state.mergerContestIds.includes(c.id) &&
+                            c.images.some(i => i.id === img.id)
+                        );
+                        contestId = contest ? contest.id : state.mergerContestIds[0];
+                    } else {
+                        contestId = state.currentContest.id;
+                    }
+
                     votesToSubmit.push({
                         user_id: state.user.id,
                         image_id: img.id,
-                        contest_id: state.currentContest.id,
+                        contest_id: contestId,
                         score: state.votes[img.id]
                     });
                 }
             });
 
             try {
-                // Check if votes already exist for this user and contest
-                const existingVotesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${state.currentContest.id}&select=*`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
+                // Group votes by contest for checking existing votes
+                const votesByContest = {};
+                votesToSubmit.forEach(vote => {
+                    if (!votesByContest[vote.contest_id]) {
+                        votesByContest[vote.contest_id] = [];
                     }
-                );
+                    votesByContest[vote.contest_id].push(vote);
+                });
 
-                if (!existingVotesResponse.ok) {
-                    throw new Error('Failed to check existing votes');
-                }
+                // Process votes for each contest
+                for (const contestId of Object.keys(votesByContest)) {
+                    const contestVotes = votesByContest[contestId];
 
-                const existingVotes = await existingVotesResponse.json();
-
-                if (existingVotes.length > 0) {
-                    // Votes exist - update them using PATCH
-                    // We need to update each vote individually by matching user_id, contest_id, and image_id
-                    const updatePromises = votesToSubmit.map(async (vote) => {
-                        const response = await fetch(
-                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
-                            {
-                                method: 'PATCH',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': SUPABASE_ANON_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                    'Prefer': 'return=minimal',
-                                    'Cache-Control': 'no-cache'
-                                },
-                                body: JSON.stringify({ score: vote.score })
+                    // Check if votes already exist for this user and contest
+                    const existingVotesResponse = await fetch(
+                        `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&select=*`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
                             }
-                        );
+                        }
+                    );
+
+                    if (!existingVotesResponse.ok) {
+                        throw new Error('Failed to check existing votes');
+                    }
+
+                    const existingVotes = await existingVotesResponse.json();
+
+                    if (existingVotes.length > 0) {
+                        // Votes exist - update them using PATCH
+                        const updatePromises = contestVotes.map(async (vote) => {
+                            const response = await fetch(
+                                `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'apikey': SUPABASE_ANON_KEY,
+                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                        'Prefer': 'return=minimal',
+                                        'Cache-Control': 'no-cache'
+                                    },
+                                    body: JSON.stringify({ score: vote.score })
+                                }
+                            );
+
+                            if (!response.ok) {
+                                throw new Error(`Failed to update vote for image ${vote.image_id}`);
+                            }
+                        });
+
+                        await Promise.all(updatePromises);
+                    } else {
+                        // No existing votes - insert new ones using POST
+                        const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Prefer': 'return=minimal',
+                                'Cache-Control': 'no-cache'
+                            },
+                            body: JSON.stringify(contestVotes)
+                        });
 
                         if (!response.ok) {
-                            throw new Error(`Failed to update vote for image ${vote.image_id}`);
+                            throw new Error('Failed to submit votes');
                         }
-                    });
-
-                    await Promise.all(updatePromises);
-                } else {
-                    // No existing votes - insert new ones using POST
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'return=minimal',
-                            'Cache-Control': 'no-cache'
-                        },
-                        body: JSON.stringify(votesToSubmit)
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to submit votes');
                     }
                 }
 
                 await loadUserVotes();
                 state.hasSubmitted = true;
 
-                // Switch to results view
-                state.view = 'results';
+                // Navigate to appropriate results view
+                if (isMergerVoting) {
+                    // Load merged results and display
+                    const merger = state.mergers.find(m => m.id === state.currentMergerId);
+                    if (merger) {
+                        await loadMergedResults(merger.contestIds);
+                        state.view = 'mergedResults';
+                        state.resultsView = 'average';
+                        state.showMyVotes = false;
 
-                // Load results data
-                await loadResults();
+                        // Update URL hash
+                        window.location.hash = `merge=${state.currentMergerId}`;
+                    }
+                } else {
+                    // Switch to single contest results view
+                    state.view = 'results';
+                    await loadResults();
+
+                    // Update URL hash
+                    window.location.hash = `contest=${state.currentContest.id}`;
+                }
 
                 // Refresh contest list to update voter counts
                 await loadContests();
@@ -2753,6 +2800,10 @@
             state.results = null;
             state.view = 'vote';
 
+            // Clear merger context (we're voting on a single contest)
+            state.currentMergerId = null;
+            state.mergerContestIds = [];
+
             // Update URL hash for shareable link
             window.location.hash = `contest=${contest.id}`;
 
@@ -3158,7 +3209,7 @@
             render();
         }
 
-        async function startMergerVoting(mergerId) {
+        async function startMergerVoting(mergerId, revoteAll = false) {
             const merger = state.mergers.find(m => m.id === mergerId);
             if (!merger) {
                 showToast('Merger not found', 'error');
@@ -3168,7 +3219,7 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Filter out locked contests
+            // Filter out locked contests (unless revoting all)
             const unlockedContests = mergedContests.filter(c => !c.isLocked);
 
             if (unlockedContests.length === 0) {
@@ -3176,8 +3227,44 @@
                 return;
             }
 
-            // Start voting on the first unlocked contest
-            startVoting(unlockedContests[0]);
+            // Determine which contests to vote on based on user's vote status
+            let contestsToVote;
+            if (revoteAll) {
+                // Revote all unlocked contests
+                contestsToVote = unlockedContests;
+            } else {
+                // Check which contests user hasn't voted in yet
+                const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
+                contestsToVote = unvotedContests.length > 0 ? unvotedContests : unlockedContests;
+            }
+
+            // Collect all images from the contests to vote on
+            const allImages = contestsToVote.flatMap(c => c.images);
+
+            if (allImages.length === 0) {
+                showToast('No images available to vote on', 'error');
+                return;
+            }
+
+            // Store merger context
+            state.currentMergerId = mergerId;
+            state.mergerContestIds = contestsToVote.map(c => c.id);
+
+            // Shuffle all images together
+            state.shuffledImages = shuffleArray(allImages);
+            state.votes = {};
+            state.currentImageIndex = 0;
+            state.hasSubmitted = false;
+            state.results = null;
+            state.view = 'vote';
+
+            // Set currentContest to null to indicate merger voting mode
+            state.currentContest = null;
+
+            // Update URL hash for shareable link
+            window.location.hash = `merge=${mergerId}`;
+
+            render();
         }
 
         function revoteMerge() {
@@ -3186,25 +3273,8 @@
                 return;
             }
 
-            const merger = state.mergers.find(m => m.id === state.currentMergerId);
-            if (!merger) {
-                showToast('Merger not found', 'error');
-                return;
-            }
-
-            // Get all contests in the merger
-            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-
-            // Filter out locked contests
-            const unlockedContests = mergedContests.filter(c => !c.isLocked);
-
-            if (unlockedContests.length === 0) {
-                showToast('All contests in this merger are locked', 'error');
-                return;
-            }
-
-            // Start voting on the first unlocked contest
-            startVoting(unlockedContests[0]);
+            // Restart merger voting with revote all flag
+            startMergerVoting(state.currentMergerId, true);
         }
 
         function showMergerVoteModal(mergerId) {
@@ -3217,12 +3287,13 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Find which contests user hasn't voted in
-            const unvotedContests = mergedContests.filter(c => !state.userVotedContests[c.id]);
-            const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+            // Find which contests user hasn't voted in (excluding locked ones)
+            const unlockedContests = mergedContests.filter(c => !c.isLocked);
+            const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
+            const votedContests = unlockedContests.filter(c => state.userVotedContests[c.id]);
 
             // Show modal with options
-            const message = `You've voted in ${votedContests.length} out of ${mergedContests.length} contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
+            const message = `You've voted in ${votedContests.length} out of ${unlockedContests.length} unlocked contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
 
             state.modal = {
                 title: 'Partial Votes - ' + merger.name,
@@ -3234,9 +3305,8 @@
                         action: () => {
                             state.modal = null;
                             document.body.classList.remove('modal-open');
-                            if (unvotedContests.length > 0) {
-                                startVoting(unvotedContests[0]);
-                            }
+                            // Start voting on missing contests only
+                            startMergerVoting(mergerId, false);
                         }
                     },
                     {
@@ -3245,9 +3315,8 @@
                         action: () => {
                             state.modal = null;
                             document.body.classList.remove('modal-open');
-                            if (mergedContests.length > 0) {
-                                startVoting(mergedContests[0]);
-                            }
+                            // Start voting on all contests
+                            startMergerVoting(mergerId, true);
                         }
                     },
                     {
@@ -3358,20 +3427,20 @@
 
                 if (borderDiv) {
                     if (isSelected) {
-                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-2 border-yellow-500 ring-2 ring-yellow-300';
+                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-4 border-blue-500 bg-blue-50';
                     } else {
-                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-2 border-transparent hover:border-yellow-400';
+                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-4 border-transparent hover:border-blue-300';
                     }
                 }
 
                 if (checkboxDiv) {
                     if (isSelected) {
                         checkboxDiv.innerHTML = `
-                            <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                             </svg>
                         `;
-                        checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-yellow-500';
+                        checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-blue-500';
                     } else {
                         checkboxDiv.innerHTML = '<div class="w-4 h-4 border-2 border-gray-400 rounded"></div>';
                         checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-gray-300';
@@ -3382,14 +3451,30 @@
 
         function setExtractName(name) {
             state.newExtractName = name;
-            // Don't render to avoid input blur - button state will be updated on blur
+            // Update button state without full render
+            updateExtractSaveButtonState();
         }
 
         function updateExtractNameOnBlur() {
             const input = document.getElementById('extract-name-input');
             if (input) {
                 state.newExtractName = input.value;
-                render();
+                // Update save button state without full re-render to preserve selection visual state
+                updateExtractSaveButtonState();
+            }
+        }
+
+        function updateExtractSaveButtonState() {
+            // Update save button state without full re-render
+            const saveButton = document.querySelector('[data-extract-save]');
+            if (saveButton) {
+                const canSave = state.extractSelectedImages.length > 0 && state.newExtractName && state.newExtractName.trim() !== '';
+                saveButton.disabled = !canSave;
+                if (canSave) {
+                    saveButton.className = 'flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-yellow-500 to-yellow-600 text-white hover:from-yellow-600 hover:to-yellow-700';
+                } else {
+                    saveButton.className = 'flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-300 text-gray-500 cursor-not-allowed';
+                }
             }
         }
 
@@ -3407,6 +3492,17 @@
             setLoading('Creating extract...');
 
             try {
+                // Validate that all image IDs are valid UUIDs
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                const invalidIds = state.extractSelectedImages.filter(id => {
+                    return typeof id !== 'string' || !uuidRegex.test(id);
+                });
+
+                if (invalidIds.length > 0) {
+                    console.error('Invalid image IDs found:', invalidIds);
+                    throw new Error(`Database schema error: Image IDs must be UUIDs. Found invalid IDs: ${invalidIds.join(', ')}. Please contact the administrator to migrate the images table to use UUID primary keys.`);
+                }
+
                 const extractData = {
                     name: state.newExtractName.trim(),
                     created_by: state.user.id,
@@ -3444,6 +3540,12 @@
                 if (!response.ok) {
                     const errorData = await response.json();
                     console.error('Extract creation failed:', errorData);
+
+                    // Check if this is a UUID type error
+                    if (errorData.message && errorData.message.includes('uuid')) {
+                        throw new Error('Database schema error: The images table uses integer IDs but the extracts table expects UUIDs. Please contact the administrator to migrate the images table to use UUID primary keys.');
+                    }
+
                     throw new Error(errorData.message || 'Failed to create extract');
                 }
 
@@ -4170,18 +4272,31 @@
                 handle: '.cursor-move',
                 ghostClass: 'bg-blue-100',
                 onEnd: async (evt) => {
-                    // Reorder the state.groups array
-                    const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
-                    state.groups.splice(evt.newIndex, 0, movedFolder);
+                    try {
+                        // Reorder the state.groups array
+                        const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
+                        state.groups.splice(evt.newIndex, 0, movedFolder);
 
-                    // Update display_order for all folders
-                    for (let i = 0; i < state.groups.length; i++) {
-                        await saveFolderOrder(state.groups[i].id, i);
+                        // Collect all update promises and execute in parallel
+                        const updatePromises = state.groups.map((group, index) =>
+                            saveFolderOrder(group.id, index)
+                        );
+
+                        // Wait for all saves to complete before proceeding
+                        await Promise.all(updatePromises);
+
+                        // Only reload and re-render after successful save
+                        await loadGroups();
+                        render();
+                        setTimeout(initializeFolderSortable, 100);
+                    } catch (error) {
+                        console.error('Failed to save folder order:', error);
+                        showToast('Failed to save folder order', 'error');
+                        // Reload to revert visual state
+                        await loadGroups();
+                        render();
+                        setTimeout(initializeFolderSortable, 100);
                     }
-
-                    await loadGroups();
-                    render();
-                    setTimeout(initializeFolderSortable, 100);
                 }
             });
 
@@ -4194,22 +4309,35 @@
                         handle: '.cursor-move',
                         ghostClass: 'bg-blue-100',
                         onEnd: async (evt) => {
-                            const folderId = itemsList.dataset.folderId;
-                            const folder = state.groups.find(g => g.id === folderId);
-                            if (!folder) return;
+                            try {
+                                const folderId = itemsList.dataset.folderId;
+                                const folder = state.groups.find(g => g.id === folderId);
+                                if (!folder) return;
 
-                            // Reorder the items array
-                            const movedItem = folder.items.splice(evt.oldIndex, 1)[0];
-                            folder.items.splice(evt.newIndex, 0, movedItem);
+                                // Reorder the items array
+                                const movedItem = folder.items.splice(evt.oldIndex, 1)[0];
+                                folder.items.splice(evt.newIndex, 0, movedItem);
 
-                            // Update display_order for all items in this folder
-                            for (let i = 0; i < folder.items.length; i++) {
-                                await saveItemOrder(folderId, folder.items[i].item_id, folder.items[i].item_type, i);
+                                // Collect all update promises and execute in parallel
+                                const updatePromises = folder.items.map((item, index) =>
+                                    saveItemOrder(folderId, item.item_id, item.item_type, index)
+                                );
+
+                                // Wait for all saves to complete before proceeding
+                                await Promise.all(updatePromises);
+
+                                // Only reload and re-render after successful save
+                                await loadGroups();
+                                render();
+                                setTimeout(initializeFolderSortable, 100);
+                            } catch (error) {
+                                console.error('Failed to save item order:', error);
+                                showToast('Failed to save item order', 'error');
+                                // Reload to revert visual state
+                                await loadGroups();
+                                render();
+                                setTimeout(initializeFolderSortable, 100);
                             }
-
-                            await loadGroups();
-                            render();
-                            setTimeout(initializeFolderSortable, 100);
                         }
                     });
                 }
@@ -4483,46 +4611,40 @@
         }
 
         async function saveFolderOrder(folderId, newOrder) {
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
-                    body: JSON.stringify({
-                        display_order: newOrder
-                    })
-                });
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                },
+                body: JSON.stringify({
+                    display_order: newOrder
+                })
+            });
 
-                if (!response.ok) {
-                    throw new Error('Failed to update folder order');
-                }
-            } catch (error) {
-                console.error('Error saving folder order:', error);
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(`Failed to update folder order: ${error.message || response.statusText}`);
             }
         }
 
         async function saveItemOrder(groupId, itemId, itemType, newOrder) {
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
-                    body: JSON.stringify({
-                        display_order: newOrder
-                    })
-                });
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                },
+                body: JSON.stringify({
+                    display_order: newOrder
+                })
+            });
 
-                if (!response.ok) {
-                    throw new Error('Failed to update item order');
-                }
-            } catch (error) {
-                console.error('Error saving item order:', error);
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(`Failed to update item order: ${error.message || response.statusText}`);
             }
         }
 
@@ -4742,7 +4864,7 @@
             const isSelectItem = state.modal.type === 'selectItem';
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeModal()">
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-${isSelectItem ? '2xl' : 'md'} w-full ${isSelectItem ? 'max-h-[80vh]' : ''} p-6 modal-content ${isSelectItem ? 'flex flex-col' : ''}" onclick="event.stopPropagation()">
                         <div class="text-center mb-2 ${isSelectItem ? 'flex-shrink-0' : ''}">
                             <div class="text-5xl mb-2">${state.modal.icon}</div>
@@ -4988,7 +5110,7 @@
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-2 ${isSelected ? 'border-yellow-500 ring-2 ring-2 ring-yellow-300' : 'border-transparent hover:border-yellow-400'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleExtractImage('${image.id}')"
                                             >
                                             <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
@@ -4997,9 +5119,9 @@
                                                     ${image.label}
                                                 </div>
                                             ` : ''}
-                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-yellow-500' : 'border-gray-300'}">
+                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
                                                 ${isSelected ? `
-                                                    <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                                                     </svg>
                                                 ` : `
