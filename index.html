@@ -6028,9 +6028,20 @@
                                 !itemsInFolders.has(`${item.itemType}:${item.id}`)
                             );
 
+                            // Pinned folder ID - always first, always expanded, red gradient
+                            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
+
+                            // Sort folders: pinned first, then others
+                            const sortedGroups = [...state.groups].sort((a, b) => {
+                                if (a.id === PINNED_FOLDER_ID) return -1;
+                                if (b.id === PINNED_FOLDER_ID) return 1;
+                                return 0;
+                            });
+
                             return `
-                                ${state.groups.map(group => {
-                                    const isExpanded = state.expandedFolderIds.includes(group.id);
+                                ${sortedGroups.map(group => {
+                                    const isPinned = group.id === PINNED_FOLDER_ID;
+                                    const isExpanded = isPinned || state.expandedFolderIds.includes(group.id);
                                     // Get actual items for this folder
                                     const folderItems = (group.items || []).map(item => {
                                         if (item.item_type === 'contest') {
@@ -6046,9 +6057,16 @@
                                         return null;
                                     }).filter(Boolean);
 
+                                    const headerGradient = isPinned
+                                        ? 'bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700'
+                                        : 'bg-gradient-to-r from-mauve-400 to-mauve-600 hover:from-mauve-500 hover:to-mauve-700';
+                                    const contentGradient = isPinned
+                                        ? 'bg-gradient-to-b from-red-50 to-red-100'
+                                        : 'bg-gradient-to-b from-pink-50 to-pink-100';
+
                                     return `
                                         <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
-                                            <div class="bg-gradient-to-r from-mauve-400 to-mauve-600 p-4 cursor-pointer hover:from-mauve-500 hover:to-mauve-700 transition" onclick="toggleFolderExpanded('${group.id}')">
+                                            <div class="${headerGradient} p-4 cursor-pointer transition" onclick="toggleFolderExpanded('${group.id}')">
                                                 <div class="flex items-center gap-3 text-white">
                                                     <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -6061,7 +6079,7 @@
                                                 </div>
                                             </div>
                                             ${isExpanded ? `
-                                                <div class="p-4 bg-gradient-to-b from-pink-50 to-pink-100">
+                                                <div class="p-4 ${contentGradient}">
                                                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                                         ${folderItems.map(item => {
                                                             if (item.itemType === 'merger') {
@@ -6414,11 +6432,9 @@
             const hasVotedNone = votedContests.length === 0;
 
             const isBanned = state.bannedUsers.includes(state.user.id);
-            const createdDate = formatDate(merger.createdAt);
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    <div class="absolute top-2 left-2 bg-blue-500 text-white px-2 py-0.5 rounded text-xs font-bold">MERGE</div>
                     <div class="flex items-start gap-2 mb-2">
                         <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
                         <div class="flex-1 min-w-0">
@@ -6426,7 +6442,7 @@
                                 <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
                                 <span class="ml-auto whitespace-nowrap">${voterRange} ${totalImages}🖼️</span>
                             </div>
                         </div>
