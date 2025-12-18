@@ -368,7 +368,10 @@
             isLoading: false,
             loadingMessage: '',
             showUserDropdown: false,  // User menu dropdown state
-            showMergedContestsDropdown: false  // Merged contests dropdown state
+            showMergedContestsDropdown: false,  // Merged contests dropdown state
+            currentMergerId: null,  // ID of current merger being voted on
+            mergerContestIds: [],  // Array of contest IDs in current merger voting session
+            selectedFolderItems: []  // Array of indices for multi-select in Add Item modal
         };
 
         function shuffleArray(array) {
@@ -483,22 +486,22 @@
             // Special styling for missing votes - black text on dark gray background
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
-            // Blue (4.5-5.0) - matches View Results button color
-            if (min >= 4.5) return { color: 'text-blue-600', bg: 'bg-blue-50', textColor: 'rgb(37, 99, 235)', bgColor: 'rgb(239, 246, 255)' };
-            // Cyan (4.0-4.49) - blue-green/aqua
-            if (min >= 4.0) return { color: 'text-cyan-600', bg: 'bg-cyan-50', textColor: 'rgb(8, 145, 178)', bgColor: 'rgb(236, 254, 255)' };
-            // Green (3.5-3.99) - pure green
-            if (min >= 3.5) return { color: 'text-green-600', bg: 'bg-green-50', textColor: 'rgb(22, 163, 74)', bgColor: 'rgb(240, 253, 244)' };
-            // Lime (3.0-3.49) - yellow-green
-            if (min >= 3.0) return { color: 'text-lime-600', bg: 'bg-lime-100', textColor: 'rgb(101, 163, 13)', bgColor: 'rgb(236, 252, 203)' };
-            // Yellow (2.5-2.99) - pure yellow
-            if (min >= 2.5) return { color: 'text-yellow-600', bg: 'bg-yellow-50', textColor: 'rgb(202, 138, 4)', bgColor: 'rgb(254, 252, 232)' };
-            // Light orange (2.0-2.49) - yellow-orange
-            if (min >= 2.0) return { color: 'text-orange-500', bg: 'bg-orange-100', textColor: 'rgb(249, 115, 22)', bgColor: 'rgb(255, 237, 213)' };
-            // Orange (1.5-1.99) - pure orange
-            if (min >= 1.5) return { color: 'text-orange-600', bg: 'bg-orange-200', textColor: 'rgb(234, 88, 12)', bgColor: 'rgb(254, 215, 170)' };
-            // Red (1.0-1.49) - pure red
-            if (min >= 1.0) return { color: 'text-red-600', bg: 'bg-red-200', textColor: 'rgb(220, 38, 38)', bgColor: 'rgb(254, 202, 202)' };
+            // Strong blue (4.5-5.0) - highest scores
+            if (min >= 4.5) return { color: 'text-blue-700', bg: 'bg-blue-100', textColor: 'rgb(29, 78, 216)', bgColor: 'rgb(219, 234, 254)' };
+            // Saturated cyan (4.0-4.49) - very good scores
+            if (min >= 4.0) return { color: 'text-cyan-700', bg: 'bg-cyan-100', textColor: 'rgb(14, 116, 144)', bgColor: 'rgb(207, 250, 254)' };
+            // Bright green (3.5-3.99) - good scores
+            if (min >= 3.5) return { color: 'text-green-700', bg: 'bg-green-100', textColor: 'rgb(21, 128, 61)', bgColor: 'rgb(220, 252, 231)' };
+            // Lime-green (3.0-3.49) - above average, MUST be green
+            if (min >= 3.0) return { color: 'text-lime-700', bg: 'bg-lime-100', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
+            // Lemon yellow (2.5-2.99) - average, more saturated
+            if (min >= 2.5) return { color: 'text-yellow-700', bg: 'bg-yellow-100', textColor: 'rgb(161, 98, 7)', bgColor: 'rgb(254, 249, 195)' };
+            // Gold/amber (2.0-2.49) - below average, distinct from orange
+            if (min >= 2.0) return { color: 'text-amber-700', bg: 'bg-amber-100', textColor: 'rgb(180, 83, 9)', bgColor: 'rgb(254, 243, 199)' };
+            // Orange (1.5-1.99) - low scores, distinct from red
+            if (min >= 1.5) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
+            // Strong red (1.0-1.49) - lowest scores, bolder background
+            if (min >= 1.0) return { color: 'text-red-700', bg: 'bg-red-200', textColor: 'rgb(185, 28, 28)', bgColor: 'rgb(254, 202, 202)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
@@ -725,6 +728,44 @@
 
         // Temporary stub for merge functionality - returns empty results
         // TODO: Implement proper async merge functionality with database queries
+        // Tie-breaking logic: when scores are equal, count 5s, 4s, 3s, 2s, 1s
+        function compareWithTieBreaking(a, b) {
+            // First, compare by average score
+            const scoreDiff = b.averageScore - a.averageScore;
+            if (Math.abs(scoreDiff) > 0.001) return scoreDiff; // Not a tie
+
+            // Tie detected - count votes by score level
+            const getVoteCounts = (item) => {
+                const counts = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+                if (item.breakdown && Array.isArray(item.breakdown)) {
+                    item.breakdown.forEach(vote => {
+                        if (!vote.isBlocked && counts[vote.score] !== undefined) {
+                            counts[vote.score]++;
+                        }
+                    });
+                }
+                return counts;
+            };
+
+            const countsA = getVoteCounts(a);
+            const countsB = getVoteCounts(b);
+
+            // Compare 5s, then 4s, then 3s, etc.
+            for (let score = 5; score >= 1; score--) {
+                if (countsB[score] !== countsA[score]) {
+                    return countsB[score] - countsA[score];
+                }
+            }
+
+            // If still equal, use total vote count
+            const totalA = a.breakdown?.filter(v => !v.isBlocked).length || 0;
+            const totalB = b.breakdown?.filter(v => !v.isBlocked).length || 0;
+            if (totalB !== totalA) return totalB - totalA;
+
+            // If still equal, maintain original order
+            return 0;
+        }
+
         function groupByScoreRange(results) {
             const ranges = [
                 { min: 4.5, max: 5.0 },
@@ -756,7 +797,7 @@
                 const items = results.filter(r => r.averageScore > 0 && r.averageScore >= range.min && r.averageScore <= range.max);
                 if (items.length > 0) {
                     grouped[key] = {
-                        items: items.sort((a, b) => b.averageScore - a.averageScore),
+                        items: items.sort(compareWithTieBreaking),
                         min: range.min,
                         max: range.max
                     };
@@ -948,89 +989,134 @@
                 }
             }, 10000);
 
+            // Check if we're in merger voting mode
+            const isMergerVoting = state.currentMergerId && state.mergerContestIds.length > 0;
+
             const votesToSubmit = [];
             state.shuffledImages.forEach(img => {
                 if (state.votes[img.id]) {
+                    // Find which contest this image belongs to
+                    let contestId;
+                    if (isMergerVoting) {
+                        // In merger mode, find the original contest for each image
+                        const contest = state.contests.find(c =>
+                            state.mergerContestIds.includes(c.id) &&
+                            c.images.some(i => i.id === img.id)
+                        );
+                        contestId = contest ? contest.id : state.mergerContestIds[0];
+                    } else {
+                        contestId = state.currentContest.id;
+                    }
+
                     votesToSubmit.push({
                         user_id: state.user.id,
                         image_id: img.id,
-                        contest_id: state.currentContest.id,
+                        contest_id: contestId,
                         score: state.votes[img.id]
                     });
                 }
             });
 
             try {
-                // Check if votes already exist for this user and contest
-                const existingVotesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${state.currentContest.id}&select=*`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
+                // Group votes by contest for checking existing votes
+                const votesByContest = {};
+                votesToSubmit.forEach(vote => {
+                    if (!votesByContest[vote.contest_id]) {
+                        votesByContest[vote.contest_id] = [];
                     }
-                );
+                    votesByContest[vote.contest_id].push(vote);
+                });
 
-                if (!existingVotesResponse.ok) {
-                    throw new Error('Failed to check existing votes');
-                }
+                // Process votes for each contest
+                for (const contestId of Object.keys(votesByContest)) {
+                    const contestVotes = votesByContest[contestId];
 
-                const existingVotes = await existingVotesResponse.json();
-
-                if (existingVotes.length > 0) {
-                    // Votes exist - update them using PATCH
-                    // We need to update each vote individually by matching user_id, contest_id, and image_id
-                    const updatePromises = votesToSubmit.map(async (vote) => {
-                        const response = await fetch(
-                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
-                            {
-                                method: 'PATCH',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': SUPABASE_ANON_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                    'Prefer': 'return=minimal',
-                                    'Cache-Control': 'no-cache'
-                                },
-                                body: JSON.stringify({ score: vote.score })
+                    // Check if votes already exist for this user and contest
+                    const existingVotesResponse = await fetch(
+                        `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&select=*`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
                             }
-                        );
+                        }
+                    );
+
+                    if (!existingVotesResponse.ok) {
+                        throw new Error('Failed to check existing votes');
+                    }
+
+                    const existingVotes = await existingVotesResponse.json();
+
+                    if (existingVotes.length > 0) {
+                        // Votes exist - update them using PATCH
+                        const updatePromises = contestVotes.map(async (vote) => {
+                            const response = await fetch(
+                                `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'apikey': SUPABASE_ANON_KEY,
+                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                        'Prefer': 'return=minimal',
+                                        'Cache-Control': 'no-cache'
+                                    },
+                                    body: JSON.stringify({ score: vote.score })
+                                }
+                            );
+
+                            if (!response.ok) {
+                                throw new Error(`Failed to update vote for image ${vote.image_id}`);
+                            }
+                        });
+
+                        await Promise.all(updatePromises);
+                    } else {
+                        // No existing votes - insert new ones using POST
+                        const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Prefer': 'return=minimal',
+                                'Cache-Control': 'no-cache'
+                            },
+                            body: JSON.stringify(contestVotes)
+                        });
 
                         if (!response.ok) {
-                            throw new Error(`Failed to update vote for image ${vote.image_id}`);
+                            throw new Error('Failed to submit votes');
                         }
-                    });
-
-                    await Promise.all(updatePromises);
-                } else {
-                    // No existing votes - insert new ones using POST
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'return=minimal',
-                            'Cache-Control': 'no-cache'
-                        },
-                        body: JSON.stringify(votesToSubmit)
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to submit votes');
                     }
                 }
 
                 await loadUserVotes();
                 state.hasSubmitted = true;
 
-                // Switch to results view
-                state.view = 'results';
+                // Navigate to appropriate results view
+                if (isMergerVoting) {
+                    // Load merged results and display
+                    const merger = state.mergers.find(m => m.id === state.currentMergerId);
+                    if (merger) {
+                        await loadMergedResults(merger.contestIds);
+                        state.view = 'mergedResults';
+                        state.resultsView = 'average';
+                        state.showMyVotes = false;
 
-                // Load results data
-                await loadResults();
+                        // Update URL hash
+                        window.location.hash = `merge=${state.currentMergerId}`;
+                    }
+                } else {
+                    // Switch to single contest results view
+                    state.view = 'results';
+                    await loadResults();
+
+                    // Update URL hash
+                    window.location.hash = `contest=${state.currentContest.id}`;
+                }
 
                 // Refresh contest list to update voter counts
                 await loadContests();
@@ -2753,6 +2839,10 @@
             state.results = null;
             state.view = 'vote';
 
+            // Clear merger context (we're voting on a single contest)
+            state.currentMergerId = null;
+            state.mergerContestIds = [];
+
             // Update URL hash for shareable link
             window.location.hash = `contest=${contest.id}`;
 
@@ -3158,7 +3248,7 @@
             render();
         }
 
-        async function startMergerVoting(mergerId) {
+        async function startMergerVoting(mergerId, revoteAll = false) {
             const merger = state.mergers.find(m => m.id === mergerId);
             if (!merger) {
                 showToast('Merger not found', 'error');
@@ -3168,7 +3258,7 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Filter out locked contests
+            // Filter out locked contests (unless revoting all)
             const unlockedContests = mergedContests.filter(c => !c.isLocked);
 
             if (unlockedContests.length === 0) {
@@ -3176,8 +3266,44 @@
                 return;
             }
 
-            // Start voting on the first unlocked contest
-            startVoting(unlockedContests[0]);
+            // Determine which contests to vote on based on user's vote status
+            let contestsToVote;
+            if (revoteAll) {
+                // Revote all unlocked contests
+                contestsToVote = unlockedContests;
+            } else {
+                // Check which contests user hasn't voted in yet
+                const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
+                contestsToVote = unvotedContests.length > 0 ? unvotedContests : unlockedContests;
+            }
+
+            // Collect all images from the contests to vote on
+            const allImages = contestsToVote.flatMap(c => c.images);
+
+            if (allImages.length === 0) {
+                showToast('No images available to vote on', 'error');
+                return;
+            }
+
+            // Store merger context
+            state.currentMergerId = mergerId;
+            state.mergerContestIds = contestsToVote.map(c => c.id);
+
+            // Shuffle all images together
+            state.shuffledImages = shuffleArray(allImages);
+            state.votes = {};
+            state.currentImageIndex = 0;
+            state.hasSubmitted = false;
+            state.results = null;
+            state.view = 'vote';
+
+            // Set currentContest to null to indicate merger voting mode
+            state.currentContest = null;
+
+            // Update URL hash for shareable link
+            window.location.hash = `merge=${mergerId}`;
+
+            render();
         }
 
         function revoteMerge() {
@@ -3186,25 +3312,8 @@
                 return;
             }
 
-            const merger = state.mergers.find(m => m.id === state.currentMergerId);
-            if (!merger) {
-                showToast('Merger not found', 'error');
-                return;
-            }
-
-            // Get all contests in the merger
-            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-
-            // Filter out locked contests
-            const unlockedContests = mergedContests.filter(c => !c.isLocked);
-
-            if (unlockedContests.length === 0) {
-                showToast('All contests in this merger are locked', 'error');
-                return;
-            }
-
-            // Start voting on the first unlocked contest
-            startVoting(unlockedContests[0]);
+            // Restart merger voting with revote all flag
+            startMergerVoting(state.currentMergerId, true);
         }
 
         function showMergerVoteModal(mergerId) {
@@ -3217,12 +3326,13 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Find which contests user hasn't voted in
-            const unvotedContests = mergedContests.filter(c => !state.userVotedContests[c.id]);
-            const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+            // Find which contests user hasn't voted in (excluding locked ones)
+            const unlockedContests = mergedContests.filter(c => !c.isLocked);
+            const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
+            const votedContests = unlockedContests.filter(c => state.userVotedContests[c.id]);
 
             // Show modal with options
-            const message = `You've voted in ${votedContests.length} out of ${mergedContests.length} contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
+            const message = `You've voted in ${votedContests.length} out of ${unlockedContests.length} unlocked contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
 
             state.modal = {
                 title: 'Partial Votes - ' + merger.name,
@@ -3234,9 +3344,8 @@
                         action: () => {
                             state.modal = null;
                             document.body.classList.remove('modal-open');
-                            if (unvotedContests.length > 0) {
-                                startVoting(unvotedContests[0]);
-                            }
+                            // Start voting on missing contests only
+                            startMergerVoting(mergerId, false);
                         }
                     },
                     {
@@ -3245,9 +3354,8 @@
                         action: () => {
                             state.modal = null;
                             document.body.classList.remove('modal-open');
-                            if (mergedContests.length > 0) {
-                                startVoting(mergedContests[0]);
-                            }
+                            // Start voting on all contests
+                            startMergerVoting(mergerId, true);
                         }
                     },
                     {
@@ -3358,20 +3466,20 @@
 
                 if (borderDiv) {
                     if (isSelected) {
-                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-2 border-yellow-500 ring-2 ring-yellow-300';
+                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-4 border-blue-500 bg-blue-50';
                     } else {
-                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-2 border-transparent hover:border-yellow-400';
+                        borderDiv.className = 'relative cursor-pointer rounded-lg overflow-hidden border-4 border-transparent hover:border-blue-300';
                     }
                 }
 
                 if (checkboxDiv) {
                     if (isSelected) {
                         checkboxDiv.innerHTML = `
-                            <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                             </svg>
                         `;
-                        checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-yellow-500';
+                        checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-blue-500';
                     } else {
                         checkboxDiv.innerHTML = '<div class="w-4 h-4 border-2 border-gray-400 rounded"></div>';
                         checkboxDiv.className = 'absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-gray-300';
@@ -3382,14 +3490,30 @@
 
         function setExtractName(name) {
             state.newExtractName = name;
-            // Don't render to avoid input blur - button state will be updated on blur
+            // Update button state without full render
+            updateExtractSaveButtonState();
         }
 
         function updateExtractNameOnBlur() {
             const input = document.getElementById('extract-name-input');
             if (input) {
                 state.newExtractName = input.value;
-                render();
+                // Update save button state without full re-render to preserve selection visual state
+                updateExtractSaveButtonState();
+            }
+        }
+
+        function updateExtractSaveButtonState() {
+            // Update save button state without full re-render
+            const saveButton = document.querySelector('[data-extract-save]');
+            if (saveButton) {
+                const canSave = state.extractSelectedImages.length > 0 && state.newExtractName && state.newExtractName.trim() !== '';
+                saveButton.disabled = !canSave;
+                if (canSave) {
+                    saveButton.className = 'flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-yellow-500 to-yellow-600 text-white hover:from-yellow-600 hover:to-yellow-700';
+                } else {
+                    saveButton.className = 'flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-300 text-gray-500 cursor-not-allowed';
+                }
             }
         }
 
@@ -3407,6 +3531,17 @@
             setLoading('Creating extract...');
 
             try {
+                // Validate that all image IDs are valid UUIDs
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                const invalidIds = state.extractSelectedImages.filter(id => {
+                    return typeof id !== 'string' || !uuidRegex.test(id);
+                });
+
+                if (invalidIds.length > 0) {
+                    console.error('Invalid image IDs found:', invalidIds);
+                    throw new Error(`Database schema error: Image IDs must be UUIDs. Found invalid IDs: ${invalidIds.join(', ')}. Please contact the administrator to migrate the images table to use UUID primary keys.`);
+                }
+
                 const extractData = {
                     name: state.newExtractName.trim(),
                     created_by: state.user.id,
@@ -3444,6 +3579,12 @@
                 if (!response.ok) {
                     const errorData = await response.json();
                     console.error('Extract creation failed:', errorData);
+
+                    // Check if this is a UUID type error
+                    if (errorData.message && errorData.message.includes('uuid')) {
+                        throw new Error('Database schema error: The images table uses integer IDs but the extracts table expects UUIDs. Please contact the administrator to migrate the images table to use UUID primary keys.');
+                    }
+
                     throw new Error(errorData.message || 'Failed to create extract');
                 }
 
@@ -4170,18 +4311,31 @@
                 handle: '.cursor-move',
                 ghostClass: 'bg-blue-100',
                 onEnd: async (evt) => {
-                    // Reorder the state.groups array
-                    const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
-                    state.groups.splice(evt.newIndex, 0, movedFolder);
+                    try {
+                        // Reorder the state.groups array
+                        const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
+                        state.groups.splice(evt.newIndex, 0, movedFolder);
 
-                    // Update display_order for all folders
-                    for (let i = 0; i < state.groups.length; i++) {
-                        await saveFolderOrder(state.groups[i].id, i);
+                        // Collect all update promises and execute in parallel
+                        const updatePromises = state.groups.map((group, index) =>
+                            saveFolderOrder(group.id, index)
+                        );
+
+                        // Wait for all saves to complete before proceeding
+                        await Promise.all(updatePromises);
+
+                        // Only reload and re-render after successful save
+                        await loadGroups();
+                        render();
+                        setTimeout(initializeFolderSortable, 100);
+                    } catch (error) {
+                        console.error('Failed to save folder order:', error);
+                        showToast('Failed to save folder order', 'error');
+                        // Reload to revert visual state
+                        await loadGroups();
+                        render();
+                        setTimeout(initializeFolderSortable, 100);
                     }
-
-                    await loadGroups();
-                    render();
-                    setTimeout(initializeFolderSortable, 100);
                 }
             });
 
@@ -4194,22 +4348,35 @@
                         handle: '.cursor-move',
                         ghostClass: 'bg-blue-100',
                         onEnd: async (evt) => {
-                            const folderId = itemsList.dataset.folderId;
-                            const folder = state.groups.find(g => g.id === folderId);
-                            if (!folder) return;
+                            try {
+                                const folderId = itemsList.dataset.folderId;
+                                const folder = state.groups.find(g => g.id === folderId);
+                                if (!folder) return;
 
-                            // Reorder the items array
-                            const movedItem = folder.items.splice(evt.oldIndex, 1)[0];
-                            folder.items.splice(evt.newIndex, 0, movedItem);
+                                // Reorder the items array
+                                const movedItem = folder.items.splice(evt.oldIndex, 1)[0];
+                                folder.items.splice(evt.newIndex, 0, movedItem);
 
-                            // Update display_order for all items in this folder
-                            for (let i = 0; i < folder.items.length; i++) {
-                                await saveItemOrder(folderId, folder.items[i].item_id, folder.items[i].item_type, i);
+                                // Collect all update promises and execute in parallel
+                                const updatePromises = folder.items.map((item, index) =>
+                                    saveItemOrder(folderId, item.item_id, item.item_type, index)
+                                );
+
+                                // Wait for all saves to complete before proceeding
+                                await Promise.all(updatePromises);
+
+                                // Only reload and re-render after successful save
+                                await loadGroups();
+                                render();
+                                setTimeout(initializeFolderSortable, 100);
+                            } catch (error) {
+                                console.error('Failed to save item order:', error);
+                                showToast('Failed to save item order', 'error');
+                                // Reload to revert visual state
+                                await loadGroups();
+                                render();
+                                setTimeout(initializeFolderSortable, 100);
                             }
-
-                            await loadGroups();
-                            render();
-                            setTimeout(initializeFolderSortable, 100);
                         }
                     });
                 }
@@ -4393,20 +4560,127 @@
             // Store data in state for the modal
             state.folderItemsToAdd = availableItems;
             state.targetFolderId = folderId;
+            state.selectedFolderItems = []; // Reset selections
 
             // Show custom selection modal
             state.modal = {
                 type: 'selectItem',
                 icon: '📁',
-                title: 'Add Item to Folder',
-                message: 'Select an item to add to this folder:',
+                title: 'Add Items to Folder',
+                message: 'Select one or more items to add to this folder:',
                 items: availableItems,
                 buttons: [
-                    { text: 'Cancel', action: 'closeModal', primary: false }
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Add Selected Items', action: 'confirmAddMultipleItemsToFolder', primary: true }
                 ]
             };
             document.body.classList.add('modal-open');
             render();
+        }
+
+        function toggleFolderItemSelection(itemIndex) {
+            const index = state.selectedFolderItems.indexOf(itemIndex);
+            if (index > -1) {
+                state.selectedFolderItems.splice(index, 1);
+            } else {
+                state.selectedFolderItems.push(itemIndex);
+            }
+
+            // Update the visual state of checkboxes without full re-render
+            const checkbox = document.querySelector(`[data-folder-item-index="${itemIndex}"]`);
+            if (checkbox) {
+                const isSelected = state.selectedFolderItems.includes(itemIndex);
+                const checkboxIcon = checkbox.querySelector('.checkbox-icon');
+                if (checkboxIcon) {
+                    if (isSelected) {
+                        checkboxIcon.innerHTML = `
+                            <svg class="w-5 h-5 text-mauve-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        `;
+                        checkbox.classList.add('border-mauve-400', 'bg-mauve-50');
+                        checkbox.classList.remove('border-gray-200');
+                    } else {
+                        checkboxIcon.innerHTML = '<div class="w-4 h-4 border-2 border-gray-400 rounded"></div>';
+                        checkbox.classList.remove('border-mauve-400', 'bg-mauve-50');
+                        checkbox.classList.add('border-gray-200');
+                    }
+                }
+            }
+
+            // Update button state
+            const addButton = document.querySelector('[data-add-items-button]');
+            if (addButton) {
+                if (state.selectedFolderItems.length > 0) {
+                    addButton.disabled = false;
+                    addButton.className = 'px-5 py-2 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700';
+                    addButton.textContent = `Add Selected Items (${state.selectedFolderItems.length})`;
+                } else {
+                    addButton.disabled = true;
+                    addButton.className = 'px-5 py-2 rounded-lg font-semibold transition text-sm bg-gray-300 text-gray-500 cursor-not-allowed';
+                    addButton.textContent = 'Add Selected Items';
+                }
+            }
+        }
+
+        async function confirmAddMultipleItemsToFolder() {
+            if (state.modalProcessing) return;
+            if (state.selectedFolderItems.length === 0) {
+                showToast('Please select at least one item', 'error');
+                return;
+            }
+
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            const folderId = state.targetFolderId;
+
+            try {
+                setLoading(`Adding ${state.selectedFolderItems.length} item(s) to folder...`);
+                const folder = state.groups.find(g => g.id === folderId);
+                const maxOrder = folder?.items?.length > 0 ? Math.max(...folder.items.map(i => i.display_order || 0)) : -1;
+
+                // Prepare batch of items to insert
+                const itemsToInsert = state.selectedFolderItems.map((itemIndex, idx) => {
+                    const selectedItem = state.folderItemsToAdd[itemIndex];
+                    return {
+                        group_id: folderId,
+                        item_id: selectedItem.id,
+                        item_type: selectedItem.type,
+                        display_order: maxOrder + idx + 1
+                    };
+                });
+
+                // Batch insert all items
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify(itemsToInsert)
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to add items to folder');
+                }
+
+                await loadGroups();
+                showToast(`Added ${state.selectedFolderItems.length} item(s) successfully`, 'success');
+                state.selectedFolderItems = [];
+                render();
+                setTimeout(initializeFolderSortable, 100);
+            } catch (error) {
+                console.error('Error adding items to folder:', error);
+                showToast('Failed to add items: ' + error.message, 'error');
+                render();
+            } finally {
+                state.modalProcessing = false;
+                clearLoading();
+            }
         }
 
         async function selectFolderItem(itemIndex) {
@@ -4483,46 +4757,40 @@
         }
 
         async function saveFolderOrder(folderId, newOrder) {
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
-                    body: JSON.stringify({
-                        display_order: newOrder
-                    })
-                });
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                },
+                body: JSON.stringify({
+                    display_order: newOrder
+                })
+            });
 
-                if (!response.ok) {
-                    throw new Error('Failed to update folder order');
-                }
-            } catch (error) {
-                console.error('Error saving folder order:', error);
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(`Failed to update folder order: ${error.message || response.statusText}`);
             }
         }
 
         async function saveItemOrder(groupId, itemId, itemType, newOrder) {
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
-                    body: JSON.stringify({
-                        display_order: newOrder
-                    })
-                });
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                },
+                body: JSON.stringify({
+                    display_order: newOrder
+                })
+            });
 
-                if (!response.ok) {
-                    throw new Error('Failed to update item order');
-                }
-            } catch (error) {
-                console.error('Error saving item order:', error);
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(`Failed to update item order: ${error.message || response.statusText}`);
             }
         }
 
@@ -4742,7 +5010,7 @@
             const isSelectItem = state.modal.type === 'selectItem';
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeModal()">
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-${isSelectItem ? '2xl' : 'md'} w-full ${isSelectItem ? 'max-h-[80vh]' : ''} p-6 modal-content ${isSelectItem ? 'flex flex-col' : ''}" onclick="event.stopPropagation()">
                         <div class="text-center mb-2 ${isSelectItem ? 'flex-shrink-0' : ''}">
                             <div class="text-5xl mb-2">${state.modal.icon}</div>
@@ -4761,15 +5029,25 @@
                                 <div class="space-y-2">
                                     ${state.modal.items.map((item, idx) => {
                                         const typeColor = item.type === 'contest' ? 'mauve' : item.type === 'merger' ? 'blue' : 'yellow';
+                                        const isSelected = state.selectedFolderItems.includes(idx);
                                         return `
-                                            <div class="border-2 border-gray-200 rounded-lg p-3 cursor-pointer hover:border-${typeColor}-400 hover:bg-${typeColor}-50 transition"
-                                                 onclick="selectFolderItem(${idx})">
-                                                <div class="flex items-center justify-between">
-                                                    <div>
+                                            <div data-folder-item-index="${idx}" class="border-2 ${isSelected ? 'border-mauve-400 bg-mauve-50' : 'border-gray-200'} rounded-lg p-3 cursor-pointer hover:border-${typeColor}-400 hover:bg-${typeColor}-50 transition"
+                                                 onclick="toggleFolderItemSelection(${idx})">
+                                                <div class="flex items-center gap-3">
+                                                    <div class="checkbox-icon flex-shrink-0 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border-2 ${isSelected ? 'border-mauve-500' : 'border-gray-300'}">
+                                                        ${isSelected ? `
+                                                            <svg class="w-5 h-5 text-mauve-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                            </svg>
+                                                        ` : `
+                                                            <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
+                                                        `}
+                                                    </div>
+                                                    <div class="flex-1">
                                                         <div class="font-semibold text-gray-800">${item.title}</div>
                                                         <div class="text-xs text-gray-500 uppercase">${item.type}</div>
                                                     </div>
-                                                    <div class="text-2xl">
+                                                    <div class="text-2xl flex-shrink-0">
                                                         ${item.type === 'contest' ? '🎨' : item.type === 'merger' ? '🔀' : '⭐'}
                                                     </div>
                                                 </div>
@@ -4800,12 +5078,20 @@
                                 } else {
                                     onclick = `${btn.action}()`;
                                 }
+
+                                const isAddButton = btn.action === 'confirmAddMultipleItemsToFolder';
+                                const isDisabled = isAddButton && state.selectedFolderItems.length === 0;
+
                                 return `
                                     <button
+                                        ${isAddButton ? 'data-add-items-button' : ''}
+                                        ${isDisabled ? 'disabled' : ''}
                                         onclick="${onclick}"
                                         class="px-5 py-2 rounded-lg font-semibold transition text-sm ${
                                             btn.primary
-                                                ? 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700'
+                                                ? isDisabled
+                                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                    : 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700'
                                                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                         }"
                                     >
@@ -4988,7 +5274,7 @@
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-2 ${isSelected ? 'border-yellow-500 ring-2 ring-2 ring-yellow-300' : 'border-transparent hover:border-yellow-400'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleExtractImage('${image.id}')"
                                             >
                                             <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
@@ -4997,9 +5283,9 @@
                                                     ${image.label}
                                                 </div>
                                             ` : ''}
-                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-yellow-500' : 'border-gray-300'}">
+                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
                                                 ${isSelected ? `
-                                                    <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                                                     </svg>
                                                 ` : `
@@ -5544,10 +5830,14 @@
 
             // Filter contests
             let filteredContests = state.contests;
+            let filteredMergers = state.mergers;
+            let filteredExtracts = state.extracts;
 
             // Filter by creator
             if (state.filters.createdBy) {
                 filteredContests = filteredContests.filter(c => c.createdBy === state.filters.createdBy);
+                filteredMergers = filteredMergers.filter(m => m.createdBy === state.filters.createdBy);
+                filteredExtracts = filteredExtracts.filter(e => e.createdBy === state.filters.createdBy);
             }
 
             // Filter by search query
@@ -5556,6 +5846,14 @@
                 filteredContests = filteredContests.filter(c =>
                     c.title.toLowerCase().includes(searchLower) ||
                     (c.creatorName && c.creatorName.toLowerCase().includes(searchLower))
+                );
+                filteredMergers = filteredMergers.filter(m =>
+                    m.name.toLowerCase().includes(searchLower) ||
+                    (m.creatorName && m.creatorName.toLowerCase().includes(searchLower))
+                );
+                filteredExtracts = filteredExtracts.filter(e =>
+                    e.name.toLowerCase().includes(searchLower) ||
+                    (e.creatorName && e.creatorName.toLowerCase().includes(searchLower))
                 );
             }
 
@@ -5703,10 +6001,10 @@
                     ` : ''}
 
                     ${(() => {
-                        // Combine contests, mergers, and extracts into a unified list
+                        // Combine filtered contests, mergers, and extracts into a unified list
                         const allItems = [
-                            ...state.mergers.map(m => ({ ...m, itemType: 'merger' })),
-                            ...state.extracts.map(e => ({ ...e, itemType: 'extract' })),
+                            ...filteredMergers.map(m => ({ ...m, itemType: 'merger' })),
+                            ...filteredExtracts.map(e => ({ ...e, itemType: 'extract' })),
                             ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
                         ];
 
@@ -5730,9 +6028,20 @@
                                 !itemsInFolders.has(`${item.itemType}:${item.id}`)
                             );
 
+                            // Pinned folder ID - always first, always expanded, red gradient
+                            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
+
+                            // Sort folders: pinned first, then others
+                            const sortedGroups = [...state.groups].sort((a, b) => {
+                                if (a.id === PINNED_FOLDER_ID) return -1;
+                                if (b.id === PINNED_FOLDER_ID) return 1;
+                                return 0;
+                            });
+
                             return `
-                                ${state.groups.map(group => {
-                                    const isExpanded = state.expandedFolderIds.includes(group.id);
+                                ${sortedGroups.map(group => {
+                                    const isPinned = group.id === PINNED_FOLDER_ID;
+                                    const isExpanded = isPinned || state.expandedFolderIds.includes(group.id);
                                     // Get actual items for this folder
                                     const folderItems = (group.items || []).map(item => {
                                         if (item.item_type === 'contest') {
@@ -5748,9 +6057,16 @@
                                         return null;
                                     }).filter(Boolean);
 
+                                    const headerGradient = isPinned
+                                        ? 'bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700'
+                                        : 'bg-gradient-to-r from-mauve-400 to-mauve-600 hover:from-mauve-500 hover:to-mauve-700';
+                                    const contentGradient = isPinned
+                                        ? 'bg-gradient-to-b from-red-50 to-red-100'
+                                        : 'bg-gradient-to-b from-pink-50 to-pink-100';
+
                                     return `
                                         <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
-                                            <div class="bg-gradient-to-r from-mauve-400 to-mauve-600 p-4 cursor-pointer hover:from-mauve-500 hover:to-mauve-700 transition" onclick="toggleFolderExpanded('${group.id}')">
+                                            <div class="${headerGradient} p-4 cursor-pointer transition" onclick="toggleFolderExpanded('${group.id}')">
                                                 <div class="flex items-center gap-3 text-white">
                                                     <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -5763,7 +6079,7 @@
                                                 </div>
                                             </div>
                                             ${isExpanded ? `
-                                                <div class="p-4">
+                                                <div class="p-4 ${contentGradient}">
                                                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                                         ${folderItems.map(item => {
                                                             if (item.itemType === 'merger') {
@@ -6116,11 +6432,9 @@
             const hasVotedNone = votedContests.length === 0;
 
             const isBanned = state.bannedUsers.includes(state.user.id);
-            const createdDate = formatDate(merger.createdAt);
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    <div class="absolute top-2 left-2 bg-blue-500 text-white px-2 py-0.5 rounded text-xs font-bold">MERGE</div>
                     <div class="flex items-start gap-2 mb-2">
                         <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
                         <div class="flex-1 min-w-0">
@@ -6128,7 +6442,7 @@
                                 <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span>${createdDate ? ` • ${createdDate}` : ''}</span>
+                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
                                 <span class="ml-auto whitespace-nowrap">${voterRange} ${totalImages}🖼️</span>
                             </div>
                         </div>
@@ -6531,6 +6845,52 @@
         }
 
         function renderResults() {
+            // Check privacy settings
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === state.currentContest.createdBy;
+            const isPrivate = state.currentContest.resultsPublic === false;
+            const canViewPrivateResults = isAdmin || isCreator;
+
+            // Block unauthorized users from viewing private results
+            if (isPrivate && !canViewPrivateResults) {
+                return `
+                    <div class="max-w-7xl mx-auto px-3 py-4">
+                        <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                            <div class="text-center mb-4">
+                                <div class="flex items-center justify-center gap-2 mb-2">
+                                    <span class="text-4xl">🎆</span>
+                                    <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
+                                </div>
+                            </div>
+
+                            <div class="mt-3 flex flex-col items-center justify-center gap-2 mb-4">
+                                <!-- Disabled tabs -->
+                                <div class="flex items-center justify-center gap-3 opacity-50">
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        Total
+                                    </button>
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        By User
+                                    </button>
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        Average
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Privacy message -->
+                            <div class="text-center py-16">
+                                <div class="text-8xl mb-6">🔒</div>
+                                <h3 class="text-2xl font-bold text-gray-800 mb-3">Results are Private</h3>
+                                <p class="text-gray-600 max-w-md mx-auto">
+                                    Only the contest creator can view results. Contact the creator if you believe you should have access.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             let displayResults, grouped, sortedKeys, voterStats;
 
             // === BY VOTER VIEW ===
@@ -6602,16 +6962,15 @@
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
                             ${(() => {
-                                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                                const isCreator = state.user && state.user.id === state.currentContest.createdBy;
-                                const isPrivate = state.currentContest.resultsPublic === false;
-
-                                if (isPrivate && isAdmin && !isCreator) {
+                                if (isPrivate) {
+                                    const message = isCreator
+                                        ? "These results are private. Only you can view them."
+                                        : "These results are private. Only you and the creator can view them.";
                                     return `
                                         <div class="mt-3 mb-2 max-w-2xl mx-auto">
                                             <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
                                                 <span class="text-lg flex-shrink-0">⚠️</span>
-                                                <p class="flex-1">These results are private. Only you and the contest creator can view them.</p>
+                                                <p class="flex-1">${message}</p>
                                             </div>
                                         </div>
                                     `;
@@ -6694,31 +7053,31 @@
                         </div>
 
                         ${state.resultsView !== 'byVoter' ? `
-                        <div class="mb-4 max-w-md mx-auto">
-                            <div class="flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
-                                <button
-                                    onclick="adjustScale(-1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Decrease scale"
-                                >−</button>
-                                <input
-                                    type="range"
-                                    id="scaleSlider"
-                                    min="40"
-                                    max="200"
-                                    value="${state.imageScale}"
-                                    oninput="updateScale(this.value)"
-                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
-                                />
-                                <button
-                                    onclick="adjustScale(1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Increase scale"
-                                >+</button>
-                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            <div class="mb-4 max-w-md mx-auto">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                    <button
+                                        onclick="adjustScale(-1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Decrease scale"
+                                    >−</button>
+                                    <input
+                                        type="range"
+                                        id="scaleSlider"
+                                        min="40"
+                                        max="200"
+                                        value="${state.imageScale}"
+                                        oninput="updateScale(this.value)"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                    />
+                                    <button
+                                        onclick="adjustScale(1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Increase scale"
+                                    >+</button>
+                                    <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                                </div>
                             </div>
-                        </div>
                         ` : ''}
 
                         ${state.resultsView === 'byVoter' ? `
@@ -7302,7 +7661,22 @@
                 voterStats = Object.values(voterMap).map(voter => ({
                     ...voter,
                     averageScore: (voter.totalScore / voter.totalImages).toFixed(2)
-                })).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                }));
+
+                // Sort based on voterSortBy state
+                voterStats.sort((a, b) => {
+                    switch (state.voterSortBy) {
+                        case 'scoreAsc':
+                            return parseFloat(a.averageScore) - parseFloat(b.averageScore);
+                        case 'nameAsc':
+                            return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+                        case 'nameDesc':
+                            return b.username.toLowerCase().localeCompare(a.username.toLowerCase());
+                        case 'scoreDesc':
+                        default:
+                            return parseFloat(b.averageScore) - parseFloat(a.averageScore);
+                    }
+                });
             }
             // === USER VOTES VIEW ===
             else if (state.resultsView === 'userVotes') {
@@ -7345,7 +7719,9 @@
                     }
                 });
             });
-            const mergedVoters = Array.from(voterSet).map(v => JSON.parse(v));
+            const mergedVoters = Array.from(voterSet)
+                .map(v => JSON.parse(v))
+                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
 
             const baseSize = 150;
             const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
@@ -7441,35 +7817,49 @@
                         </div>
 
                         ${state.resultsView !== 'byVoter' ? `
-                        <div class="mb-4 max-w-md mx-auto">
-                            <div class="flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
-                                <button
-                                    onclick="adjustScale(-1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Decrease scale"
-                                >−</button>
-                                <input
-                                    type="range"
-                                    id="scaleSlider"
-                                    min="40"
-                                    max="200"
-                                    value="${state.imageScale}"
-                                    oninput="updateScale(this.value)"
-                                    class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
-                                />
-                                <button
-                                    onclick="adjustScale(1)"
-                                    class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                    title="Increase scale"
-                                >+</button>
-                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            <div class="mb-4 max-w-md mx-auto">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                    <button
+                                        onclick="adjustScale(-1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Decrease scale"
+                                    >−</button>
+                                    <input
+                                        type="range"
+                                        id="scaleSlider"
+                                        min="40"
+                                        max="200"
+                                        value="${state.imageScale}"
+                                        oninput="updateScale(this.value)"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                    />
+                                    <button
+                                        onclick="adjustScale(1)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Increase scale"
+                                    >+</button>
+                                    <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                                </div>
                             </div>
-                        </div>
                         ` : ''}
 
                         ${state.resultsView === 'byVoter' ? `
                             ${voterStats && voterStats.length > 0 ? `
+                                <div class="mb-4 flex justify-center">
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-xs font-medium text-gray-700">Sort by:</label>
+                                        <select
+                                            onchange="setVoterSortBy(this.value)"
+                                            class="px-3 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                        >
+                                            <option value="scoreDesc" ${state.voterSortBy === 'scoreDesc' ? 'selected' : ''}>Score: High to Low</option>
+                                            <option value="scoreAsc" ${state.voterSortBy === 'scoreAsc' ? 'selected' : ''}>Score: Low to High</option>
+                                            <option value="nameAsc" ${state.voterSortBy === 'nameAsc' ? 'selected' : ''}>Name: A-Z</option>
+                                            <option value="nameDesc" ${state.voterSortBy === 'nameDesc' ? 'selected' : ''}>Name: Z-A</option>
+                                        </select>
+                                    </div>
+                                </div>
                                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                                     ${(() => {
                                         let totalVotes = 0;
@@ -7705,6 +8095,7 @@
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
         window.setResultsView = setResultsView;
         window.setVoterSortBy = setVoterSortBy;
+        window.toggleMergedContestsDropdown = toggleMergedContestsDropdown;
         window.openCreateMergerModal = openCreateMergerModal;
         window.closeCreateMergerModal = closeCreateMergerModal;
         window.toggleContestForMerger = toggleContestForMerger;
@@ -7738,6 +8129,8 @@
         window.executeDeleteFolder = executeDeleteFolder;
         window.addItemToFolder = addItemToFolder;
         window.selectFolderItem = selectFolderItem;
+        window.toggleFolderItemSelection = toggleFolderItemSelection;
+        window.confirmAddMultipleItemsToFolder = confirmAddMultipleItemsToFolder;
         window.removeItemFromFolder = removeItemFromFolder;
         window.toggleFolderExpanded = toggleFolderExpanded;
         window.viewUserProfile = viewUserProfile;
