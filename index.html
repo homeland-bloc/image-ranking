@@ -4412,6 +4412,10 @@
                         return;
                     }
 
+                    // Save scroll position before re-render
+                    const modalContent = document.querySelector('.overflow-y-auto');
+                    const scrollPos = modalContent ? modalContent.scrollTop : 0;
+
                     try {
                         // Reorder the state.groups array
                         const movedFolder = state.groups.splice(evt.oldIndex, 1)[0];
@@ -4428,14 +4432,26 @@
                         // Only reload and re-render after successful save
                         await loadGroups();
                         render();
-                        setTimeout(initializeFolderSortable, 100);
+
+                        // Restore scroll position after render
+                        setTimeout(() => {
+                            const newModalContent = document.querySelector('.overflow-y-auto');
+                            if (newModalContent) newModalContent.scrollTop = scrollPos;
+                            initializeFolderSortable();
+                        }, 100);
                     } catch (error) {
                         console.error('Failed to save folder order:', error);
                         showToast('Failed to save folder order', 'error');
                         // Reload to revert visual state
                         await loadGroups();
                         render();
-                        setTimeout(initializeFolderSortable, 100);
+
+                        // Restore scroll position after render
+                        setTimeout(() => {
+                            const newModalContent = document.querySelector('.overflow-y-auto');
+                            if (newModalContent) newModalContent.scrollTop = scrollPos;
+                            initializeFolderSortable();
+                        }, 100);
                     }
                 }
             });
@@ -4453,6 +4469,10 @@
                             if (evt.oldIndex === evt.newIndex) {
                                 return;
                             }
+
+                            // Save scroll position before re-render
+                            const modalContent = document.querySelector('.overflow-y-auto');
+                            const scrollPos = modalContent ? modalContent.scrollTop : 0;
 
                             try {
                                 const folderId = itemsList.dataset.folderId;
@@ -4474,14 +4494,26 @@
                                 // Only reload and re-render after successful save
                                 await loadGroups();
                                 render();
-                                setTimeout(initializeFolderSortable, 100);
+
+                                // Restore scroll position after render
+                                setTimeout(() => {
+                                    const newModalContent = document.querySelector('.overflow-y-auto');
+                                    if (newModalContent) newModalContent.scrollTop = scrollPos;
+                                    initializeFolderSortable();
+                                }, 100);
                             } catch (error) {
                                 console.error('Failed to save item order:', error);
                                 showToast('Failed to save item order', 'error');
                                 // Reload to revert visual state
                                 await loadGroups();
                                 render();
-                                setTimeout(initializeFolderSortable, 100);
+
+                                // Restore scroll position after render
+                                setTimeout(() => {
+                                    const newModalContent = document.querySelector('.overflow-y-auto');
+                                    if (newModalContent) newModalContent.scrollTop = scrollPos;
+                                    initializeFolderSortable();
+                                }, 100);
                             }
                         }
                     });
@@ -6148,8 +6180,56 @@
                             ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
                         ];
 
-                        // Sort by creation date (newest first by default)
-                        allItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        // Apply sorting based on selected sort option
+                        allItems.sort((a, b) => {
+                            // Get voter counts (handle both single voterCount and min/max ranges)
+                            const getVoterCount = (item) => {
+                                if (item.voterCountMax !== undefined) return item.voterCountMax;
+                                if (item.voterCount !== undefined) return item.voterCount;
+                                return 0;
+                            };
+                            const voterCountA = getVoterCount(a);
+                            const voterCountB = getVoterCount(b);
+
+                            // Get image/item counts
+                            const getItemCount = (item) => {
+                                if (item.images) return item.images.length;
+                                if (item.imageIds) return item.imageIds.length;
+                                return 0;
+                            };
+                            const itemCountA = getItemCount(a);
+                            const itemCountB = getItemCount(b);
+
+                            // Get titles/names for sorting
+                            const titleA = (a.title || a.name || '').toLowerCase();
+                            const titleB = (b.title || b.name || '').toLowerCase();
+
+                            switch (state.filters.sortBy) {
+                                case 'newest':
+                                case 'dateDesc':
+                                case 'withFolders':
+                                    return (b.createdAt || 0) - (a.createdAt || 0);
+                                case 'oldest':
+                                case 'dateAsc':
+                                    return (a.createdAt || 0) - (b.createdAt || 0);
+                                case 'titleAsc':
+                                    return titleA.localeCompare(titleB);
+                                case 'titleDesc':
+                                    return titleB.localeCompare(titleA);
+                                case 'mostVoted':
+                                case 'votersDesc':
+                                    return voterCountB - voterCountA;
+                                case 'leastVoted':
+                                case 'votersAsc':
+                                    return voterCountA - voterCountB;
+                                case 'imagesDesc':
+                                    return itemCountB - itemCountA;
+                                case 'imagesAsc':
+                                    return itemCountA - itemCountB;
+                                default:
+                                    return (b.createdAt || 0) - (a.createdAt || 0);
+                            }
+                        });
 
                         // Check if we should show folders (only when sort is withFolders and no filters)
                         const showFolders = state.filters.sortBy === 'withFolders' && !state.filters.createdBy && !state.filters.searchQuery;
@@ -6506,21 +6586,19 @@
             // Find items voted on by this user (using fetched vote data)
             const userVotedContestIds = state.userProfileVotedContests || [];
 
-            // Get contests this user has voted on (excluding ones they created to avoid duplication)
+            // Get contests this user has voted on (INCLUDING ones they created)
             const votedContests = state.contests.filter(contest =>
-                userVotedContestIds.includes(contest.id) && contest.createdBy !== userId
+                userVotedContestIds.includes(contest.id)
             );
 
-            // Get mergers where user voted on source contests (excluding ones they created)
+            // Get mergers where user voted on source contests (INCLUDING ones they created)
             const votedMergers = state.mergers.filter(merger => {
-                if (merger.createdBy === userId) return false;
                 const sourceContestIds = merger.contestIds || [];
                 return sourceContestIds.some(contestId => userVotedContestIds.includes(contestId));
             });
 
-            // Get extracts where user voted on source (excluding ones they created)
+            // Get extracts where user voted on source (INCLUDING ones they created)
             const votedExtracts = state.extracts.filter(extract => {
-                if (extract.createdBy === userId) return false;
                 if (extract.sourceType === 'contest') {
                     return userVotedContestIds.includes(extract.sourceContestId);
                 } else if (extract.sourceType === 'merger') {
@@ -6579,16 +6657,15 @@
                             <!-- Created Items Section -->
                             ${allCreatedItems.length > 0 ? `
                                 <div class="mb-6">
-                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Created (${allCreatedItems.length})</h3>
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Created (${allCreatedItems.length})</h3>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                         ${allCreatedItems.map(item => {
-                                            if (item.itemType === 'merger') {
-                                                return renderMergerCard(item);
-                                            } else if (item.itemType === 'extract') {
-                                                return renderExtractCard(item);
-                                            } else {
-                                                return renderContestCard(item);
-                                            }
+                                            const title = item.title || item.name;
+                                            return `
+                                                <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                                    • ${title}
+                                                </div>
+                                            `;
                                         }).join('')}
                                     </div>
                                 </div>
@@ -6596,7 +6673,7 @@
 
                             <!-- Voting History Section -->
                             <div class="mb-4">
-                                <h3 class="text-lg font-bold text-gray-800 mb-3">Voting History (${allVotedItems.length})</h3>
+                                <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Voted On (${allVotedItems.length})</h3>
                             </div>
 
                             ${allVotedItems.length === 0 ? `
@@ -6604,15 +6681,14 @@
                                     <p class="text-gray-500">No voting history yet</p>
                                 </div>
                             ` : `
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     ${allVotedItems.map(item => {
-                                        if (item.itemType === 'merger') {
-                                            return renderMergerCard(item);
-                                        } else if (item.itemType === 'extract') {
-                                            return renderExtractCard(item);
-                                        } else {
-                                            return renderContestCard(item);
-                                        }
+                                        const title = item.title || item.name;
+                                        return `
+                                            <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                                • ${title}
+                                            </div>
+                                        `;
                                     }).join('')}
                                 </div>
                             `}
