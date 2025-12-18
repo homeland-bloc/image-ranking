@@ -6023,7 +6023,7 @@
                                                 </div>
                                             </div>
                                             ${isExpanded ? `
-                                                <div class="p-4">
+                                                <div class="p-4 bg-gradient-to-b from-pink-50 to-pink-100">
                                                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                                         ${folderItems.map(item => {
                                                             if (item.itemType === 'merger') {
@@ -7607,7 +7607,22 @@
                 voterStats = Object.values(voterMap).map(voter => ({
                     ...voter,
                     averageScore: (voter.totalScore / voter.totalImages).toFixed(2)
-                })).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                }));
+
+                // Sort based on voterSortBy state
+                voterStats.sort((a, b) => {
+                    switch (state.voterSortBy) {
+                        case 'scoreAsc':
+                            return parseFloat(a.averageScore) - parseFloat(b.averageScore);
+                        case 'nameAsc':
+                            return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+                        case 'nameDesc':
+                            return b.username.toLowerCase().localeCompare(a.username.toLowerCase());
+                        case 'scoreDesc':
+                        default:
+                            return parseFloat(b.averageScore) - parseFloat(a.averageScore);
+                    }
+                });
             }
             // === USER VOTES VIEW ===
             else if (state.resultsView === 'userVotes') {
@@ -7650,7 +7665,9 @@
                     }
                 });
             });
-            const mergedVoters = Array.from(voterSet).map(v => JSON.parse(v));
+            const mergedVoters = Array.from(voterSet)
+                .map(v => JSON.parse(v))
+                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
 
             const baseSize = 150;
             const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
@@ -7775,6 +7792,20 @@
 
                         ${state.resultsView === 'byVoter' ? `
                             ${voterStats && voterStats.length > 0 ? `
+                                <div class="mb-4 flex justify-center">
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-xs font-medium text-gray-700">Sort by:</label>
+                                        <select
+                                            onchange="setVoterSortBy(this.value)"
+                                            class="px-3 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                        >
+                                            <option value="scoreDesc" ${state.voterSortBy === 'scoreDesc' ? 'selected' : ''}>Score: High to Low</option>
+                                            <option value="scoreAsc" ${state.voterSortBy === 'scoreAsc' ? 'selected' : ''}>Score: Low to High</option>
+                                            <option value="nameAsc" ${state.voterSortBy === 'nameAsc' ? 'selected' : ''}>Name: A-Z</option>
+                                            <option value="nameDesc" ${state.voterSortBy === 'nameDesc' ? 'selected' : ''}>Name: Z-A</option>
+                                        </select>
+                                    </div>
+                                </div>
                                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                                     ${(() => {
                                         let totalVotes = 0;
