@@ -370,7 +370,8 @@
             showUserDropdown: false,  // User menu dropdown state
             showMergedContestsDropdown: false,  // Merged contests dropdown state
             currentMergerId: null,  // ID of current merger being voted on
-            mergerContestIds: []  // Array of contest IDs in current merger voting session
+            mergerContestIds: [],  // Array of contest IDs in current merger voting session
+            selectedFolderItems: []  // Array of indices for multi-select in Add Item modal
         };
 
         function shuffleArray(array) {
@@ -4521,20 +4522,127 @@
             // Store data in state for the modal
             state.folderItemsToAdd = availableItems;
             state.targetFolderId = folderId;
+            state.selectedFolderItems = []; // Reset selections
 
             // Show custom selection modal
             state.modal = {
                 type: 'selectItem',
                 icon: '📁',
-                title: 'Add Item to Folder',
-                message: 'Select an item to add to this folder:',
+                title: 'Add Items to Folder',
+                message: 'Select one or more items to add to this folder:',
                 items: availableItems,
                 buttons: [
-                    { text: 'Cancel', action: 'closeModal', primary: false }
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Add Selected Items', action: 'confirmAddMultipleItemsToFolder', primary: true }
                 ]
             };
             document.body.classList.add('modal-open');
             render();
+        }
+
+        function toggleFolderItemSelection(itemIndex) {
+            const index = state.selectedFolderItems.indexOf(itemIndex);
+            if (index > -1) {
+                state.selectedFolderItems.splice(index, 1);
+            } else {
+                state.selectedFolderItems.push(itemIndex);
+            }
+
+            // Update the visual state of checkboxes without full re-render
+            const checkbox = document.querySelector(`[data-folder-item-index="${itemIndex}"]`);
+            if (checkbox) {
+                const isSelected = state.selectedFolderItems.includes(itemIndex);
+                const checkboxIcon = checkbox.querySelector('.checkbox-icon');
+                if (checkboxIcon) {
+                    if (isSelected) {
+                        checkboxIcon.innerHTML = `
+                            <svg class="w-5 h-5 text-mauve-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        `;
+                        checkbox.classList.add('border-mauve-400', 'bg-mauve-50');
+                        checkbox.classList.remove('border-gray-200');
+                    } else {
+                        checkboxIcon.innerHTML = '<div class="w-4 h-4 border-2 border-gray-400 rounded"></div>';
+                        checkbox.classList.remove('border-mauve-400', 'bg-mauve-50');
+                        checkbox.classList.add('border-gray-200');
+                    }
+                }
+            }
+
+            // Update button state
+            const addButton = document.querySelector('[data-add-items-button]');
+            if (addButton) {
+                if (state.selectedFolderItems.length > 0) {
+                    addButton.disabled = false;
+                    addButton.className = 'px-5 py-2 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700';
+                    addButton.textContent = `Add Selected Items (${state.selectedFolderItems.length})`;
+                } else {
+                    addButton.disabled = true;
+                    addButton.className = 'px-5 py-2 rounded-lg font-semibold transition text-sm bg-gray-300 text-gray-500 cursor-not-allowed';
+                    addButton.textContent = 'Add Selected Items';
+                }
+            }
+        }
+
+        async function confirmAddMultipleItemsToFolder() {
+            if (state.modalProcessing) return;
+            if (state.selectedFolderItems.length === 0) {
+                showToast('Please select at least one item', 'error');
+                return;
+            }
+
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            const folderId = state.targetFolderId;
+
+            try {
+                setLoading(`Adding ${state.selectedFolderItems.length} item(s) to folder...`);
+                const folder = state.groups.find(g => g.id === folderId);
+                const maxOrder = folder?.items?.length > 0 ? Math.max(...folder.items.map(i => i.display_order || 0)) : -1;
+
+                // Prepare batch of items to insert
+                const itemsToInsert = state.selectedFolderItems.map((itemIndex, idx) => {
+                    const selectedItem = state.folderItemsToAdd[itemIndex];
+                    return {
+                        group_id: folderId,
+                        item_id: selectedItem.id,
+                        item_type: selectedItem.type,
+                        display_order: maxOrder + idx + 1
+                    };
+                });
+
+                // Batch insert all items
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify(itemsToInsert)
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to add items to folder');
+                }
+
+                await loadGroups();
+                showToast(`Added ${state.selectedFolderItems.length} item(s) successfully`, 'success');
+                state.selectedFolderItems = [];
+                render();
+                setTimeout(initializeFolderSortable, 100);
+            } catch (error) {
+                console.error('Error adding items to folder:', error);
+                showToast('Failed to add items: ' + error.message, 'error');
+                render();
+            } finally {
+                state.modalProcessing = false;
+                clearLoading();
+            }
         }
 
         async function selectFolderItem(itemIndex) {
@@ -4883,15 +4991,25 @@
                                 <div class="space-y-2">
                                     ${state.modal.items.map((item, idx) => {
                                         const typeColor = item.type === 'contest' ? 'mauve' : item.type === 'merger' ? 'blue' : 'yellow';
+                                        const isSelected = state.selectedFolderItems.includes(idx);
                                         return `
-                                            <div class="border-2 border-gray-200 rounded-lg p-3 cursor-pointer hover:border-${typeColor}-400 hover:bg-${typeColor}-50 transition"
-                                                 onclick="selectFolderItem(${idx})">
-                                                <div class="flex items-center justify-between">
-                                                    <div>
+                                            <div data-folder-item-index="${idx}" class="border-2 ${isSelected ? 'border-mauve-400 bg-mauve-50' : 'border-gray-200'} rounded-lg p-3 cursor-pointer hover:border-${typeColor}-400 hover:bg-${typeColor}-50 transition"
+                                                 onclick="toggleFolderItemSelection(${idx})">
+                                                <div class="flex items-center gap-3">
+                                                    <div class="checkbox-icon flex-shrink-0 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border-2 ${isSelected ? 'border-mauve-500' : 'border-gray-300'}">
+                                                        ${isSelected ? `
+                                                            <svg class="w-5 h-5 text-mauve-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                            </svg>
+                                                        ` : `
+                                                            <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
+                                                        `}
+                                                    </div>
+                                                    <div class="flex-1">
                                                         <div class="font-semibold text-gray-800">${item.title}</div>
                                                         <div class="text-xs text-gray-500 uppercase">${item.type}</div>
                                                     </div>
-                                                    <div class="text-2xl">
+                                                    <div class="text-2xl flex-shrink-0">
                                                         ${item.type === 'contest' ? '🎨' : item.type === 'merger' ? '🔀' : '⭐'}
                                                     </div>
                                                 </div>
@@ -4922,12 +5040,20 @@
                                 } else {
                                     onclick = `${btn.action}()`;
                                 }
+
+                                const isAddButton = btn.action === 'confirmAddMultipleItemsToFolder';
+                                const isDisabled = isAddButton && state.selectedFolderItems.length === 0;
+
                                 return `
                                     <button
+                                        ${isAddButton ? 'data-add-items-button' : ''}
+                                        ${isDisabled ? 'disabled' : ''}
                                         onclick="${onclick}"
                                         class="px-5 py-2 rounded-lg font-semibold transition text-sm ${
                                             btn.primary
-                                                ? 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700'
+                                                ? isDisabled
+                                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                    : 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700'
                                                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                         }"
                                     >
@@ -7860,6 +7986,8 @@
         window.executeDeleteFolder = executeDeleteFolder;
         window.addItemToFolder = addItemToFolder;
         window.selectFolderItem = selectFolderItem;
+        window.toggleFolderItemSelection = toggleFolderItemSelection;
+        window.confirmAddMultipleItemsToFolder = confirmAddMultipleItemsToFolder;
         window.removeItemFromFolder = removeItemFromFolder;
         window.toggleFolderExpanded = toggleFolderExpanded;
         window.viewUserProfile = viewUserProfile;
