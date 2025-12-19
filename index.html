@@ -1148,6 +1148,21 @@
                             c.images.some(i => i.id === img.id)
                         );
                         contestId = contest ? contest.id : state.mergerContestIds[0];
+                    } else if (state.currentContest.isExtract) {
+                        // For extract voting, find the source contest for each image
+                        if (state.currentContest.extractSourceType === 'contest') {
+                            contestId = state.currentContest.extractSourceContestId;
+                        } else if (state.currentContest.extractSourceType === 'merger') {
+                            // For merger-based extracts, find which contest the image belongs to
+                            const merger = state.mergers.find(m => m.id === state.currentContest.extractSourceMergerId);
+                            if (merger) {
+                                const contest = state.contests.find(c =>
+                                    merger.contestIds.includes(c.id) &&
+                                    c.images.some(i => i.id === img.id)
+                                );
+                                contestId = contest ? contest.id : merger.contestIds[0];
+                            }
+                        }
                     } else {
                         contestId = state.currentContest.id;
                     }
@@ -1242,8 +1257,8 @@
                 state.hasSubmitted = true;
 
                 // Update voter counts BEFORE loading results to ensure fresh data
-                // Check if we're voting on an extract
-                const isExtractVoting = state.currentContest.isExtract === true;
+                // Check if we're voting on an extract (only if not in merger mode)
+                const isExtractVoting = !isMergerVoting && state.currentContest && state.currentContest.isExtract === true;
 
                 if (isExtractVoting) {
                     // Extract voting - update both extract and source voter counts
@@ -2444,13 +2459,13 @@
                 // Query for voters who have completed voting
                 let votesResponse;
                 if (itemType === 'merger') {
-                    // For mergers, query votes from all contests in the merger
-                    // Get ALL unique voters across all merged contests (not just those who voted on all contests)
+                    // For mergers, we need to get all voters and calculate how many contests they voted on
                     const contestIds = item.contestIds || [];
                     if (contestIds.length === 0) {
                         voters = [];
                     } else {
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&select=user_id,users!inner(id,username,avatar,is_banned)`, {
+                        // Get all votes from merged contests
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2497,14 +2512,36 @@
                 if (votesResponse) {
                     const votesData = await votesResponse.json();
                     if (Array.isArray(votesData)) {
-                        const uniqueVotersMap = new Map();
-                        votesData.forEach(vote => {
-                            if (vote.users && !vote.users.is_banned) {
-                                uniqueVotersMap.set(vote.user_id, vote.users);
-                            }
-                        });
-                        voters = Array.from(uniqueVotersMap.values())
-                            .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                        if (itemType === 'merger') {
+                            // For mergers, calculate how many contests each user voted on
+                            const voterContestsMap = new Map();
+                            votesData.forEach(vote => {
+                                if (vote.users && !vote.users.is_banned) {
+                                    if (!voterContestsMap.has(vote.user_id)) {
+                                        voterContestsMap.set(vote.user_id, {
+                                            user: vote.users,
+                                            contestIds: new Set()
+                                        });
+                                    }
+                                    voterContestsMap.get(vote.user_id).contestIds.add(vote.contest_id);
+                                }
+                            });
+                            voters = Array.from(voterContestsMap.entries()).map(([userId, data]) => ({
+                                ...data.user,
+                                completedContests: data.contestIds.size,
+                                totalContests: item.contestIds.length
+                            })).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                        } else {
+                            // For contests and extracts, just deduplicate
+                            const uniqueVotersMap = new Map();
+                            votesData.forEach(vote => {
+                                if (vote.users && !vote.users.is_banned) {
+                                    uniqueVotersMap.set(vote.user_id, vote.users);
+                                }
+                            });
+                            voters = Array.from(uniqueVotersMap.values())
+                                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                        }
                     }
                 }
 
@@ -7456,16 +7493,28 @@
 
                             <!-- Voters Section -->
                             <div class="p-4 bg-blue-50 rounded-lg">
-                                <h3 class="font-semibold text-gray-800 mb-3">Voters (${voters.length})</h3>
+                                <h3 class="font-semibold text-gray-800 mb-3">Users that have voted (${voters.length})</h3>
                                 ${voters.length > 0 ? `
-                                    <div class="space-y-2 max-h-64 overflow-y-auto">
-                                        ${voters.map(voter => `
-                                            <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
-                                                <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full" />
-                                                <span class="text-sm font-medium text-gray-700">${voter.username}</span>
-                                            </div>
-                                        `).join('')}
-                                    </div>
+                                    ${itemType === 'merger' ? `
+                                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                                            ${voters.map(voter => `
+                                                <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
+                                                    <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                    <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
+                                                    <span class="text-xs font-semibold px-2 py-1 bg-blue-200 text-blue-800 rounded" title="Completed Merged Contests">${voter.completedContests}/${voter.totalContests}</span>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    ` : `
+                                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                                            ${voters.map(voter => `
+                                                <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
+                                                    <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full" />
+                                                    <span class="text-sm font-medium text-gray-700">${voter.username}</span>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    `}
                                 ` : `
                                     <p class="text-sm text-gray-600 text-center py-4">No votes yet</p>
                                 `}
@@ -7690,14 +7739,14 @@
                                         ${contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
                                         ` : hasVotedAll && (contest.voterCountMax > 0) ? `
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
@@ -7791,7 +7840,7 @@
                         ` : hasVotedAll ? `
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
@@ -7877,6 +7926,20 @@
             const isBanned = state.bannedUsers.includes(state.user.id);
             const createdDate = formatDate(extract.createdAt);
 
+            // Check if source has private results
+            let hasPrivateResults = false;
+            if (extract.sourceType === 'contest') {
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                if (sourceContest && sourceContest.resultsPublic === false) {
+                    hasPrivateResults = true;
+                }
+            } else if (extract.sourceType === 'merger') {
+                const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (sourceMerger && sourceMerger.resultsPublic === false) {
+                    hasPrivateResults = true;
+                }
+            }
+
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${extract.isLocked ? `
@@ -7914,7 +7977,7 @@
                         ` : hasVotedAll ? `
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
