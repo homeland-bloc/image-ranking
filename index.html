@@ -494,10 +494,10 @@
             if (min >= 3.5) return { color: 'text-green-700', bg: 'bg-green-100', textColor: 'rgb(21, 128, 61)', bgColor: 'rgb(220, 252, 231)' };
             // Lime-green (3.0-3.49) - above average, MUST be green
             if (min >= 3.0) return { color: 'text-lime-700', bg: 'bg-lime-100', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
-            // Lemon yellow (2.5-2.99) - average, more saturated
-            if (min >= 2.5) return { color: 'text-yellow-700', bg: 'bg-yellow-100', textColor: 'rgb(161, 98, 7)', bgColor: 'rgb(254, 249, 195)' };
-            // Gold/amber (2.0-2.49) - below average, warmer gold to distinguish from orange
-            if (min >= 2.0) return { color: 'text-amber-800', bg: 'bg-amber-100', textColor: 'rgb(146, 64, 14)', bgColor: 'rgb(254, 243, 199)' };
+            // Bright yellow (2.5-2.99) - average, more saturated and brighter for distinction
+            if (min >= 2.5) return { color: 'text-yellow-800', bg: 'bg-yellow-200', textColor: 'rgb(133, 77, 14)', bgColor: 'rgb(254, 240, 138)' };
+            // Deep amber/orange (2.0-2.49) - below average, warmer and more orange for clear distinction
+            if (min >= 2.0) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
             // Deep orange (1.5-1.99) - low scores, darker orange between red and amber
             if (min >= 1.5) return { color: 'text-orange-800', bg: 'bg-orange-200', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
             // Deep red (1.0-1.49) - lowest scores, much redder and darker
