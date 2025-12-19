@@ -1568,9 +1568,38 @@
                         let finalQuality = currentQuality || 0.8;
                         let finalMaxDimension = currentMaxDimension || null;
 
+                        // Check if original file is already under the limit
+                        if (file.size <= maxSizeBytes && currentQuality === null && currentMaxDimension === null) {
+                            // File already meets size requirements, no compression needed
+                            resolve({
+                                file: file,
+                                originalSize: file.size,
+                                compressedSize: file.size,
+                                savingsPercent: 0,
+                                currentQuality: null,
+                                currentMaxDimension: null,
+                                success: true
+                            });
+                            return;
+                        }
+
                         // If specific parameters provided (for "Compress More"), use them
                         if (currentQuality !== null || currentMaxDimension !== null) {
                             result = await tryCompress(finalQuality, finalMaxDimension);
+                            // Ensure compression actually made it smaller
+                            if (result && result.blob.size >= file.size) {
+                                // Compression made it larger or same size - reject
+                                reject({
+                                    message: `Compression would increase file size. Original: ${formatFileSize(file.size)}, Compressed: ${formatFileSize(result.blob.size)}`,
+                                    file: file,
+                                    originalSize: file.size,
+                                    compressedSize: result.blob.size,
+                                    success: false,
+                                    currentQuality: finalQuality,
+                                    currentMaxDimension: finalMaxDimension
+                                });
+                                return;
+                            }
                         } else {
                             // Step 1: Try quality reduction first (no resizing)
                             const qualityLevels = [0.8, 0.7, 0.6, 0.5];
@@ -1610,6 +1639,33 @@
 
                         // Check final result
                         if (result && result.blob.size <= maxSizeBytes) {
+                            // Ensure compression actually made it smaller
+                            if (result.blob.size >= file.size) {
+                                // Compression made it larger - use original if it's under the limit
+                                if (file.size <= maxSizeBytes) {
+                                    resolve({
+                                        file: file,
+                                        originalSize: file.size,
+                                        compressedSize: file.size,
+                                        savingsPercent: 0,
+                                        currentQuality: null,
+                                        currentMaxDimension: null,
+                                        success: true
+                                    });
+                                } else {
+                                    reject({
+                                        message: `Compression would increase file size. Original: ${formatFileSize(file.size)}, Compressed: ${formatFileSize(result.blob.size)}`,
+                                        file: file,
+                                        originalSize: file.size,
+                                        compressedSize: result.blob.size,
+                                        success: false,
+                                        currentQuality: finalQuality,
+                                        currentMaxDimension: finalMaxDimension
+                                    });
+                                }
+                                return;
+                            }
+
                             const compressedFile = new File([result.blob], file.name, {
                                 type: outputType,
                                 lastModified: Date.now()
@@ -2471,6 +2527,13 @@
 
             console.log('🔗 [NAVIGATION] Hash changed:', hash);
 
+            // Don't handle hash changes if we're currently in voting mode
+            // (this prevents interrupting the voting flow during "Complete Voting")
+            if (state.view === 'vote') {
+                console.log('🔗 [NAVIGATION] Skipping hash change handling - currently voting');
+                return;
+            }
+
             // Check for single contest share: #contest={uuid}
             const params = new URLSearchParams(hash);
             const contestId = params.get('contest');
@@ -2946,52 +3009,60 @@
         }
 
         async function viewResults(contest) {
-            // Check if contest still exists in the database
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+            // Skip database check for extracts
+            const isExtract = contest.isExtract || (typeof contest.id === 'string' && contest.id.startsWith('extract_'));
+
+            if (!isExtract) {
+                // Check if contest still exists in the database
+                try {
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+
+                    const contests = await response.json();
+
+                    // If contest doesn't exist (deleted), refresh the page
+                    if (!contests || contests.length === 0) {
+                        console.log('Contest no longer exists, refreshing...');
+                        showAlert('Contest was deleted. Refreshing...', '🔄');
+                        setTimeout(() => location.reload(), 1500);
+                        return;
                     }
-                });
 
-                const contests = await response.json();
+                    // Check if results are public
+                    const contestData = contests[0];
+                    const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                    const isCreator = state.user && state.user.id === contestData.created_by;
+                    const resultsPublic = contestData.results_public !== false;
 
-                // If contest doesn't exist (deleted), refresh the page
-                if (!contests || contests.length === 0) {
-                    console.log('Contest no longer exists, refreshing...');
-                    showAlert('Contest was deleted. Refreshing...', '🔄');
-                    setTimeout(() => location.reload(), 1500);
+                    if (!resultsPublic && !isAdmin && !isCreator) {
+                        showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Error checking contest existence:', error);
+                    showAlert('Error loading results: ' + error.message, '❌');
                     return;
                 }
-
-                // Check if results are public
-                const contestData = contests[0];
-                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                const isCreator = state.user && state.user.id === contestData.created_by;
-                const resultsPublic = contestData.results_public !== false;
-
-                if (!resultsPublic && !isAdmin && !isCreator) {
-                    showAlert('Results are private. Only the creator or admin can view them.', '🔒');
-                    return;
-                }
-
-                state.currentContest = contest;
-                const userVotes = state.userVotedContests[contest.id] || {};
-                state.votes = userVotes;
-                await loadResults();
-                state.showMyVotes = false;
-                state.view = 'results';
-
-                // Update URL hash for shareable link
-                window.location.hash = `contest=${contest.id}`;
-
-                render();
-            } catch (error) {
-                console.error('Error checking contest existence:', error);
-                showAlert('Error loading results: ' + error.message, '❌');
             }
+
+            state.currentContest = contest;
+            const userVotes = state.userVotedContests[contest.id] || {};
+            state.votes = userVotes;
+            await loadResults();
+            state.showMyVotes = false;
+            state.view = 'results';
+
+            // Update URL hash for shareable link (only for real contests, not extracts)
+            if (!isExtract) {
+                window.location.hash = `contest=${contest.id}`;
+            }
+
+            render();
         }
 
         async function viewLockedResults(contest) {
@@ -3885,21 +3956,45 @@
         }
 
         function confirmDeleteExtract(extractId) {
-            state.extractToDelete = extractId;
-            showConfirm(
-                'Are you sure you want to delete this extract? This action cannot be undone.',
-                'executeDeleteExtract',
-                '🗑️'
+            const extract = state.extracts.find(e => e.id === extractId);
+            if (!extract) return;
+
+            // Store extract info for validation
+            state.extractToDelete = extract;
+
+            showInputModal(
+                `Type "${extract.name}" to confirm deletion`,
+                'Enter extract name exactly...',
+                'handleDeleteExtractConfirmation',
+                false
             );
         }
 
-        async function executeDeleteExtract() {
+        function handleDeleteExtractConfirmation() {
+            if (state.modalProcessing) return;
+            const input = document.querySelector('.modal-input');
+            const enteredName = input ? input.value.trim() : '';
+
+            if (!state.extractToDelete) {
+                showAlert('Extract information not found.', '❌');
+                return;
+            }
+
+            if (enteredName !== state.extractToDelete.name) {
+                showAlert('Name does not match. Deletion cancelled.', '❌');
+                return;
+            }
+
+            // Name matches, proceed with deletion
+            executeDeleteExtract(state.extractToDelete.id);
+        }
+
+        async function executeDeleteExtract(extractId) {
             if (state.modalProcessing) return;
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            const extractId = state.extractToDelete;
             state.extractToDelete = null;
 
             try {
@@ -4032,40 +4127,38 @@
                 }
             }
 
-            // Get source contest
-            let sourceContest = null;
+            // Get source contest or merger
+            let sourceImages = [];
             if (extract.sourceType === 'contest') {
-                sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                if (sourceContest) {
+                    sourceImages = sourceContest.images;
+                }
             } else if (extract.sourceType === 'merger') {
                 const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
                 if (merger) {
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                    const allImages = mergedContests.flatMap(c => c.images);
-                    sourceContest = {
-                        id: 'extract_' + extractId,
-                        title: extract.name,
-                        images: allImages.filter(img => extract.imageIds.includes(img.id)),
-                        createdBy: extract.createdBy,
-                        creatorName: extract.creatorName,
-                        creatorAvatar: extract.creatorAvatar
-                    };
+                    sourceImages = mergedContests.flatMap(c => c.images);
                 }
             }
 
-            if (!sourceContest) {
+            if (sourceImages.length === 0) {
                 showToast('Source not found', 'error');
                 return;
             }
 
             // Filter images to only those in the extract
-            const extractImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
+            const extractImages = sourceImages.filter(img => extract.imageIds.includes(img.id));
 
-            // Create a temporary contest object for results
+            // Create a temporary contest object for results with extract ID prefix
             const extractContest = {
-                ...sourceContest,
-                images: extractImages,
+                id: 'extract_' + extractId,
                 title: extract.name,
-                id: extract.sourceContestId || sourceContest.id
+                images: extractImages,
+                createdBy: extract.createdBy,
+                creatorName: extract.creatorName,
+                creatorAvatar: extract.creatorAvatar,
+                isExtract: true
             };
 
             viewResults(extractContest);
@@ -5588,24 +5681,6 @@
 
                             <!-- Source Selection -->
                             <div class="flex-1 overflow-y-auto p-6">
-                                <div class="mb-4">
-                                    <h4 class="font-semibold text-gray-700 mb-2">Contests</h4>
-                                    <div class="space-y-2">
-                                        ${state.contests.map(contest => `
-                                            <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
-                                                 onclick="selectExtractSource('contest', '${contest.id}')">
-                                                <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                <div class="flex-1 min-w-0">
-                                                    <h5 class="font-semibold text-gray-800 truncate">${contest.title}</h5>
-                                                    <p class="text-xs text-gray-500">
-                                                        ${contest.creatorName} • ${contest.images.length} images
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                </div>
-
                                 ${state.mergers.length > 0 ? `
                                     <div class="mb-4">
                                         <h4 class="font-semibold text-gray-700 mb-2">Mergers</h4>
@@ -5630,25 +5705,23 @@
                                     </div>
                                 ` : ''}
 
-                                ${state.extracts.length > 0 ? `
-                                    <div>
-                                        <h4 class="font-semibold text-gray-700 mb-2">Extracts</h4>
-                                        <div class="space-y-2">
-                                            ${state.extracts.map(extract => `
-                                                <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
-                                                     onclick="selectExtractSource('extract', '${extract.id}')">
-                                                    <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                    <div class="flex-1 min-w-0">
-                                                        <h5 class="font-semibold text-gray-800 truncate">${extract.name}</h5>
-                                                        <p class="text-xs text-gray-500">
-                                                            ${extract.creatorName} • ${extract.imageIds.length} images
-                                                        </p>
-                                                    </div>
+                                <div>
+                                    <h4 class="font-semibold text-gray-700 mb-2">Contests</h4>
+                                    <div class="space-y-2">
+                                        ${state.contests.map(contest => `
+                                            <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
+                                                 onclick="selectExtractSource('contest', '${contest.id}')">
+                                                <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                <div class="flex-1 min-w-0">
+                                                    <h5 class="font-semibold text-gray-800 truncate">${contest.title}</h5>
+                                                    <p class="text-xs text-gray-500">
+                                                        ${contest.creatorName} • ${contest.images.length} images
+                                                    </p>
                                                 </div>
-                                            `).join('')}
-                                        </div>
+                                            </div>
+                                        `).join('')}
                                     </div>
-                                ` : ''}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -5671,32 +5744,6 @@
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
                     sourceImages = mergedContests.flatMap(c => c.images);
                     sourceName = merger.name;
-                }
-            } else if (state.extractSourceType === 'extract') {
-                const extract = state.extracts.find(e => e.id === state.extractSourceId);
-                if (extract) {
-                    // Get images from the extract's source
-                    if (extract.sourceType === 'contest') {
-                        const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                        if (sourceContest) {
-                            sourceImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
-                        }
-                    } else if (extract.sourceType === 'merger') {
-                        const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                        if (sourceMerger) {
-                            const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
-                            const allImages = mergedContests.flatMap(c => c.images);
-                            sourceImages = allImages.filter(img => extract.imageIds.includes(img.id));
-                        }
-                    } else if (extract.sourceType === 'extract') {
-                        // Recursively get images from source extract
-                        const sourceExtract = state.extracts.find(e => e.id === extract.sourceContestId);
-                        if (sourceExtract) {
-                            // For now, just get the IDs - in practice we'd need to resolve the full image objects
-                            sourceImages = extract.imageIds.map(id => ({ id, url: '' }));
-                        }
-                    }
-                    sourceName = extract.name;
                 }
             }
 
@@ -6455,10 +6502,11 @@
 
                     ${(() => {
                         // Combine filtered contests, mergers, and extracts into a unified list
+                        // Mix them without any type priority
                         const allItems = [
+                            ...filteredContests.map(c => ({ ...c, itemType: 'contest' })),
                             ...filteredMergers.map(m => ({ ...m, itemType: 'merger' })),
-                            ...filteredExtracts.map(e => ({ ...e, itemType: 'extract' })),
-                            ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
+                            ...filteredExtracts.map(e => ({ ...e, itemType: 'extract' }))
                         ];
 
                         // Apply sorting based on selected sort option
@@ -6703,19 +6751,27 @@
 
             // Get source info (for extracts)
             let sourceHTML = '';
-            if (itemType === 'extract' && item.sourceType && item.sourceId) {
-                const sourceItem = item.sourceType === 'contest'
-                    ? state.contests.find(c => c.id === item.sourceId)
-                    : state.mergers.find(m => m.id === item.sourceId);
-                if (sourceItem) {
-                    const sourceName = sourceItem.title || sourceItem.name;
-                    sourceHTML = `
-                        <div class="mt-2">
-                            <span class="font-semibold text-gray-700">Source:</span>
-                            <span class="text-sm text-gray-600">${sourceName}</span>
-                        </div>
-                    `;
+            if (itemType === 'extract' && item.sourceType) {
+                let sourceItem = null;
+                let sourceName = 'Unknown';
+
+                if (item.sourceType === 'contest') {
+                    sourceItem = state.contests.find(c => c.id === item.sourceContestId);
+                    sourceName = sourceItem ? sourceItem.title : 'Unknown Contest';
+                } else if (item.sourceType === 'merger') {
+                    sourceItem = state.mergers.find(m => m.id === item.sourceMergerId);
+                    sourceName = sourceItem ? sourceItem.name : 'Unknown Merger';
+                } else if (item.sourceType === 'extract') {
+                    sourceItem = state.extracts.find(e => e.id === item.sourceContestId);
+                    sourceName = sourceItem ? sourceItem.name : 'Unknown Extract';
                 }
+
+                const sourceTypeLabel = item.sourceType === 'contest' ? 'contest' : item.sourceType === 'merger' ? 'merger' : 'extract';
+                sourceHTML = `
+                    <div class="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <span class="text-sm text-yellow-800">This is an extract from ${sourceTypeLabel === 'contest' ? 'another contest' : sourceTypeLabel}: <strong>${sourceName}</strong></span>
+                    </div>
+                `;
             }
 
             return `
@@ -6745,12 +6801,12 @@
                                     </div>
                                 </div>
                                 <div class="grid grid-cols-2 gap-3 text-sm">
-                                    <div>
+                                    <div class="flex items-center gap-1 whitespace-nowrap">
                                         <span class="font-semibold text-gray-700">Images:</span>
                                         <span class="text-gray-600">${imageCount}🖼️</span>
                                     </div>
-                                    <div>
-                                        <span class="font-semibold text-gray-700">Votes per image:</span>
+                                    <div class="flex items-center gap-1 whitespace-nowrap">
+                                        <span class="font-semibold text-gray-700">Voters:</span>
                                         <span class="text-gray-600">${voterCountDisplay}</span>
                                     </div>
                                 </div>
@@ -7219,8 +7275,7 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    <div class="absolute top-2 left-2 bg-yellow-500 text-white px-2 py-0.5 rounded text-xs font-bold">EXTRACT</div>
-                    <div class="flex items-start gap-2 mb-2 mt-6">
+                    <div class="flex items-start gap-2 mb-2">
                         <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
@@ -7229,9 +7284,6 @@
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
                                 <span class="ml-auto whitespace-nowrap">${voterRange} ${imageCount}🖼️</span>
-                            </div>
-                            <div class="text-xs text-yellow-600 mt-1">
-                                From: ${sourceRef}
                             </div>
                         </div>
                     </div>
@@ -8821,6 +8873,8 @@
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
+        window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
+        window.handleDeleteExtractConfirmation = handleDeleteExtractConfirmation;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
         window.setSearchQuery = setSearchQuery;
