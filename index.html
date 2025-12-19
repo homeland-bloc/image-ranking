@@ -1213,45 +1213,6 @@
             return state.user.id === ADMIN_DISCORD_ID;
         }
 
-        async function togglePin(itemType, itemId, currentPinStatus) {
-            // Only admins can pin/unpin items
-            if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
-                showToast('Admin access required', 'error');
-                return;
-            }
-
-            try {
-                const table = itemType === 'contest' ? 'contests' :
-                              itemType === 'merger' ? 'mergers' : 'extracts';
-
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal'
-                    },
-                    body: JSON.stringify({ is_pinned: !currentPinStatus })
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to update pin status');
-                }
-
-                showToast(currentPinStatus ? 'Unpinned successfully' : 'Pinned successfully', 'success');
-
-                // Refresh the items list
-                await loadContests();
-                await loadMergers();
-                await loadExtracts();
-                render();
-            } catch (error) {
-                console.error('Error toggling pin:', error);
-                showToast('Failed to update pin status', 'error');
-            }
-        }
-
         function deleteContest(contestId) {
             const contest = state.contests.find(c => c.id === contestId);
             if (!contest) return;
@@ -2771,7 +2732,6 @@
                     createdAt: contest.created_at,
                     voterCountMin: contest.voter_count_min || 0,
                     voterCountMax: contest.voter_count_max || 0,
-                    isPinned: contest.is_pinned || false,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -2815,7 +2775,6 @@
                         voterCountMax: m.voter_count_max,
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
-                        isPinned: m.is_pinned || false,
                         type: 'merger'
                     }));
                 }
@@ -2842,13 +2801,12 @@
                         creatorName: e.creator.username,
                         creatorAvatar: e.creator.avatar,
                         createdAt: e.created_at,
-                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : (e.source_type === 'extract' ? e.source_contest_id : null),
+                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : (e.source_type === 'extract' ? e.source_contract_id : null),
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
-                        isPinned: e.is_pinned || false,
                         type: 'extract'
                     }));
                 }
@@ -3313,55 +3271,72 @@
             }
         }
 
-        function confirmDeleteMerger(mergerId) {
-            state.mergerToDelete = mergerId;
-            showConfirm(
-                'Are you sure you want to delete this merger? This action cannot be undone.',
-                'executeDeleteMerger',
-                '🗑️'
+        function deleteMerger(mergerId) {
+            const merger = state.mergers.find(m => m.id === mergerId);
+            if (!merger) return;
+
+            // Store merger info for validation
+            state.mergerToDelete = merger;
+
+            showInputModal(
+                `Type "${merger.name}" to confirm deletion`,
+                'Enter merger name exactly...',
+                'handleDeleteMergerConfirmation',
+                false
             );
         }
 
-        async function executeDeleteMerger() {
+        function handleDeleteMergerConfirmation() {
             if (state.modalProcessing) return;
+            const input = document.querySelector('.modal-input');
+            const enteredName = input ? input.value.trim() : '';
+
+            if (!state.mergerToDelete) {
+                showAlert('Merger information not found.', '❌');
+                return;
+            }
+
+            if (enteredName !== state.mergerToDelete.name) {
+                showAlert('Name does not match. Deletion cancelled.', '❌');
+                return;
+            }
+
+            // Name matches, proceed with deletion
+            confirmDeleteMerger(state.mergerToDelete.id);
+        }
+
+        async function confirmDeleteMerger(mergerId) {
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            const mergerId = state.mergerToDelete;
-            state.mergerToDelete = null;
+            setLoading('Deleting merger...');
 
             try {
+                // Delete only the merger record, leave contests intact
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
                     method: 'DELETE',
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
                     }
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    console.error('Merger deletion failed:', errorData);
-                    throw new Error(errorData.message || 'Failed to delete merger');
+                    throw new Error('Failed to delete merger');
                 }
 
-                // Reload mergers
                 await loadMergers();
-
-                showToast('Merger deleted successfully', 'success');
+                state.modalProcessing = false;
+                showAlert('Merger deleted successfully!', '✅');
             } catch (error) {
                 console.error('Error deleting merger:', error);
-                showToast('Failed to delete merger: ' + error.message, 'error');
-            } finally {
+                showAlert('Failed to delete merger: ' + error.message, '❌');
                 state.modalProcessing = false;
-                render();
+            } finally {
+                clearLoading();
             }
-        }
-
-        // Legacy function name for backwards compatibility
-        async function deleteMerger(mergerId) {
-            confirmDeleteMerger(mergerId);
         }
 
         async function viewMergerResults(mergerId) {
@@ -3700,7 +3675,16 @@
                 // For other sources, set to null to avoid UUID type errors
                 if (state.extractSourceType === 'contest') {
                     // Ensure we're using the UUID, not contest number
-                    const contest = state.contests.find(c => c.id === state.extractSourceId);
+                    let contest = state.contests.find(c => c.id === state.extractSourceId);
+
+                    // Fallback: if not found by ID, try finding by contestNumber in case extractSourceId is a number
+                    if (!contest) {
+                        const sourceIdAsNumber = parseInt(state.extractSourceId);
+                        if (!isNaN(sourceIdAsNumber)) {
+                            contest = state.contests.find(c => c.contestNumber === sourceIdAsNumber);
+                        }
+                    }
+
                     if (contest) {
                         extractData.source_contest_id = contest.id;
                     } else {
@@ -5078,13 +5062,6 @@
         }
 
         function toggleFolderExpanded(folderId) {
-            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
-
-            // Pinned folder cannot be collapsed
-            if (folderId === PINNED_FOLDER_ID) {
-                return;
-            }
-
             const index = state.expandedFolderIds.indexOf(folderId);
             if (index > -1) {
                 state.expandedFolderIds.splice(index, 1);
@@ -6175,13 +6152,9 @@
                 );
             }
 
-            // Sort contests - pinned items always first
+            // Sort contests
             filteredContests = [...filteredContests].sort((a, b) => {
-                // Pinned items first
-                if (a.isPinned && !b.isPinned) return -1;
-                if (!a.isPinned && b.isPinned) return 1;
-
-                // Then apply selected sort
+                // Apply selected sort
                 const voterCountA = a.voterCount || 0;
                 const voterCountB = b.voterCount || 0;
 
@@ -6345,6 +6318,11 @@
                             const getItemCount = (item) => {
                                 if (item.images) return item.images.length;
                                 if (item.imageIds) return item.imageIds.length;
+                                // For mergers, calculate total images from all merged contests
+                                if (item.itemType === 'merger' && item.contestIds) {
+                                    const mergedContests = state.contests.filter(c => item.contestIds.includes(c.id));
+                                    return mergedContests.reduce((sum, c) => sum + c.images.length, 0);
+                                }
                                 return 0;
                             };
                             const itemCountA = getItemCount(a);
@@ -6398,15 +6376,8 @@
                                 !itemsInFolders.has(`${item.itemType}:${item.id}`)
                             );
 
-                            // Pinned folder ID - always first, always expanded, red gradient
-                            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
-
-                            // Sort folders: pinned first, then others
-                            const sortedGroups = [...state.groups].sort((a, b) => {
-                                if (a.id === PINNED_FOLDER_ID) return -1;
-                                if (b.id === PINNED_FOLDER_ID) return 1;
-                                return 0;
-                            });
+                            // Sort folders
+                            const sortedGroups = [...state.groups];
 
                             // Get unfoldered items position from app settings (default to bottom if not set)
                             const unfolderedPosition = state.appSettings.unfoldered_items_position !== undefined
@@ -6415,8 +6386,7 @@
 
                             // Helper function to render a folder
                             const renderFolder = (group) => {
-                                const isPinned = group.id === PINNED_FOLDER_ID;
-                                const isExpanded = isPinned || state.expandedFolderIds.includes(group.id);
+                                const isExpanded = state.expandedFolderIds.includes(group.id);
                                 // Get actual items for this folder
                                 const folderItems = (group.items || []).map(item => {
                                     if (item.item_type === 'contest') {
@@ -6432,12 +6402,8 @@
                                     return null;
                                 }).filter(Boolean);
 
-                                const headerGradient = isPinned
-                                    ? 'bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700'
-                                    : 'bg-gradient-to-r from-mauve-400 to-mauve-600 hover:from-mauve-500 hover:to-mauve-700';
-                                const contentGradient = isPinned
-                                    ? 'bg-gradient-to-b from-red-50 to-red-100'
-                                    : 'bg-gradient-to-b from-pink-50 to-pink-100';
+                                const headerGradient = 'bg-gradient-to-r from-mauve-400 to-mauve-600 hover:from-mauve-500 hover:to-mauve-700';
+                                const contentGradient = 'bg-gradient-to-b from-pink-50 to-pink-100';
 
                                 return `
                                     <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
@@ -6446,16 +6412,11 @@
                                                 <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                                 </svg>
-                                                ${isPinned ? `
-                                                    <span class="text-2xl">📌</span>
-                                                ` : `
-                                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                                                    </svg>
-                                                `}
+                                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                                </svg>
                                                 <div class="flex-1">
                                                     <h3 class="text-lg font-bold">${group.name}</h3>
-                                                    ${isPinned ? `<p class="text-xs opacity-90 mt-0.5">Trending Must-Votes 🔥</p>` : ''}
                                                 </div>
                                                 <span class="text-sm opacity-90">${folderItems.length} items</span>
                                             </div>
@@ -6624,10 +6585,10 @@
                                 <div class="grid grid-cols-2 gap-3 text-sm">
                                     <div>
                                         <span class="font-semibold text-gray-700">Images:</span>
-                                        <span class="text-gray-600">${item.images?.length || 0}🖼️</span>
+                                        <span class="text-gray-600">${item.images?.length || item.imageIds?.length || 0}🖼️</span>
                                     </div>
                                     <div>
-                                        <span class="font-semibold text-gray-700">Voters:</span>
+                                        <span class="font-semibold text-gray-700">Votes per image:</span>
                                         <span class="text-gray-600">${voterCountDisplay}</span>
                                     </div>
                                 </div>
@@ -6687,7 +6648,7 @@
                                         </div>
                                         <!-- Delete Button -->
                                         <button
-                                            onclick="deleteContest('${item.id}'); closeContestInfoModal();"
+                                            onclick="${itemType === 'contest' ? `deleteContest('${item.id}')` : itemType === 'merger' ? `deleteMerger('${item.id}')` : `deleteExtract('${item.id}')`}; closeContestInfoModal();"
                                             class="w-full px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition text-sm"
                                         >
                                             🗑️ Delete ${itemType === 'contest' ? 'Contest' : itemType === 'merger' ? 'Merger' : 'Extract'}
@@ -6930,15 +6891,7 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCountMax > 0) ? `
-                                            ${contest.createdBy === state.user.id && !hasVoted ? `
-                                                <button
-                                                    onclick='startVoting(${safeStringify(contest)})'
-                                                    class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
-                                                >
-                                                    Start Voting
-                                                </button>
-                                            ` : ''}
+                                        ` : hasVoted && (contest.voterCountMax > 0) ? `
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
@@ -6959,20 +6912,11 @@
                                         `}
                                         <button
                                             onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
-                                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
+                                            class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
                                             title="Contest Info"
                                         >
                                             ℹ️
                                         </button>
-                                        ${state.user.id === ADMIN_DISCORD_ID ? `
-                                            <button
-                                                onclick='togglePin("contest", "${contest.id}", ${contest.isPinned || false})'
-                                                class="bg-gradient-to-r ${contest.isPinned ? 'from-red-600 to-red-700 hover:from-red-700 hover:to-red-800' : 'from-red-400 to-red-500 hover:from-red-500 hover:to-red-600'} text-white px-3 py-2 rounded-lg font-semibold transition shadow-md text-sm flex items-center gap-1"
-                                                title="${contest.isPinned ? 'Unpin' : 'Pin'} Contest"
-                                            >
-                                                📌
-                                            </button>
-                                        ` : ''}
                                     </div>
                                 </div>
                             `;
@@ -6986,8 +6930,10 @@
             // Get contest details for the merged contests
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
-            const voterRange = merger.voterCountMin && merger.voterCountMax
-                ? `${merger.voterCountMin}-${merger.voterCountMax}👥`
+            const voterRange = merger.voterCountMin !== undefined && merger.voterCountMax !== undefined
+                ? (merger.voterCountMin === merger.voterCountMax
+                    ? `${merger.voterCountMax}👥`
+                    : `${merger.voterCountMin}-${merger.voterCountMax}👥`)
                 : '0👥';
 
             // Check if user has voted in all, some, or no merged contests
@@ -8673,7 +8619,6 @@
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
-        window.togglePin = togglePin;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
         window.setSearchQuery = setSearchQuery;
@@ -8740,7 +8685,7 @@
         window.viewUserProfile = viewUserProfile;
         window.closeUserProfileModal = closeUserProfileModal;
         window.confirmDeleteMerger = confirmDeleteMerger;
-        window.executeDeleteMerger = executeDeleteMerger;
+        window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
         window.executeDeleteExtract = executeDeleteExtract;
 
