@@ -343,7 +343,7 @@
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             filters: {
                 createdBy: null,           // Username or null
-                sortBy: 'withFolders',     // 'withFolders', 'newest', 'oldest', 'mostVoted', 'leastVoted', etc.
+                sortBy: 'newest',          // 'newest', 'oldest', 'mostVoted', 'leastVoted', etc.
                 searchQuery: ''            // Search term for contest titles
             },
             mergedResults: null, // Results from merged contests
@@ -494,10 +494,10 @@
             if (min >= 3.5) return { color: 'text-green-700', bg: 'bg-green-100', textColor: 'rgb(21, 128, 61)', bgColor: 'rgb(220, 252, 231)' };
             // Lime-green (3.0-3.49) - above average, MUST be green
             if (min >= 3.0) return { color: 'text-lime-700', bg: 'bg-lime-100', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
-            // Lemon yellow (2.5-2.99) - average, more saturated
-            if (min >= 2.5) return { color: 'text-yellow-700', bg: 'bg-yellow-100', textColor: 'rgb(161, 98, 7)', bgColor: 'rgb(254, 249, 195)' };
-            // Gold/amber (2.0-2.49) - below average, warmer gold to distinguish from orange
-            if (min >= 2.0) return { color: 'text-amber-800', bg: 'bg-amber-100', textColor: 'rgb(146, 64, 14)', bgColor: 'rgb(254, 243, 199)' };
+            // Bright yellow (2.5-2.99) - average, more saturated and brighter for distinction
+            if (min >= 2.5) return { color: 'text-yellow-800', bg: 'bg-yellow-200', textColor: 'rgb(133, 77, 14)', bgColor: 'rgb(254, 240, 138)' };
+            // Deep amber/orange (2.0-2.49) - below average, warmer and more orange for clear distinction
+            if (min >= 2.0) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
             // Deep orange (1.5-1.99) - low scores, darker orange between red and amber
             if (min >= 1.5) return { color: 'text-orange-800', bg: 'bg-orange-200', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
             // Deep red (1.0-1.49) - lowest scores, much redder and darker
@@ -689,10 +689,10 @@
 
                 // Collect all images from all contests
                 const allImages = [];
-                const contestTitles = [];
+                const contestTitles = {};
 
                 contests.forEach(contest => {
-                    contestTitles.push(contest.title);
+                    contestTitles[contest.id] = contest.title;
                     contest.images.forEach(img => {
                         const scores = imageScores[img.id]?.scores || [];
                         const sum = scores.reduce((acc, s) => acc + s, 0);
@@ -1093,8 +1093,57 @@
                     }
                 }
 
+                // Reload user votes to reflect new submissions
                 await loadUserVotes();
                 state.hasSubmitted = true;
+
+                // Update voter counts BEFORE loading results to ensure fresh data
+                const contestIdsToUpdate = isMergerVoting
+                    ? state.mergerContestIds
+                    : [state.currentContest.id];
+
+                // Quick voter count update without waiting for responses
+                const voterCountUpdates = contestIdsToUpdate.map(async (contestId) => {
+                    try {
+                        const votesResponse = await fetch(
+                            `${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&is_blocked=eq.false&select=user_id`,
+                            {
+                                headers: {
+                                    'apikey': SUPABASE_ANON_KEY,
+                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                    'Cache-Control': 'no-cache'
+                                }
+                            }
+                        );
+
+                        if (votesResponse.ok) {
+                            const votes = await votesResponse.json();
+                            const uniqueVoters = new Set(votes.map(v => v.user_id)).size;
+
+                            await fetch(
+                                `${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'apikey': SUPABASE_ANON_KEY,
+                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                        'Prefer': 'return=minimal'
+                                    },
+                                    body: JSON.stringify({
+                                        voter_count_min: uniqueVoters,
+                                        voter_count_max: uniqueVoters
+                                    })
+                                }
+                            );
+                        }
+                    } catch (error) {
+                        console.error(`Error updating voter count for contest ${contestId}:`, error);
+                    }
+                });
+
+                // Wait for all voter count updates to complete
+                await Promise.all(voterCountUpdates);
 
                 // Navigate to appropriate results view
                 if (isMergerVoting) {
@@ -1161,6 +1210,45 @@
 
             // Admin check
             return state.user.id === ADMIN_DISCORD_ID;
+        }
+
+        async function togglePin(itemType, itemId, currentPinStatus) {
+            // Only admins can pin/unpin items
+            if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
+                showToast('Admin access required', 'error');
+                return;
+            }
+
+            try {
+                const table = itemType === 'contest' ? 'contests' :
+                              itemType === 'merger' ? 'mergers' : 'extracts';
+
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({ is_pinned: !currentPinStatus })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update pin status');
+                }
+
+                showToast(currentPinStatus ? 'Unpinned successfully' : 'Pinned successfully', 'success');
+
+                // Refresh the items list
+                await loadContests();
+                await loadMergers();
+                await loadExtracts();
+                render();
+            } catch (error) {
+                console.error('Error toggling pin:', error);
+                showToast('Failed to update pin status', 'error');
+            }
         }
 
         function deleteContest(contestId) {
@@ -2662,6 +2750,7 @@
                     createdAt: contest.created_at,
                     voterCountMin: contest.voter_count_min || 0,
                     voterCountMax: contest.voter_count_max || 0,
+                    isPinned: contest.is_pinned || false,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -2705,6 +2794,7 @@
                         voterCountMax: m.voter_count_max,
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
+                        isPinned: m.is_pinned || false,
                         type: 'merger'
                     }));
                 }
@@ -2737,6 +2827,7 @@
                         imageIds: e.image_ids,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
+                        isPinned: e.is_pinned || false,
                         type: 'extract'
                     }));
                 }
@@ -3440,43 +3531,37 @@
             // Show modal with options
             const message = `You've voted in ${votedContests.length} out of ${unlockedContests.length} unlocked contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
 
+            // Store the mergerId for the action functions
+            state.pendingMergerId = mergerId;
+
             state.modal = {
-                title: 'Partial Votes - ' + merger.name,
+                icon: '🔄',
+                title: 'Complete Voting - ' + merger.name,
                 message: message,
-                actions: [
-                    {
-                        text: 'Vote Missing Only',
-                        style: 'primary',
-                        action: () => {
-                            state.modal = null;
-                            document.body.classList.remove('modal-open');
-                            // Start voting on missing contests only
-                            startMergerVoting(mergerId, false);
-                        }
-                    },
-                    {
-                        text: 'Revote All',
-                        style: 'warning',
-                        action: () => {
-                            state.modal = null;
-                            document.body.classList.remove('modal-open');
-                            // Start voting on all contests
-                            startMergerVoting(mergerId, true);
-                        }
-                    },
-                    {
-                        text: 'Cancel',
-                        style: 'secondary',
-                        action: () => {
-                            state.modal = null;
-                            document.body.classList.remove('modal-open');
-                            render();
-                        }
-                    }
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Vote Missing Only', action: 'confirmVoteMissingOnly', primary: true },
+                    { text: 'Revote All', action: 'confirmRevoteAll', primary: true }
                 ]
             };
             document.body.classList.add('modal-open');
             render();
+        }
+
+        function confirmVoteMissingOnly() {
+            const mergerId = state.pendingMergerId;
+            state.modal = null;
+            state.pendingMergerId = null;
+            document.body.classList.remove('modal-open');
+            startMergerVoting(mergerId, false);
+        }
+
+        function confirmRevoteAll() {
+            const mergerId = state.pendingMergerId;
+            state.modal = null;
+            state.pendingMergerId = null;
+            document.body.classList.remove('modal-open');
+            startMergerVoting(mergerId, true);
         }
 
         async function shareMerger(mergerId) {
@@ -3675,12 +3760,6 @@
                 if (!response.ok) {
                     const errorData = await response.json();
                     console.error('Extract creation failed:', errorData);
-
-                    // Check if this is a UUID type error
-                    if (errorData.message && errorData.message.includes('uuid')) {
-                        throw new Error('Database schema error: The images table uses integer IDs but the extracts table expects UUIDs. Please contact the administrator to migrate the images table to use UUID primary keys.');
-                    }
-
                     throw new Error(errorData.message || 'Failed to create extract');
                 }
 
@@ -4136,7 +4215,11 @@
         async function backToHome() {
             console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
 
-            if (state.view === 'vote' && !state.hasSubmitted && state.currentContest && state.currentContest.images) {
+            // Check for both contest and merge voting in progress
+            const isContestVoting = state.view === 'vote' && !state.hasSubmitted && state.currentContest && state.currentContest.images;
+            const isMergeVoting = state.view === 'vote' && !state.hasSubmitted && state.currentMergerId && state.mergerContestIds && state.mergerContestIds.length > 0;
+
+            if (isContestVoting || isMergeVoting) {
                 showConfirm(
                     'Your progress will be lost if you proceed. Are you sure?',
                     'confirmBackToHome',
@@ -5063,6 +5146,10 @@
         }
 
         async function viewUserProfile(userId) {
+            // Close other modals first to prevent stacking
+            state.contestInfoModal = null;
+            state.modal = null;
+
             state.viewingUserId = userId;
             state.showUserProfileModal = true;
             document.body.classList.add('modal-open');
@@ -5336,7 +5423,7 @@
                             </div>
                         ` : ''}
                         <div class="flex gap-2 justify-center ${isSelectItem ? 'flex-shrink-0' : ''}">
-                            ${state.modal.buttons.map(btn => {
+                            ${(state.modal.buttons || []).map(btn => {
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
                                 const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
                                 const removeImageMatch = btn.action.match(/confirmRemoveImage_(.+)/);
@@ -5553,7 +5640,7 @@
                                         <div data-image-id="${image.id}">
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
-                                                onclick="toggleExtractImage('${image.id}')"
+                                                onclick="toggleExtractImage(${image.id})"
                                             >
                                             <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
                                             ${image.label ? `
@@ -6092,7 +6179,7 @@
 
         function clearAllFilters() {
             state.filters.createdBy = null;
-            state.filters.sortBy = 'withFolders';
+            state.filters.sortBy = 'newest';
             state.filters.searchQuery = '';
             // Clear URL parameter
             const url = new URL(window.location);
@@ -6135,8 +6222,13 @@
                 );
             }
 
-            // Sort contests
+            // Sort contests - pinned items always first
             filteredContests = [...filteredContests].sort((a, b) => {
+                // Pinned items first
+                if (a.isPinned && !b.isPinned) return -1;
+                if (!a.isPinned && b.isPinned) return 1;
+
+                // Then apply selected sort
                 const voterCountA = a.voterCount || 0;
                 const voterCountB = b.voterCount || 0;
 
@@ -6196,7 +6288,7 @@
                                 `;
                             })()}
                             ${state.user.id === ADMIN_DISCORD_ID ? `
-                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                     + Create Merge
                                 </button>
                                 <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
@@ -6230,7 +6322,6 @@
                         <div class="flex-1 min-w-[200px]">
                             <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
                             <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="withFolders" ${state.filters.sortBy === 'withFolders' ? 'selected' : ''}>With Folders</option>
                                 <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
                                 <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
                                 <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
@@ -6250,7 +6341,7 @@
                                 `).join('')}
                             </select>
                         </div>
-                        ${state.filters.createdBy || state.filters.sortBy !== 'withFolders' || state.filters.searchQuery ? `
+                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
                             <div class="flex items-end">
                                 <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
                                     Clear All Filters
@@ -6866,7 +6957,7 @@
                                         <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
-                                                <h3 class="text-base font-bold text-gray-800 line-clamp-2">${contest.title}</h3>
+                                                <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
@@ -6883,7 +6974,7 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCount > 0) ? `
+                                        ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCountMax > 0) ? `
                                             ${contest.createdBy === state.user.id && !hasVoted ? `
                                                 <button
                                                     onclick='startVoting(${safeStringify(contest)})'
@@ -6912,11 +7003,20 @@
                                         `}
                                         <button
                                             onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
-                                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
                                             title="Contest Info"
                                         >
                                             ℹ️
                                         </button>
+                                        ${state.user.id === ADMIN_DISCORD_ID ? `
+                                            <button
+                                                onclick='togglePin("contest", "${contest.id}", ${contest.isPinned || false})'
+                                                class="bg-gradient-to-r ${contest.isPinned ? 'from-yellow-500 to-yellow-600' : 'from-gray-400 to-gray-500'} text-white px-3 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm flex items-center gap-1"
+                                                title="${contest.isPinned ? 'Unpin' : 'Pin'} Contest"
+                                            >
+                                                📌
+                                            </button>
+                                        ` : ''}
                                     </div>
                                 </div>
                             `;
@@ -6981,12 +7081,12 @@
                                 onclick='showMergerVoteModal("${merger.id}")'
                                 class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
                             >
-                                Partial Votes
+                                Complete Voting
                             </button>
                         `}
                         <button
                             onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
-                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
                             title="Merger Info"
                         >
                             ℹ️
@@ -7541,7 +7641,6 @@
                                     </div>
                                 ` : ''}
                             </div>
-                        </div>
 
                         ${state.resultsView !== 'byVoter' ? `
                             <div class="mb-4 max-w-md mx-auto">
@@ -8618,6 +8717,7 @@
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
+        window.togglePin = togglePin;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
         window.setSearchQuery = setSearchQuery;
