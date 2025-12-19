@@ -1118,6 +1118,103 @@
                     window.location.hash = `contest=${state.currentContest.id}`;
                 }
 
+                // Update voter counts for affected contests
+                const contestIdsToUpdate = isMergerVoting
+                    ? state.mergerContestIds
+                    : [state.currentContest.id];
+
+                for (const contestId of contestIdsToUpdate) {
+                    try {
+                        // Fetch all non-blocked votes for this contest
+                        const votesResponse = await fetch(
+                            `${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&is_blocked=eq.false&select=user_id`,
+                            {
+                                headers: {
+                                    'apikey': SUPABASE_ANON_KEY,
+                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                    'Cache-Control': 'no-cache'
+                                }
+                            }
+                        );
+
+                        if (votesResponse.ok) {
+                            const votes = await votesResponse.json();
+                            const uniqueVoters = new Set(votes.map(v => v.user_id)).size;
+
+                            // Update contest with voter counts
+                            await fetch(
+                                `${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'apikey': SUPABASE_ANON_KEY,
+                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                        'Prefer': 'return=minimal'
+                                    },
+                                    body: JSON.stringify({
+                                        voter_count_min: uniqueVoters,
+                                        voter_count_max: uniqueVoters
+                                    })
+                                }
+                            );
+                        }
+                    } catch (error) {
+                        console.error(`Error updating voter count for contest ${contestId}:`, error);
+                    }
+                }
+
+                // Update merger voter counts if applicable
+                if (isMergerVoting && state.currentMergerId) {
+                    try {
+                        const merger = state.mergers.find(m => m.id === state.currentMergerId);
+                        if (merger && merger.contestIds) {
+                            // Calculate min/max across all contests in merger
+                            const voterCounts = [];
+                            for (const contestId of merger.contestIds) {
+                                const votesResponse = await fetch(
+                                    `${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&is_blocked=eq.false&select=user_id`,
+                                    {
+                                        headers: {
+                                            'apikey': SUPABASE_ANON_KEY,
+                                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                            'Cache-Control': 'no-cache'
+                                        }
+                                    }
+                                );
+                                if (votesResponse.ok) {
+                                    const votes = await votesResponse.json();
+                                    voterCounts.push(new Set(votes.map(v => v.user_id)).size);
+                                }
+                            }
+
+                            if (voterCounts.length > 0) {
+                                const voterCountMin = Math.min(...voterCounts);
+                                const voterCountMax = Math.max(...voterCounts);
+
+                                await fetch(
+                                    `${SUPABASE_URL}/rest/v1/mergers?id=eq.${state.currentMergerId}`,
+                                    {
+                                        method: 'PATCH',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'apikey': SUPABASE_ANON_KEY,
+                                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                            'Prefer': 'return=minimal'
+                                        },
+                                        body: JSON.stringify({
+                                            voter_count_min: voterCountMin,
+                                            voter_count_max: voterCountMax
+                                        })
+                                    }
+                                );
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error updating merger voter counts:', error);
+                    }
+                }
+
                 // Refresh contest list to update voter counts
                 await loadContests();
 
@@ -4124,7 +4221,11 @@
         async function backToHome() {
             console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
 
-            if (state.view === 'vote' && !state.hasSubmitted && state.currentContest && state.currentContest.images) {
+            // Check for both contest and merge voting in progress
+            const isContestVoting = state.view === 'vote' && !state.hasSubmitted && state.currentContest && state.currentContest.images;
+            const isMergeVoting = state.view === 'vote' && !state.hasSubmitted && state.currentMergerId && state.mergerContestIds && state.mergerContestIds.length > 0;
+
+            if (isContestVoting || isMergeVoting) {
                 showConfirm(
                     'Your progress will be lost if you proceed. Are you sure?',
                     'confirmBackToHome',
@@ -5051,6 +5152,10 @@
         }
 
         async function viewUserProfile(userId) {
+            // Close other modals first to prevent stacking
+            state.contestInfoModal = null;
+            state.modal = null;
+
             state.viewingUserId = userId;
             state.showUserProfileModal = true;
             document.body.classList.add('modal-open');
@@ -6871,7 +6976,7 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCount > 0) ? `
+                                        ` : (hasVoted || contest.createdBy === state.user.id) && (contest.voterCountMax > 0) ? `
                                             ${contest.createdBy === state.user.id && !hasVoted ? `
                                                 <button
                                                     onclick='startVoting(${safeStringify(contest)})'
