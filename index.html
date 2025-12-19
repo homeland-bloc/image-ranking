@@ -689,10 +689,10 @@
 
                 // Collect all images from all contests
                 const allImages = [];
-                const contestTitles = [];
+                const contestTitles = {};
 
                 contests.forEach(contest => {
-                    contestTitles.push(contest.title);
+                    contestTitles[contest.id] = contest.title;
                     contest.images.forEach(img => {
                         const scores = imageScores[img.id]?.scores || [];
                         const sum = scores.reduce((acc, s) => acc + s, 0);
@@ -3440,43 +3440,37 @@
             // Show modal with options
             const message = `You've voted in ${votedContests.length} out of ${unlockedContests.length} unlocked contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
 
+            // Store the mergerId for the action functions
+            state.pendingMergerId = mergerId;
+
             state.modal = {
-                title: 'Partial Votes - ' + merger.name,
+                icon: '🔄',
+                title: 'Complete Voting - ' + merger.name,
                 message: message,
-                actions: [
-                    {
-                        text: 'Vote Missing Only',
-                        style: 'primary',
-                        action: () => {
-                            state.modal = null;
-                            document.body.classList.remove('modal-open');
-                            // Start voting on missing contests only
-                            startMergerVoting(mergerId, false);
-                        }
-                    },
-                    {
-                        text: 'Revote All',
-                        style: 'warning',
-                        action: () => {
-                            state.modal = null;
-                            document.body.classList.remove('modal-open');
-                            // Start voting on all contests
-                            startMergerVoting(mergerId, true);
-                        }
-                    },
-                    {
-                        text: 'Cancel',
-                        style: 'secondary',
-                        action: () => {
-                            state.modal = null;
-                            document.body.classList.remove('modal-open');
-                            render();
-                        }
-                    }
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Vote Missing Only', action: 'confirmVoteMissingOnly', primary: true },
+                    { text: 'Revote All', action: 'confirmRevoteAll', primary: true }
                 ]
             };
             document.body.classList.add('modal-open');
             render();
+        }
+
+        function confirmVoteMissingOnly() {
+            const mergerId = state.pendingMergerId;
+            state.modal = null;
+            state.pendingMergerId = null;
+            document.body.classList.remove('modal-open');
+            startMergerVoting(mergerId, false);
+        }
+
+        function confirmRevoteAll() {
+            const mergerId = state.pendingMergerId;
+            state.modal = null;
+            state.pendingMergerId = null;
+            document.body.classList.remove('modal-open');
+            startMergerVoting(mergerId, true);
         }
 
         async function shareMerger(mergerId) {
@@ -3675,12 +3669,6 @@
                 if (!response.ok) {
                     const errorData = await response.json();
                     console.error('Extract creation failed:', errorData);
-
-                    // Check if this is a UUID type error
-                    if (errorData.message && errorData.message.includes('uuid')) {
-                        throw new Error('Database schema error: The images table uses integer IDs but the extracts table expects UUIDs. Please contact the administrator to migrate the images table to use UUID primary keys.');
-                    }
-
                     throw new Error(errorData.message || 'Failed to create extract');
                 }
 
@@ -5336,7 +5324,7 @@
                             </div>
                         ` : ''}
                         <div class="flex gap-2 justify-center ${isSelectItem ? 'flex-shrink-0' : ''}">
-                            ${state.modal.buttons.map(btn => {
+                            ${(state.modal.buttons || []).map(btn => {
                                 const deleteContestMatch = btn.action.match(/confirmDeleteContest_(.+)/);
                                 const banUserMatch = btn.action.match(/executeBanUser_(.+)/);
                                 const removeImageMatch = btn.action.match(/confirmRemoveImage_(.+)/);
@@ -5553,7 +5541,7 @@
                                         <div data-image-id="${image.id}">
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
-                                                onclick="toggleExtractImage('${image.id}')"
+                                                onclick="toggleExtractImage(${image.id})"
                                             >
                                             <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
                                             ${image.label ? `
@@ -6196,7 +6184,7 @@
                                 `;
                             })()}
                             ${state.user.id === ADMIN_DISCORD_ID ? `
-                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-600 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                                <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                     + Create Merge
                                 </button>
                                 <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
@@ -6866,7 +6854,7 @@
                                         <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
-                                                <h3 class="text-base font-bold text-gray-800 line-clamp-2">${contest.title}</h3>
+                                                <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
@@ -6912,7 +6900,7 @@
                                         `}
                                         <button
                                             onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
-                                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
                                             title="Contest Info"
                                         >
                                             ℹ️
@@ -6981,12 +6969,12 @@
                                 onclick='showMergerVoteModal("${merger.id}")'
                                 class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
                             >
-                                Partial Votes
+                                Complete Voting
                             </button>
                         `}
                         <button
                             onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
-                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
                             title="Merger Info"
                         >
                             ℹ️
@@ -7541,7 +7529,6 @@
                                     </div>
                                 ` : ''}
                             </div>
-                        </div>
 
                         ${state.resultsView !== 'byVoter' ? `
                             <div class="mb-4 max-w-md mx-auto">
