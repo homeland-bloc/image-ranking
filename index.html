@@ -494,14 +494,14 @@
             if (min >= 3.5) return { color: 'text-green-700', bg: 'bg-green-100', textColor: 'rgb(21, 128, 61)', bgColor: 'rgb(220, 252, 231)' };
             // Lime-green (3.0-3.49) - above average, MUST be green
             if (min >= 3.0) return { color: 'text-lime-700', bg: 'bg-lime-100', textColor: 'rgb(77, 124, 15)', bgColor: 'rgb(236, 252, 203)' };
-            // Bright yellow (2.5-2.99) - average, more saturated and brighter for distinction
-            if (min >= 2.5) return { color: 'text-yellow-800', bg: 'bg-yellow-200', textColor: 'rgb(133, 77, 14)', bgColor: 'rgb(254, 240, 138)' };
-            // Deep amber/orange (2.0-2.49) - below average, warmer and more orange for clear distinction
-            if (min >= 2.0) return { color: 'text-orange-700', bg: 'bg-orange-100', textColor: 'rgb(194, 65, 12)', bgColor: 'rgb(255, 237, 213)' };
-            // Deep orange (1.5-1.99) - low scores, darker orange between red and amber
-            if (min >= 1.5) return { color: 'text-orange-800', bg: 'bg-orange-200', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(254, 215, 170)' };
-            // Deep red (1.0-1.49) - lowest scores, much redder and darker
-            if (min >= 1.0) return { color: 'text-red-800', bg: 'bg-red-300', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(252, 165, 165)' };
+            // Pale yellow (2.5-2.99) - average
+            if (min >= 2.5) return { color: 'text-yellow-800', bg: 'bg-yellow-100', textColor: 'rgb(113, 63, 18)', bgColor: 'rgb(253, 224, 71)' };
+            // Pale orange (2.0-2.49) - below average
+            if (min >= 2.0) return { color: 'text-orange-800', bg: 'bg-orange-100', textColor: 'rgb(154, 52, 18)', bgColor: 'rgb(253, 186, 116)' };
+            // Pale red (1.5-1.99) - low scores
+            if (min >= 1.5) return { color: 'text-red-800', bg: 'bg-red-100', textColor: 'rgb(153, 27, 27)', bgColor: 'rgb(252, 165, 165)' };
+            // Pale purple (1.0-1.49) - lowest scores
+            if (min >= 1.0) return { color: 'text-purple-800', bg: 'bg-purple-200', textColor: 'rgb(107, 33, 168)', bgColor: 'rgb(216, 180, 254)' };
             // Fallback for any edge cases
             return { color: 'text-gray-600', bg: 'bg-gray-50', textColor: 'rgb(75, 85, 99)', bgColor: 'rgb(249, 250, 251)' };
         }
@@ -1160,8 +1160,9 @@
                     }
                 } else {
                     // Switch to single contest results view
-                    state.view = 'results';
+                    // Load results BEFORE changing view (to match merger flow that works)
                     await loadResults();
+                    state.view = 'results';
 
                     // Update URL hash
                     window.location.hash = `contest=${state.currentContest.id}`;
@@ -2233,29 +2234,49 @@
         async function showContestInfoModal(item, itemType) {
             try {
                 // Fetch voters for this contest/merger/extract
-                const contestId = item.id;
                 let voters = [];
 
                 // Query for voters who have completed voting
-                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar)`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                let votesResponse;
+                if (itemType === 'merger') {
+                    // For mergers, query votes from all contests in the merger
+                    const contestIds = item.contestIds || [];
+                    if (contestIds.length === 0) {
+                        voters = [];
+                    } else {
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&is_blocked=eq.false&select=user_id,users!inner(id,username,avatar)`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
+                        });
                     }
-                });
-                const votesData = await votesResponse.json();
-
-                // Deduplicate voters and sort by username
-                if (Array.isArray(votesData)) {
-                    const uniqueVotersMap = new Map();
-                    votesData.forEach(vote => {
-                        if (vote.users) {
-                            uniqueVotersMap.set(vote.user_id, vote.users);
+                } else {
+                    // For contests and extracts, query using the single contest_id
+                    const contestId = item.id;
+                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar)`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
                         }
                     });
-                    voters = Array.from(uniqueVotersMap.values())
-                        .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                }
+
+                // Deduplicate voters and sort by username
+                if (votesResponse) {
+                    const votesData = await votesResponse.json();
+                    if (Array.isArray(votesData)) {
+                        const uniqueVotersMap = new Map();
+                        votesData.forEach(vote => {
+                            if (vote.users) {
+                                uniqueVotersMap.set(vote.user_id, vote.users);
+                            }
+                        });
+                        voters = Array.from(uniqueVotersMap.values())
+                            .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                    }
                 }
 
                 // Set state for modal
@@ -2836,61 +2857,6 @@
             }
         }
 
-        async function ensurePinnedFolder() {
-            const PINNED_FOLDER_ID = 'd88c5bcc-8b54-44ab-bca9-ed186124bcd2';
-
-            try {
-                // Check if pinned folder exists
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${PINNED_FOLDER_ID}&select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
-                });
-                const existing = await response.json();
-
-                // If doesn't exist, create it
-                if (!existing || existing.length === 0) {
-                    console.log('Creating Pinned folder...');
-                    await fetch(`${SUPABASE_URL}/rest/v1/groups`, {
-                        method: 'POST',
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
-                        body: JSON.stringify({
-                            id: PINNED_FOLDER_ID,
-                            name: 'Pinned',
-                            display_order: 0
-                        })
-                    });
-                    console.log('Pinned folder created successfully');
-                }
-            } catch (error) {
-                console.error('Error ensuring pinned folder:', error);
-            }
-        }
-
-        async function loadGroups() {
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?select=*,items:contest_groups(*)&order=display_order.asc`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
-                });
-                const groups = await response.json();
-                if (Array.isArray(groups)) {
-                    state.groups = groups;
-                }
-            } catch (error) {
-                console.error('Error loading groups:', error);
-            }
-        }
 
         async function loadAppSettings() {
             try {
@@ -4619,7 +4585,6 @@
                         }
 
                         // Only reload and re-render after successful save
-                        await loadGroups();
                         render();
 
                         // Restore scroll position after render
@@ -4632,7 +4597,6 @@
                         console.error('Failed to save folder order:', error);
                         showToast('Failed to save folder order', 'error');
                         // Reload to revert visual state
-                        await loadGroups();
                         render();
 
                         // Restore scroll position after render
@@ -4681,8 +4645,7 @@
                                 await Promise.all(updatePromises);
 
                                 // Only reload and re-render after successful save
-                                await loadGroups();
-                                render();
+                                        render();
 
                                 // Restore scroll position after render
                                 setTimeout(() => {
@@ -4694,8 +4657,7 @@
                                 console.error('Failed to save item order:', error);
                                 showToast('Failed to save item order', 'error');
                                 // Reload to revert visual state
-                                await loadGroups();
-                                render();
+                                        render();
 
                                 // Restore scroll position after render
                                 setTimeout(() => {
@@ -4714,7 +4676,6 @@
             state.showManageFoldersModal = true;
             state.showUserDropdown = false;
             document.body.classList.add('modal-open');
-            await loadGroups();
             render();
             // Initialize SortableJS after render
             setTimeout(initializeFolderSortable, 100);
@@ -4795,8 +4756,7 @@
                     throw new Error('Failed to create folder');
                 }
 
-                await loadGroups();
-                showToast('✅ Folder created successfully');
+                    showToast('✅ Folder created successfully');
                 clearLoading();
                 render();
             } catch (error) {
@@ -4849,8 +4809,7 @@
                     throw new Error('Failed to delete folder');
                 }
 
-                await loadGroups();
-                showToast('Folder deleted successfully', 'success');
+                    showToast('Folder deleted successfully', 'success');
             } catch (error) {
                 console.error('Error deleting folder:', error);
                 showToast('Failed to delete folder: ' + error.message, 'error');
@@ -4995,8 +4954,7 @@
                     throw new Error('Failed to add items to folder');
                 }
 
-                await loadGroups();
-                showToast(`Added ${state.selectedFolderItems.length} item(s) successfully`, 'success');
+                    showToast(`Added ${state.selectedFolderItems.length} item(s) successfully`, 'success');
                 state.selectedFolderItems = [];
                 render();
                 setTimeout(initializeFolderSortable, 100);
@@ -5044,8 +5002,7 @@
                     throw new Error('Failed to add item to folder');
                 }
 
-                await loadGroups();
-                showToast('Item added to folder successfully', 'success');
+                    showToast('Item added to folder successfully', 'success');
             } catch (error) {
                 console.error('Error adding item to folder:', error);
                 showToast('Failed to add item to folder: ' + error.message, 'error');
@@ -5072,8 +5029,7 @@
                     throw new Error('Failed to remove item from folder');
                 }
 
-                await loadGroups();
-                showToast('Item removed from folder', 'success');
+                    showToast('Item removed from folder', 'success');
                 clearLoading();
                 render();
             } catch (error) {
@@ -6103,9 +6059,6 @@
                                                 <button onclick="showAppSettings()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                     🔧 App Settings
                                                 </button>
-                                                <button onclick="openManageFoldersModal()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                                    📁 Manage Folders
-                                                </button>
                                             ` : ''}
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 Logout
@@ -6596,12 +6549,15 @@
 
             // Get voter count display
             let voterCountDisplay;
-            if (itemType === 'merger') {
-                voterCountDisplay = item.voterCountMin && item.voterCountMax
-                    ? `${item.voterCountMin}-${item.voterCountMax}👥`
+            if (itemType === 'merger' || itemType === 'contest' || itemType === 'extract') {
+                // All types use voterCountMin/Max fields
+                voterCountDisplay = item.voterCountMin !== undefined && item.voterCountMax !== undefined
+                    ? (item.voterCountMin === item.voterCountMax
+                        ? `${item.voterCountMax}👥`
+                        : `${item.voterCountMin}-${item.voterCountMax}👥`)
                     : '0👥';
             } else {
-                voterCountDisplay = `${item.voterCount || 0}👥`;
+                voterCountDisplay = '0👥';
             }
 
             // Get merged contests info (for mergers)
@@ -7011,7 +6967,7 @@
                                         ${state.user.id === ADMIN_DISCORD_ID ? `
                                             <button
                                                 onclick='togglePin("contest", "${contest.id}", ${contest.isPinned || false})'
-                                                class="bg-gradient-to-r ${contest.isPinned ? 'from-yellow-500 to-yellow-600' : 'from-gray-400 to-gray-500'} text-white px-3 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm flex items-center gap-1"
+                                                class="bg-gradient-to-r ${contest.isPinned ? 'from-red-600 to-red-700 hover:from-red-700 hover:to-red-800' : 'from-red-400 to-red-500 hover:from-red-500 hover:to-red-600'} text-white px-3 py-2 rounded-lg font-semibold transition shadow-md text-sm flex items-center gap-1"
                                                 title="${contest.isPinned ? 'Unpin' : 'Pin'} Contest"
                                             >
                                                 📌
@@ -8754,6 +8710,8 @@
         window.showMergerVoteModal = showMergerVoteModal;
         window.shareMerger = shareMerger;
         window.revoteMerge = revoteMerge;
+        window.confirmRevoteAll = confirmRevoteAll;
+        window.confirmVoteMissingOnly = confirmVoteMissingOnly;
         window.openCreateExtractModal = openCreateExtractModal;
         window.closeCreateExtractModal = closeCreateExtractModal;
         window.deleteExtract = deleteExtract;
@@ -8851,7 +8809,6 @@
                 loadContests(),
                 loadMergers(),
                 loadExtracts(),
-                ensurePinnedFolder().then(() => loadGroups()),
                 loadAppSettings()
             ]);
             if (state.user) {
