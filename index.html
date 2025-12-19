@@ -513,18 +513,62 @@
                 console.log('🔍 DEBUG: Loading results for contest:', state.currentContest.id);
                 console.log('🔍 DEBUG: Current user:', state.user);
 
-                // Fetch ALL votes with voter info including ban status for breakdown display with aggressive cache-busting
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
+                let allVotes = [];
+                const isExtract = state.currentContest.isExtract === true;
 
-                const allVotes = await response.json();
+                if (isExtract) {
+                    // For extracts, query votes from source contest(s)
+                    const extractImageIds = state.currentContest.extractImageIds || [];
+
+                    if (state.currentContest.extractSourceType === 'contest') {
+                        // Query votes from source contest, filtering by extract image IDs
+                        const contestId = state.currentContest.extractSourceContestId;
+                        const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                                'Pragma': 'no-cache',
+                                'Expires': '0'
+                            }
+                        });
+                        const votes = await response.json();
+                        allVotes = Array.isArray(votes) ? votes.filter(v => extractImageIds.includes(v.image_id)) : [];
+                    } else if (state.currentContest.extractSourceType === 'merger') {
+                        // Query votes from all merged contests, filtering by extract image IDs
+                        const mergerId = state.currentContest.extractSourceMergerId;
+                        const merger = state.mergers.find(m => m.id === mergerId);
+                        if (merger && merger.contestIds) {
+                            const votesPromises = merger.contestIds.map(contestId =>
+                                fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
+                                    headers: {
+                                        'apikey': SUPABASE_ANON_KEY,
+                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                                        'Pragma': 'no-cache',
+                                        'Expires': '0'
+                                    }
+                                }).then(r => r.json())
+                            );
+                            const votesArrays = await Promise.all(votesPromises);
+                            const combinedVotes = votesArrays.flat();
+                            allVotes = combinedVotes.filter(v => extractImageIds.includes(v.image_id));
+                        }
+                    }
+                } else {
+                    // Regular contest - query votes normally
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                            'Pragma': 'no-cache',
+                            'Expires': '0'
+                        }
+                    });
+                    allVotes = await response.json();
+                }
+
                 console.log('🔍 DEBUG: Fetched votes:', allVotes);
 
                 // Check if votes response is valid
@@ -1199,11 +1243,11 @@
 
                 // Update voter counts BEFORE loading results to ensure fresh data
                 // Check if we're voting on an extract
-                const isExtractVoting = state.currentContest.id && typeof state.currentContest.id === 'string' && state.currentContest.id.startsWith('extract_');
+                const isExtractVoting = state.currentContest.isExtract === true;
 
                 if (isExtractVoting) {
                     // Extract voting - update both extract and source voter counts
-                    const extractId = parseInt(state.currentContest.id.replace('extract_', ''));
+                    const extractId = state.currentContest.id;
                     const extract = state.extracts.find(e => e.id === extractId);
 
                     if (extract) {
@@ -1283,9 +1327,25 @@
 
                         // Update URL hash
                         window.location.hash = `merge=${state.currentMergerId}`;
+                    } else {
+                        // Merger not found - reload mergers and show menu
+                        await loadMergers();
+                        state.view = 'menu';
+                        showToast('Merger results loaded successfully', 'success');
                     }
                 } else {
+                    // Refresh contest list to update voter counts FIRST
+                    await loadContests();
+
                     // Switch to single contest results view
+                    // If this was partial voting, load results for the original full contest
+                    if (state.currentContest.isPartialVoting && state.currentContest.originalContestId) {
+                        const originalContest = state.contests.find(c => c.id === state.currentContest.originalContestId);
+                        if (originalContest) {
+                            state.currentContest = originalContest;
+                        }
+                    }
+
                     // Load results BEFORE changing view (to match merger flow that works)
                     await loadResults();
                     state.view = 'results';
@@ -1294,8 +1354,10 @@
                     window.location.hash = `contest=${state.currentContest.id}`;
                 }
 
-                // Refresh contest list to update voter counts
-                await loadContests();
+                // Refresh contest list one more time if it was merger voting
+                if (isMergerVoting) {
+                    await loadContests();
+                }
 
                 // Clear processing state and clear loading before final render
                 state.modalProcessing = false;
@@ -1635,9 +1697,9 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
-        // Comprehensive image compression targeting 500 KB
-        async function compressImage(file, maxSizeKB = 500, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
-            const maxSizeBytes = maxSizeKB * 1024; // 500 KB = 512000 bytes
+        // Comprehensive image compression targeting 750 KB
+        async function compressImage(file, maxSizeKB = 750, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
+            const maxSizeBytes = maxSizeKB * 1024; // 750 KB = 768000 bytes
 
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1893,7 +1955,7 @@
                 const fileState = state.compressionProgress.files[i];
 
                 try {
-                    const result = await compressImage(file, 500, (progress) => {
+                    const result = await compressImage(file, 750, (progress) => {
                         fileState.progress = progress;
                         render();
                     });
@@ -2383,11 +2445,35 @@
                 let votesResponse;
                 if (itemType === 'merger') {
                     // For mergers, query votes from all contests in the merger
+                    // Get ALL unique voters across all merged contests (not just those who voted on all contests)
                     const contestIds = item.contestIds || [];
                     if (contestIds.length === 0) {
                         voters = [];
                     } else {
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&is_blocked=eq.false&select=user_id,users!inner(id,username,avatar)`, {
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&select=user_id,users!inner(id,username,avatar,is_banned)`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
+                        });
+                    }
+                } else if (itemType === 'extract') {
+                    // For extracts, query votes from source contest(s)
+                    let sourceContestIds = [];
+                    if (item.sourceType === 'contest') {
+                        sourceContestIds = [item.sourceContestId];
+                    } else if (item.sourceType === 'merger') {
+                        const merger = state.mergers.find(m => m.id === item.sourceMergerId);
+                        if (merger) {
+                            sourceContestIds = merger.contestIds;
+                        }
+                    }
+
+                    if (sourceContestIds.length === 0) {
+                        voters = [];
+                    } else {
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&select=user_id,users!inner(id,username,avatar,is_banned)`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2396,9 +2482,9 @@
                         });
                     }
                 } else {
-                    // For contests and extracts, query using the single contest_id
+                    // For regular contests, query using the contest_id
                     const contestId = item.id;
-                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar)`, {
+                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar,is_banned)`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2407,13 +2493,13 @@
                     });
                 }
 
-                // Deduplicate voters and sort by username
+                // Deduplicate voters and sort by username (exclude banned users)
                 if (votesResponse) {
                     const votesData = await votesResponse.json();
                     if (Array.isArray(votesData)) {
                         const uniqueVotersMap = new Map();
                         votesData.forEach(vote => {
-                            if (vote.users) {
+                            if (vote.users && !vote.users.is_banned) {
                                 uniqueVotersMap.set(vote.user_id, vote.users);
                             }
                         });
@@ -3136,7 +3222,7 @@
 
         async function viewResults(contest) {
             // Skip database check for extracts
-            const isExtract = contest.isExtract || (typeof contest.id === 'string' && contest.id.startsWith('extract_'));
+            const isExtract = contest.isExtract === true;
 
             if (!isExtract) {
                 // Check if contest still exists in the database
@@ -3799,12 +3885,80 @@
             }
 
             // Create a temporary contest object with only the images to vote on
+            // But keep reference to original contest for results display
             const votingContest = {
                 ...contest,
-                images: imagesToVote
+                images: imagesToVote,
+                isPartialVoting: !revoteAll,
+                originalContestId: contest.id
             };
 
             startVoting(votingContest);
+        }
+
+        // Extract "Complete Voting" modal (similar to contest and merger)
+        function showExtractVoteModal(extractId) {
+            const extract = state.extracts.find(e => e.id === extractId);
+            if (!extract) {
+                showToast('Extract not found', 'error');
+                return;
+            }
+
+            // Determine which source contest(s) to check for votes
+            let votedImageIds = [];
+            if (extract.sourceType === 'contest' && extract.sourceContestId) {
+                const userVotes = state.userVotedContests[extract.sourceContestId] || {};
+                votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+            } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
+                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (merger) {
+                    let allVotedImageIds = [];
+                    merger.contestIds.forEach(contestId => {
+                        const userVotes = state.userVotedContests[contestId] || {};
+                        allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
+                    });
+                    votedImageIds = allVotedImageIds;
+                }
+            }
+
+            // Filter to extract images only
+            const votedExtractImageIds = extract.imageIds.filter(id => votedImageIds.includes(id));
+            const unvotedExtractImages = extract.imageIds.filter(id => !votedImageIds.includes(id));
+
+            // Show modal with options
+            const message = `You've voted on ${votedExtractImageIds.length} out of ${extract.imageIds.length} images.\n\nUnvoted images: ${unvotedExtractImages.length}\n\nWhat would you like to do?`;
+
+            // Store the extractId for the action functions
+            state.pendingExtractId = extractId;
+
+            state.modal = {
+                icon: '🔄',
+                title: 'Complete Voting - ' + extract.name,
+                message: message,
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Vote Missing Only', action: 'confirmExtractVoteMissingOnly', primary: true },
+                    { text: 'Revote All', action: 'confirmExtractRevoteAll', primary: true }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function confirmExtractVoteMissingOnly() {
+            const extractId = state.pendingExtractId;
+            state.modal = null;
+            state.pendingExtractId = null;
+            document.body.classList.remove('modal-open');
+            startExtractVoting(extractId, false);
+        }
+
+        function confirmExtractRevoteAll() {
+            const extractId = state.pendingExtractId;
+            state.modal = null;
+            state.pendingExtractId = null;
+            document.body.classList.remove('modal-open');
+            startExtractVoting(extractId, true);
         }
 
         // ==================== END MERGER SYSTEM FUNCTIONS ====================
@@ -4299,7 +4453,7 @@
             }
         }
 
-        async function startExtractVoting(extractId) {
+        async function startExtractVoting(extractId, revoteAll = true) {
             const extract = state.extracts.find(e => e.id === extractId);
             if (!extract) {
                 showToast('Extract not found', 'error');
@@ -4308,19 +4462,23 @@
 
             // Get source contest to find the images
             let sourceContest = null;
+            let sourceImages = [];
+
             if (extract.sourceType === 'contest') {
                 sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                if (sourceContest) {
+                    sourceImages = sourceContest.images;
+                }
             } else if (extract.sourceType === 'merger') {
                 // For mergers, we need to get all images from all merged contests
                 const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
                 if (merger) {
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                    // Create a temporary contest object with all merged images
-                    const allImages = mergedContests.flatMap(c => c.images);
+                    sourceImages = mergedContests.flatMap(c => c.images);
+                    // Create a pseudo source contest for ID purposes
                     sourceContest = {
-                        id: 'extract_' + extractId,
+                        id: merger.contestIds[0], // Use first contest ID for vote storage
                         title: extract.name,
-                        images: allImages.filter(img => extract.imageIds.includes(img.id)),
                         createdBy: extract.createdBy,
                         creatorName: extract.creatorName,
                         creatorAvatar: extract.creatorAvatar
@@ -4332,33 +4490,62 @@
                 if (sourceExtract && sourceExtract.sourceType === 'contest') {
                     const originalContest = state.contests.find(c => c.id === sourceExtract.sourceContestId);
                     if (originalContest) {
-                        const filteredImages = originalContest.images.filter(img => extract.imageIds.includes(img.id));
-                        sourceContest = {
-                            id: 'extract_' + extractId,
-                            title: extract.name,
-                            images: filteredImages,
-                            createdBy: extract.createdBy,
-                            creatorName: extract.creatorName,
-                            creatorAvatar: extract.creatorAvatar
-                        };
+                        sourceImages = originalContest.images;
+                        sourceContest = originalContest;
                     }
                 }
             }
 
-            if (!sourceContest) {
+            if (!sourceContest || sourceImages.length === 0) {
                 showToast('Source not found', 'error');
                 return;
             }
 
             // Filter images to only those in the extract
-            const extractImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
+            const extractImages = sourceImages.filter(img => extract.imageIds.includes(img.id));
+
+            // If revoteAll is false, filter to only unvoted images
+            let imagesToVote = extractImages;
+            if (!revoteAll) {
+                // Get user's voted images from source contest(s)
+                let votedImageIds = [];
+                if (extract.sourceType === 'contest' && extract.sourceContestId) {
+                    const userVotes = state.userVotedContests[extract.sourceContestId] || {};
+                    votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+                } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
+                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                    if (merger) {
+                        let allVotedImageIds = [];
+                        merger.contestIds.forEach(contestId => {
+                            const userVotes = state.userVotedContests[contestId] || {};
+                            allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
+                        });
+                        votedImageIds = allVotedImageIds;
+                    }
+                }
+                imagesToVote = extractImages.filter(img => !votedImageIds.includes(img.id));
+            }
+
+            if (imagesToVote.length === 0) {
+                showToast('No images to vote on', 'info');
+                return;
+            }
 
             // Create a temporary contest object for voting
             const extractContest = {
-                ...sourceContest,
-                images: extractImages,
+                id: extractId,
                 title: extract.name,
-                id: extract.sourceContestId || sourceContest.id
+                images: imagesToVote,
+                createdBy: extract.createdBy,
+                creatorName: extract.creatorName,
+                creatorAvatar: extract.creatorAvatar,
+                isExtract: true,
+                extractSourceType: extract.sourceType,
+                extractSourceContestId: extract.sourceContestId,
+                extractSourceMergerId: extract.sourceMergerId,
+                extractImageIds: extract.imageIds,
+                isPartialVoting: !revoteAll,
+                originalContestId: extractId
             };
 
             startVoting(extractContest);
@@ -4419,15 +4606,19 @@
             // Filter images to only those in the extract
             const extractImages = sourceImages.filter(img => extract.imageIds.includes(img.id));
 
-            // Create a temporary contest object for results with extract ID prefix
+            // Create a temporary contest object for results with extract information
             const extractContest = {
-                id: 'extract_' + extractId,
+                id: extractId,
                 title: extract.name,
                 images: extractImages,
                 createdBy: extract.createdBy,
                 creatorName: extract.creatorName,
                 creatorAvatar: extract.creatorAvatar,
-                isExtract: true
+                isExtract: true,
+                extractSourceType: extract.sourceType,
+                extractSourceContestId: extract.sourceContestId,
+                extractSourceMergerId: extract.sourceMergerId,
+                extractImageIds: extract.imageIds
             };
 
             viewResults(extractContest);
@@ -6370,11 +6561,12 @@
                                             </p>
                                             ${file.needsCompression ? `
                                                 <p class="text-xs text-gray-600 mt-1">
-                                                    Original: ${(file.originalSize / 1024).toFixed(0)}KB
-                                                    ${file.compressedSize ? `→ Compressed: ${(file.compressedSize / 1024).toFixed(0)}KB (${Math.round((1 - file.compressedSize / file.originalSize) * 100)}% smaller)` : '→ Compressing...'}
+                                                    ${file.compressedSize && file.compressedSize < file.originalSize ? `Original: ${(file.originalSize / 1024).toFixed(0)}KB → Compressed: ${(file.compressedSize / 1024).toFixed(0)}KB (${Math.round((1 - file.compressedSize / file.originalSize) * 100)}% smaller)` :
+                                                      file.compressedSize ? `${(file.originalSize / 1024).toFixed(0)}KB (no compression needed)` :
+                                                      `Original: ${(file.originalSize / 1024).toFixed(0)}KB → Compressing...`}
                                                 </p>
                                             ` : file.originalSize ? `
-                                                <p class="text-xs text-gray-600 mt-1">Size: ${(file.originalSize / 1024).toFixed(0)}KB</p>
+                                                <p class="text-xs text-gray-600 mt-1">${(file.originalSize / 1024).toFixed(0)}KB</p>
                                             ` : ''}
                                             ${file.status === 'compressing' ? `
                                                 <p class="text-xs text-blue-600 mt-1">🔄 Compressing...</p>
@@ -6910,14 +7102,20 @@
                             const titleA = (a.title || a.name || '').toLowerCase();
                             const titleB = (b.title || b.name || '').toLowerCase();
 
+                            // Get timestamps for date sorting
+                            const getTimestamp = (item) => {
+                                if (!item.createdAt) return 0;
+                                return new Date(item.createdAt).getTime();
+                            };
+
                             switch (state.filters.sortBy) {
                                 case 'newest':
                                 case 'dateDesc':
                                 case 'withFolders':
-                                    return (b.createdAt || 0) - (a.createdAt || 0);
+                                    return getTimestamp(b) - getTimestamp(a);
                                 case 'oldest':
                                 case 'dateAsc':
-                                    return (a.createdAt || 0) - (b.createdAt || 0);
+                                    return getTimestamp(a) - getTimestamp(b);
                                 case 'titleAsc':
                                     return titleA.localeCompare(titleB);
                                 case 'titleDesc':
@@ -6933,7 +7131,7 @@
                                 case 'imagesAsc':
                                     return itemCountA - itemCountB;
                                 default:
-                                    return (b.createdAt || 0) - (a.createdAt || 0);
+                                    return getTimestamp(b) - getTimestamp(a);
                             }
                         });
 
@@ -7178,7 +7376,7 @@
                                         <span class="text-gray-600">${imageCount}🖼️</span>
                                     </div>
                                     <div class="flex items-center gap-1 whitespace-nowrap">
-                                        <span class="font-semibold text-gray-700">Voters:</span>
+                                        <span class="font-semibold text-gray-700">Votes per image:</span>
                                         <span class="text-gray-600">${voterCountDisplay}</span>
                                     </div>
                                 </div>
@@ -7558,6 +7756,20 @@
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    ${merger.isLocked ? `
+                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                            </svg>
+                        </div>
+                    ` : merger.resultsPublic === false ? `
+                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Results are private">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                            </svg>
+                        </div>
+                    ` : ''}
                     <div class="flex items-start gap-2 mb-2">
                         <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
                         <div class="flex-1 min-w-0">
@@ -7667,6 +7879,20 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    ${extract.isLocked ? `
+                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                            </svg>
+                        </div>
+                    ` : extract.resultsPublic === false ? `
+                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Results are private">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                            </svg>
+                        </div>
+                    ` : ''}
                     <div class="flex items-start gap-2 mb-2">
                         <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
                         <div class="flex-1 min-w-0">
@@ -7701,7 +7927,7 @@
                             </button>
                         ` : `
                             <button
-                                onclick='startExtractVoting("${extract.id}")'
+                                onclick='showExtractVoteModal("${extract.id}")'
                                 class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
                             >
                                 Complete Voting
@@ -9315,6 +9541,9 @@
         window.showContestVoteModal = showContestVoteModal;
         window.confirmContestVoteMissingOnly = confirmContestVoteMissingOnly;
         window.confirmContestRevoteAll = confirmContestRevoteAll;
+        window.showExtractVoteModal = showExtractVoteModal;
+        window.confirmExtractVoteMissingOnly = confirmExtractVoteMissingOnly;
+        window.confirmExtractRevoteAll = confirmExtractRevoteAll;
         window.startContestVoting = startContestVoting;
         window.openCreateExtractModal = openCreateExtractModal;
         window.closeCreateExtractModal = closeCreateExtractModal;
