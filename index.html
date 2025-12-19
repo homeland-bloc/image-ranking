@@ -3530,6 +3530,86 @@
             }
         }
 
+        // Contest "Complete Voting" modal (similar to merger)
+        function showContestVoteModal(contestId) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) {
+                showToast('Contest not found', 'error');
+                return;
+            }
+
+            // Get user's voted images for this contest
+            const userVotes = state.userVotedContests[contest.id] || {};
+            const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+            const unvotedImages = contest.images.filter(img => !votedImageIds.includes(img.id));
+
+            // Show modal with options
+            const message = `You've voted on ${votedImageIds.length} out of ${contest.images.length} images.\n\nUnvoted images: ${unvotedImages.length}\n\nWhat would you like to do?`;
+
+            // Store the contestId for the action functions
+            state.pendingContestId = contestId;
+
+            state.modal = {
+                icon: '🔄',
+                title: 'Complete Voting - ' + contest.title,
+                message: message,
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Vote Missing Only', action: 'confirmContestVoteMissingOnly', primary: true },
+                    { text: 'Revote All', action: 'confirmContestRevoteAll', primary: true }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function confirmContestVoteMissingOnly() {
+            const contestId = state.pendingContestId;
+            state.modal = null;
+            state.pendingContestId = null;
+            document.body.classList.remove('modal-open');
+            startContestVoting(contestId, false);
+        }
+
+        function confirmContestRevoteAll() {
+            const contestId = state.pendingContestId;
+            state.modal = null;
+            state.pendingContestId = null;
+            document.body.classList.remove('modal-open');
+            startContestVoting(contestId, true);
+        }
+
+        function startContestVoting(contestId, revoteAll = false) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) {
+                showToast('Contest not found', 'error');
+                return;
+            }
+
+            // If revoteAll is false, only include unvoted images
+            let imagesToVote;
+            if (revoteAll) {
+                imagesToVote = contest.images;
+            } else {
+                const userVotes = state.userVotedContests[contest.id] || {};
+                const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+                imagesToVote = contest.images.filter(img => !votedImageIds.includes(img.id));
+            }
+
+            if (imagesToVote.length === 0) {
+                showToast('No images to vote on', 'info');
+                return;
+            }
+
+            // Create a temporary contest object with only the images to vote on
+            const votingContest = {
+                ...contest,
+                images: imagesToVote
+            };
+
+            startVoting(votingContest);
+        }
+
         // ==================== END MERGER SYSTEM FUNCTIONS ====================
 
         // ==================== EXTRACT SYSTEM FUNCTIONS ====================
@@ -3752,17 +3832,25 @@
                     voter_count_max: voterCountMax
                 };
 
-                // Only set source_contest_id for contest sources (UUID field)
-                // For other sources, set to null to avoid UUID type errors
+                // Set source_contest_id based on source type
+                // For contests and mergers, store their IDs in source_contest_id
+                // The column name says "contest" but it's used for both based on source_type
                 if (state.extractSourceType === 'contest') {
                     if (sourceContestId) {
                         extractData.source_contest_id = sourceContestId;
                     } else {
                         throw new Error('Contest not found');
                     }
+                } else if (state.extractSourceType === 'merger') {
+                    // For mergers, store the merger's id in source_contest_id
+                    const merger = state.mergers.find(m => m.id === state.extractSourceId);
+                    if (merger) {
+                        extractData.source_contest_id = merger.id;
+                    } else {
+                        throw new Error('Merger not found');
+                    }
                 } else {
-                    // For mergers and extracts, set source_contest_id to null
-                    // The source type is already stored in source_type field
+                    // For extracts from extracts, set source_contest_id to null
                     extractData.source_contest_id = null;
                 }
 
@@ -6591,10 +6679,14 @@
                 voterCountDisplay = '0👥';
             }
 
-            // Get merged contests info (for mergers)
+            // Get merged contests info (for mergers) and calculate image count
             let mergedContestsHTML = '';
+            let imageCount = item.images?.length || item.imageIds?.length || 0;
+
             if (itemType === 'merger' && item.contestIds && item.contestIds.length > 0) {
                 const mergedContests = state.contests.filter(c => item.contestIds.includes(c.id));
+                // Calculate total images from all merged contests
+                imageCount = mergedContests.reduce((sum, c) => sum + (c.images?.length || 0), 0);
                 mergedContestsHTML = `
                     <details class="mt-2">
                         <summary class="cursor-pointer font-semibold text-gray-700 hover:text-mauve-600 transition">
@@ -6655,7 +6747,7 @@
                                 <div class="grid grid-cols-2 gap-3 text-sm">
                                     <div>
                                         <span class="font-semibold text-gray-700">Images:</span>
-                                        <span class="text-gray-600">${item.images?.length || item.imageIds?.length || 0}🖼️</span>
+                                        <span class="text-gray-600">${imageCount}🖼️</span>
                                     </div>
                                     <div>
                                         <span class="font-semibold text-gray-700">Votes per image:</span>
@@ -6920,7 +7012,13 @@
 
         function renderContestCard(contest) {
                         try {
-                                const hasVoted = state.userVotedContests[contest.id];
+                                const userVotes = state.userVotedContests[contest.id] || {};
+                                const votedImageCount = Object.keys(userVotes).length;
+                                const totalImageCount = contest.images.length;
+                                const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
+                                const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
+                                const hasVotedNone = votedImageCount === 0;
+
                                 // Display voter range (min-max) or single value if they're equal
                                 const voterDisplay = contest.voterCountMin !== undefined && contest.voterCountMax !== undefined
                                     ? (contest.voterCountMin === contest.voterCountMax
@@ -6961,7 +7059,7 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : hasVoted && (contest.voterCountMax > 0) ? `
+                                        ` : hasVotedAll && (contest.voterCountMax > 0) ? `
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
@@ -6972,6 +7070,13 @@
                                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                                 🚫 Account restricted
                                             </div>
+                                        ` : hasVotedSome ? `
+                                            <button
+                                                onclick='showContestVoteModal("${contest.id}")'
+                                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                                            >
+                                                Complete Voting
+                                            </button>
                                         ` : `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
@@ -7082,6 +7187,27 @@
                 sourceRef = sourceExtract ? sourceExtract.name : 'Unknown Extract';
             }
 
+            // Check if user has voted on this extract
+            // For extracts, we need to check if user has voted on ALL images in the extract
+            let hasVoted = false;
+            if (extract.sourceType === 'contest' && extract.sourceContestId) {
+                const userVotes = state.userVotedContests[extract.sourceContestId] || {};
+                const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+                hasVoted = extract.imageIds.every(imageId => votedImageIds.includes(imageId));
+            } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
+                // For mergers, check if user has voted on all images from any of the merged contests
+                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (merger) {
+                    // Check if user has voted on all extract images across all merged contests
+                    let allVotedImageIds = [];
+                    merger.contestIds.forEach(contestId => {
+                        const userVotes = state.userVotedContests[contestId] || {};
+                        allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
+                    });
+                    hasVoted = extract.imageIds.every(imageId => allVotedImageIds.includes(imageId));
+                }
+            }
+
             const imageCount = extract.imageIds.length;
             const voterRange = extract.voterCountMin !== undefined && extract.voterCountMax !== undefined
                 ? (extract.voterCountMin === extract.voterCountMax
@@ -7115,18 +7241,19 @@
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
-                        ` : `
-                            <button
-                                onclick='startExtractVoting("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
-                            >
-                                Start Voting
-                            </button>
+                        ` : hasVoted ? `
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
                                 class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                             >
                                 View Results
+                            </button>
+                        ` : `
+                            <button
+                                onclick='startExtractVoting("${extract.id}")'
+                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                            >
+                                Start Voting
                             </button>
                         `}
                         <button
@@ -8732,6 +8859,10 @@
         window.revoteMerge = revoteMerge;
         window.confirmRevoteAll = confirmRevoteAll;
         window.confirmVoteMissingOnly = confirmVoteMissingOnly;
+        window.showContestVoteModal = showContestVoteModal;
+        window.confirmContestVoteMissingOnly = confirmContestVoteMissingOnly;
+        window.confirmContestRevoteAll = confirmContestRevoteAll;
+        window.startContestVoting = startContestVoting;
         window.openCreateExtractModal = openCreateExtractModal;
         window.closeCreateExtractModal = closeCreateExtractModal;
         window.deleteExtract = deleteExtract;
