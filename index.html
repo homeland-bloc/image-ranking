@@ -971,6 +971,106 @@
             });
         }
 
+        // Helper function to recalculate voter count ranges for an item (contest, merger, or extract)
+        async function recalculateVoterCounts(itemType, itemId, imageIds, sourceContestIds) {
+            try {
+                // Fetch all votes for the specified images
+                const votesResponse = await fetch(
+                    `${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&image_id=in.(${imageIds.join(',')})&is_blocked=eq.false&select=user_id,image_id`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
+
+                if (!votesResponse.ok) {
+                    console.error('Failed to fetch votes for voter count calculation');
+                    return;
+                }
+
+                const votes = await votesResponse.json();
+
+                // Group votes by user
+                const votesByUser = {};
+                votes.forEach(vote => {
+                    if (!votesByUser[vote.user_id]) {
+                        votesByUser[vote.user_id] = new Set();
+                    }
+                    votesByUser[vote.user_id].add(vote.image_id);
+                });
+
+                // Count how many images each user has voted on
+                const voterCounts = Object.keys(votesByUser).map(userId => {
+                    const userVotedImages = votesByUser[userId];
+                    // Count only images in the specified imageIds array
+                    const votedInSet = imageIds.filter(imgId => userVotedImages.has(imgId)).length;
+                    return votedInSet === imageIds.length ? userId : null;
+                }).filter(userId => userId !== null);
+
+                const voterCountMin = voterCounts.length;
+                const voterCountMax = voterCounts.length;
+
+                // Update the database based on item type
+                if (itemType === 'contest') {
+                    await fetch(
+                        `${SUPABASE_URL}/rest/v1/contests?id=eq.${itemId}`,
+                        {
+                            method: 'PATCH',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Prefer': 'return=minimal'
+                            },
+                            body: JSON.stringify({
+                                voter_count_min: voterCountMin,
+                                voter_count_max: voterCountMax
+                            })
+                        }
+                    );
+                } else if (itemType === 'merger') {
+                    await fetch(
+                        `${SUPABASE_URL}/rest/v1/mergers?id=eq.${itemId}`,
+                        {
+                            method: 'PATCH',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Prefer': 'return=minimal'
+                            },
+                            body: JSON.stringify({
+                                voter_count_min: voterCountMin,
+                                voter_count_max: voterCountMax
+                            })
+                        }
+                    );
+                } else if (itemType === 'extract') {
+                    await fetch(
+                        `${SUPABASE_URL}/rest/v1/extracts?id=eq.${itemId}`,
+                        {
+                            method: 'PATCH',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Prefer': 'return=minimal'
+                            },
+                            body: JSON.stringify({
+                                voter_count_min: voterCountMin,
+                                voter_count_max: voterCountMax
+                            })
+                        }
+                    );
+                }
+            } catch (error) {
+                console.error(`Error recalculating voter counts for ${itemType} ${itemId}:`, error);
+            }
+        }
+
         async function confirmSubmitVotes() {
             state.modalProcessing = true;
             state.modal = null;
@@ -1098,52 +1198,78 @@
                 state.hasSubmitted = true;
 
                 // Update voter counts BEFORE loading results to ensure fresh data
-                const contestIdsToUpdate = isMergerVoting
-                    ? state.mergerContestIds
-                    : [state.currentContest.id];
+                // Check if we're voting on an extract
+                const isExtractVoting = state.currentContest.id && typeof state.currentContest.id === 'string' && state.currentContest.id.startsWith('extract_');
 
-                // Quick voter count update without waiting for responses
-                const voterCountUpdates = contestIdsToUpdate.map(async (contestId) => {
-                    try {
-                        const votesResponse = await fetch(
-                            `${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&is_blocked=eq.false&select=user_id`,
-                            {
-                                headers: {
-                                    'apikey': SUPABASE_ANON_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                    'Cache-Control': 'no-cache'
-                                }
+                if (isExtractVoting) {
+                    // Extract voting - update both extract and source voter counts
+                    const extractId = parseInt(state.currentContest.id.replace('extract_', ''));
+                    const extract = state.extracts.find(e => e.id === extractId);
+
+                    if (extract) {
+                        // Get source contest IDs
+                        let sourceContestIds = [];
+                        if (extract.sourceType === 'contest') {
+                            sourceContestIds = [extract.sourceContestId];
+                        } else if (extract.sourceType === 'merger') {
+                            const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                            if (merger) {
+                                sourceContestIds = merger.contestIds;
                             }
-                        );
-
-                        if (votesResponse.ok) {
-                            const votes = await votesResponse.json();
-                            const uniqueVoters = new Set(votes.map(v => v.user_id)).size;
-
-                            await fetch(
-                                `${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`,
-                                {
-                                    method: 'PATCH',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'apikey': SUPABASE_ANON_KEY,
-                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                        'Prefer': 'return=minimal'
-                                    },
-                                    body: JSON.stringify({
-                                        voter_count_min: uniqueVoters,
-                                        voter_count_max: uniqueVoters
-                                    })
-                                }
-                            );
                         }
-                    } catch (error) {
-                        console.error(`Error updating voter count for contest ${contestId}:`, error);
-                    }
-                });
 
-                // Wait for all voter count updates to complete
-                await Promise.all(voterCountUpdates);
+                        // Update extract voter counts based on its specific images
+                        await recalculateVoterCounts('extract', extractId, extract.imageIds, sourceContestIds);
+
+                        // Update source contest/merger voter counts based on ALL their images
+                        if (extract.sourceType === 'contest') {
+                            const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                            if (sourceContest) {
+                                const allImageIds = sourceContest.images.map(img => img.id);
+                                await recalculateVoterCounts('contest', extract.sourceContestId, allImageIds, [extract.sourceContestId]);
+                            }
+                        } else if (extract.sourceType === 'merger') {
+                            const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                            if (merger) {
+                                const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                                const allImageIds = mergedContests.flatMap(c => c.images.map(img => img.id));
+                                await recalculateVoterCounts('merger', extract.sourceMergerId, allImageIds, merger.contestIds);
+                            }
+                        }
+
+                        // Reload extracts to get updated voter counts
+                        await loadExtracts();
+                    }
+                } else if (isMergerVoting) {
+                    // Merger voting - update merger and source contest voter counts
+                    const merger = state.mergers.find(m => m.id === state.currentMergerId);
+                    if (merger) {
+                        const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                        const allImageIds = mergedContests.flatMap(c => c.images.map(img => img.id));
+
+                        // Update merger voter counts
+                        await recalculateVoterCounts('merger', state.currentMergerId, allImageIds, merger.contestIds);
+
+                        // Update each source contest
+                        for (const contestId of merger.contestIds) {
+                            const contest = state.contests.find(c => c.id === contestId);
+                            if (contest) {
+                                const contestImageIds = contest.images.map(img => img.id);
+                                await recalculateVoterCounts('contest', contestId, contestImageIds, [contestId]);
+                            }
+                        }
+
+                        // Reload mergers to get updated voter counts
+                        await loadMergers();
+                    }
+                } else {
+                    // Regular contest voting - update contest voter counts
+                    const contest = state.contests.find(c => c.id === state.currentContest.id);
+                    if (contest) {
+                        const contestImageIds = contest.images.map(img => img.id);
+                        await recalculateVoterCounts('contest', state.currentContest.id, contestImageIds, [state.currentContest.id]);
+                    }
+                }
 
                 // Navigate to appropriate results view
                 if (isMergerVoting) {
@@ -1568,9 +1694,38 @@
                         let finalQuality = currentQuality || 0.8;
                         let finalMaxDimension = currentMaxDimension || null;
 
+                        // Check if original file is already under the limit
+                        if (file.size <= maxSizeBytes && currentQuality === null && currentMaxDimension === null) {
+                            // File already meets size requirements, no compression needed
+                            resolve({
+                                file: file,
+                                originalSize: file.size,
+                                compressedSize: file.size,
+                                savingsPercent: 0,
+                                currentQuality: null,
+                                currentMaxDimension: null,
+                                success: true
+                            });
+                            return;
+                        }
+
                         // If specific parameters provided (for "Compress More"), use them
                         if (currentQuality !== null || currentMaxDimension !== null) {
                             result = await tryCompress(finalQuality, finalMaxDimension);
+                            // Ensure compression actually made it smaller
+                            if (result && result.blob.size >= file.size) {
+                                // Compression made it larger or same size - reject
+                                reject({
+                                    message: `Compression would increase file size. Original: ${formatFileSize(file.size)}, Compressed: ${formatFileSize(result.blob.size)}`,
+                                    file: file,
+                                    originalSize: file.size,
+                                    compressedSize: result.blob.size,
+                                    success: false,
+                                    currentQuality: finalQuality,
+                                    currentMaxDimension: finalMaxDimension
+                                });
+                                return;
+                            }
                         } else {
                             // Step 1: Try quality reduction first (no resizing)
                             const qualityLevels = [0.8, 0.7, 0.6, 0.5];
@@ -1610,6 +1765,33 @@
 
                         // Check final result
                         if (result && result.blob.size <= maxSizeBytes) {
+                            // Ensure compression actually made it smaller
+                            if (result.blob.size >= file.size) {
+                                // Compression made it larger - use original if it's under the limit
+                                if (file.size <= maxSizeBytes) {
+                                    resolve({
+                                        file: file,
+                                        originalSize: file.size,
+                                        compressedSize: file.size,
+                                        savingsPercent: 0,
+                                        currentQuality: null,
+                                        currentMaxDimension: null,
+                                        success: true
+                                    });
+                                } else {
+                                    reject({
+                                        message: `Compression would increase file size. Original: ${formatFileSize(file.size)}, Compressed: ${formatFileSize(result.blob.size)}`,
+                                        file: file,
+                                        originalSize: file.size,
+                                        compressedSize: result.blob.size,
+                                        success: false,
+                                        currentQuality: finalQuality,
+                                        currentMaxDimension: finalMaxDimension
+                                    });
+                                }
+                                return;
+                            }
+
                             const compressedFile = new File([result.blob], file.name, {
                                 type: outputType,
                                 lastModified: Date.now()
@@ -2471,6 +2653,13 @@
 
             console.log('🔗 [NAVIGATION] Hash changed:', hash);
 
+            // Don't handle hash changes if we're currently in voting mode
+            // (this prevents interrupting the voting flow during "Complete Voting")
+            if (state.view === 'vote') {
+                console.log('🔗 [NAVIGATION] Skipping hash change handling - currently voting');
+                return;
+            }
+
             // Check for single contest share: #contest={uuid}
             const params = new URLSearchParams(hash);
             const contestId = params.get('contest');
@@ -2946,52 +3135,60 @@
         }
 
         async function viewResults(contest) {
-            // Check if contest still exists in the database
-            try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+            // Skip database check for extracts
+            const isExtract = contest.isExtract || (typeof contest.id === 'string' && contest.id.startsWith('extract_'));
+
+            if (!isExtract) {
+                // Check if contest still exists in the database
+                try {
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+
+                    const contests = await response.json();
+
+                    // If contest doesn't exist (deleted), refresh the page
+                    if (!contests || contests.length === 0) {
+                        console.log('Contest no longer exists, refreshing...');
+                        showAlert('Contest was deleted. Refreshing...', '🔄');
+                        setTimeout(() => location.reload(), 1500);
+                        return;
                     }
-                });
 
-                const contests = await response.json();
+                    // Check if results are public
+                    const contestData = contests[0];
+                    const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                    const isCreator = state.user && state.user.id === contestData.created_by;
+                    const resultsPublic = contestData.results_public !== false;
 
-                // If contest doesn't exist (deleted), refresh the page
-                if (!contests || contests.length === 0) {
-                    console.log('Contest no longer exists, refreshing...');
-                    showAlert('Contest was deleted. Refreshing...', '🔄');
-                    setTimeout(() => location.reload(), 1500);
+                    if (!resultsPublic && !isAdmin && !isCreator) {
+                        showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Error checking contest existence:', error);
+                    showAlert('Error loading results: ' + error.message, '❌');
                     return;
                 }
-
-                // Check if results are public
-                const contestData = contests[0];
-                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                const isCreator = state.user && state.user.id === contestData.created_by;
-                const resultsPublic = contestData.results_public !== false;
-
-                if (!resultsPublic && !isAdmin && !isCreator) {
-                    showAlert('Results are private. Only the creator or admin can view them.', '🔒');
-                    return;
-                }
-
-                state.currentContest = contest;
-                const userVotes = state.userVotedContests[contest.id] || {};
-                state.votes = userVotes;
-                await loadResults();
-                state.showMyVotes = false;
-                state.view = 'results';
-
-                // Update URL hash for shareable link
-                window.location.hash = `contest=${contest.id}`;
-
-                render();
-            } catch (error) {
-                console.error('Error checking contest existence:', error);
-                showAlert('Error loading results: ' + error.message, '❌');
             }
+
+            state.currentContest = contest;
+            const userVotes = state.userVotedContests[contest.id] || {};
+            state.votes = userVotes;
+            await loadResults();
+            state.showMyVotes = false;
+            state.view = 'results';
+
+            // Update URL hash for shareable link (only for real contests, not extracts)
+            if (!isExtract) {
+                window.location.hash = `contest=${contest.id}`;
+            }
+
+            render();
         }
 
         async function viewLockedResults(contest) {
@@ -3885,21 +4082,45 @@
         }
 
         function confirmDeleteExtract(extractId) {
-            state.extractToDelete = extractId;
-            showConfirm(
-                'Are you sure you want to delete this extract? This action cannot be undone.',
-                'executeDeleteExtract',
-                '🗑️'
+            const extract = state.extracts.find(e => e.id === extractId);
+            if (!extract) return;
+
+            // Store extract info for validation
+            state.extractToDelete = extract;
+
+            showInputModal(
+                `Type "${extract.name}" to confirm deletion`,
+                'Enter extract name exactly...',
+                'handleDeleteExtractConfirmation',
+                false
             );
         }
 
-        async function executeDeleteExtract() {
+        function handleDeleteExtractConfirmation() {
+            if (state.modalProcessing) return;
+            const input = document.querySelector('.modal-input');
+            const enteredName = input ? input.value.trim() : '';
+
+            if (!state.extractToDelete) {
+                showAlert('Extract information not found.', '❌');
+                return;
+            }
+
+            if (enteredName !== state.extractToDelete.name) {
+                showAlert('Name does not match. Deletion cancelled.', '❌');
+                return;
+            }
+
+            // Name matches, proceed with deletion
+            executeDeleteExtract(state.extractToDelete.id);
+        }
+
+        async function executeDeleteExtract(extractId) {
             if (state.modalProcessing) return;
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            const extractId = state.extractToDelete;
             state.extractToDelete = null;
 
             try {
@@ -3933,6 +4154,149 @@
         // Legacy function name for backwards compatibility
         async function deleteExtract(extractId) {
             confirmDeleteExtract(extractId);
+        }
+
+        function openEditExtractModal(extractId) {
+            const extract = state.extracts.find(e => e.id === extractId);
+            if (!extract) {
+                showToast('Extract not found', 'error');
+                return;
+            }
+
+            // Store the extract being edited
+            state.editingExtractId = extractId;
+            state.editExtractSelectedImages = [...extract.imageIds]; // Copy current image IDs
+            state.showEditExtractModal = true;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeEditExtractModal() {
+            state.showEditExtractModal = false;
+            state.editingExtractId = null;
+            state.editExtractSelectedImages = [];
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function toggleEditExtractImage(imageId) {
+            if (!state.editExtractSelectedImages) {
+                state.editExtractSelectedImages = [];
+            }
+
+            const index = state.editExtractSelectedImages.indexOf(imageId);
+            if (index > -1) {
+                // Remove image
+                state.editExtractSelectedImages.splice(index, 1);
+            } else {
+                // Add image
+                state.editExtractSelectedImages.push(imageId);
+            }
+
+            render();
+        }
+
+        async function saveEditedExtract() {
+            const extractId = state.editingExtractId;
+            const extract = state.extracts.find(e => e.id === extractId);
+
+            if (!extract) {
+                showToast('Extract not found', 'error');
+                return;
+            }
+
+            if (state.editExtractSelectedImages.length === 0) {
+                showAlert('Please select at least one image', '❌');
+                return;
+            }
+
+            try {
+                setLoading('Saving extract...');
+
+                // Calculate voter counts for the new image set
+                // Query votes to see who has voted on all the new images
+                let voterCountMin = 0;
+                let voterCountMax = 0;
+
+                // Get the source contest ID(s) for querying votes
+                let contestIdsForVotes = [];
+                if (extract.sourceType === 'contest') {
+                    contestIdsForVotes = [extract.sourceContestId];
+                } else if (extract.sourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                    if (merger) {
+                        contestIdsForVotes = merger.contestIds;
+                    }
+                }
+
+                // Fetch all votes for images in this extract
+                const votesResponse = await fetch(
+                    `${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIdsForVotes.join(',')})&image_id=in.(${state.editExtractSelectedImages.join(',')})&select=user_id,image_id`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
+
+                if (votesResponse.ok) {
+                    const votes = await votesResponse.json();
+
+                    // Group votes by user
+                    const votesByUser = {};
+                    votes.forEach(vote => {
+                        if (!votesByUser[vote.user_id]) {
+                            votesByUser[vote.user_id] = new Set();
+                        }
+                        votesByUser[vote.user_id].add(vote.image_id);
+                    });
+
+                    // Count users who have voted on ALL images in the extract
+                    const usersWithCompleteVotes = Object.keys(votesByUser).filter(userId => {
+                        const userVotedImages = votesByUser[userId];
+                        return state.editExtractSelectedImages.every(imageId => userVotedImages.has(imageId));
+                    });
+
+                    voterCountMin = usersWithCompleteVotes.length;
+                    voterCountMax = usersWithCompleteVotes.length;
+                }
+
+                // Update extract in database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: JSON.stringify({
+                        image_ids: state.editExtractSelectedImages,
+                        voter_count_min: voterCountMin,
+                        voter_count_max: voterCountMax
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Extract update failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to update extract');
+                }
+
+                // Reload extracts to get updated data
+                await loadExtracts();
+
+                closeEditExtractModal();
+                showToast('Extract updated successfully', 'success');
+            } catch (error) {
+                console.error('Error updating extract:', error);
+                showToast('Failed to update extract: ' + error.message, 'error');
+            } finally {
+                clearLoading();
+            }
         }
 
         async function startExtractVoting(extractId) {
@@ -4032,40 +4396,38 @@
                 }
             }
 
-            // Get source contest
-            let sourceContest = null;
+            // Get source contest or merger
+            let sourceImages = [];
             if (extract.sourceType === 'contest') {
-                sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                if (sourceContest) {
+                    sourceImages = sourceContest.images;
+                }
             } else if (extract.sourceType === 'merger') {
                 const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
                 if (merger) {
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                    const allImages = mergedContests.flatMap(c => c.images);
-                    sourceContest = {
-                        id: 'extract_' + extractId,
-                        title: extract.name,
-                        images: allImages.filter(img => extract.imageIds.includes(img.id)),
-                        createdBy: extract.createdBy,
-                        creatorName: extract.creatorName,
-                        creatorAvatar: extract.creatorAvatar
-                    };
+                    sourceImages = mergedContests.flatMap(c => c.images);
                 }
             }
 
-            if (!sourceContest) {
+            if (sourceImages.length === 0) {
                 showToast('Source not found', 'error');
                 return;
             }
 
             // Filter images to only those in the extract
-            const extractImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
+            const extractImages = sourceImages.filter(img => extract.imageIds.includes(img.id));
 
-            // Create a temporary contest object for results
+            // Create a temporary contest object for results with extract ID prefix
             const extractContest = {
-                ...sourceContest,
-                images: extractImages,
+                id: 'extract_' + extractId,
                 title: extract.name,
-                id: extract.sourceContestId || sourceContest.id
+                images: extractImages,
+                createdBy: extract.createdBy,
+                creatorName: extract.creatorName,
+                creatorAvatar: extract.creatorAvatar,
+                isExtract: true
             };
 
             viewResults(extractContest);
@@ -5588,24 +5950,6 @@
 
                             <!-- Source Selection -->
                             <div class="flex-1 overflow-y-auto p-6">
-                                <div class="mb-4">
-                                    <h4 class="font-semibold text-gray-700 mb-2">Contests</h4>
-                                    <div class="space-y-2">
-                                        ${state.contests.map(contest => `
-                                            <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
-                                                 onclick="selectExtractSource('contest', '${contest.id}')">
-                                                <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                <div class="flex-1 min-w-0">
-                                                    <h5 class="font-semibold text-gray-800 truncate">${contest.title}</h5>
-                                                    <p class="text-xs text-gray-500">
-                                                        ${contest.creatorName} • ${contest.images.length} images
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                </div>
-
                                 ${state.mergers.length > 0 ? `
                                     <div class="mb-4">
                                         <h4 class="font-semibold text-gray-700 mb-2">Mergers</h4>
@@ -5630,25 +5974,23 @@
                                     </div>
                                 ` : ''}
 
-                                ${state.extracts.length > 0 ? `
-                                    <div>
-                                        <h4 class="font-semibold text-gray-700 mb-2">Extracts</h4>
-                                        <div class="space-y-2">
-                                            ${state.extracts.map(extract => `
-                                                <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
-                                                     onclick="selectExtractSource('extract', '${extract.id}')">
-                                                    <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                    <div class="flex-1 min-w-0">
-                                                        <h5 class="font-semibold text-gray-800 truncate">${extract.name}</h5>
-                                                        <p class="text-xs text-gray-500">
-                                                            ${extract.creatorName} • ${extract.imageIds.length} images
-                                                        </p>
-                                                    </div>
+                                <div>
+                                    <h4 class="font-semibold text-gray-700 mb-2">Contests</h4>
+                                    <div class="space-y-2">
+                                        ${state.contests.map(contest => `
+                                            <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
+                                                 onclick="selectExtractSource('contest', '${contest.id}')">
+                                                <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                <div class="flex-1 min-w-0">
+                                                    <h5 class="font-semibold text-gray-800 truncate">${contest.title}</h5>
+                                                    <p class="text-xs text-gray-500">
+                                                        ${contest.creatorName} • ${contest.images.length} images
+                                                    </p>
                                                 </div>
-                                            `).join('')}
-                                        </div>
+                                            </div>
+                                        `).join('')}
                                     </div>
-                                ` : ''}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -5671,32 +6013,6 @@
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
                     sourceImages = mergedContests.flatMap(c => c.images);
                     sourceName = merger.name;
-                }
-            } else if (state.extractSourceType === 'extract') {
-                const extract = state.extracts.find(e => e.id === state.extractSourceId);
-                if (extract) {
-                    // Get images from the extract's source
-                    if (extract.sourceType === 'contest') {
-                        const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                        if (sourceContest) {
-                            sourceImages = sourceContest.images.filter(img => extract.imageIds.includes(img.id));
-                        }
-                    } else if (extract.sourceType === 'merger') {
-                        const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                        if (sourceMerger) {
-                            const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
-                            const allImages = mergedContests.flatMap(c => c.images);
-                            sourceImages = allImages.filter(img => extract.imageIds.includes(img.id));
-                        }
-                    } else if (extract.sourceType === 'extract') {
-                        // Recursively get images from source extract
-                        const sourceExtract = state.extracts.find(e => e.id === extract.sourceContestId);
-                        if (sourceExtract) {
-                            // For now, just get the IDs - in practice we'd need to resolve the full image objects
-                            sourceImages = extract.imageIds.map(id => ({ id, url: '' }));
-                        }
-                    }
-                    sourceName = extract.name;
                 }
             }
 
@@ -5783,6 +6099,109 @@
                                     ${selectedCount === 0 || !state.newExtractName ? 'disabled' : ''}
                                 >
                                     Create Extract
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderEditExtractModal() {
+            if (!state.showEditExtractModal) return '';
+
+            const extract = state.extracts.find(e => e.id === state.editingExtractId);
+            if (!extract) return '';
+
+            // Get source images
+            let sourceImages = [];
+            let sourceName = '';
+
+            if (extract.sourceType === 'contest') {
+                const contest = state.contests.find(c => c.id === extract.sourceContestId);
+                if (contest) {
+                    sourceImages = contest.images;
+                    sourceName = contest.title;
+                }
+            } else if (extract.sourceType === 'merger') {
+                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (merger) {
+                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                    sourceImages = mergedContests.flatMap(c => c.images);
+                    sourceName = merger.name;
+                }
+            }
+
+            const selectedCount = (state.editExtractSelectedImages || []).length;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeEditExtractModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-800">Edit Extract - ${extract.name}</h3>
+                                    <p class="text-sm text-gray-600 mt-1">
+                                        From: ${sourceName} (${selectedCount} selected)
+                                    </p>
+                                </div>
+                                <button onclick="closeEditExtractModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Image Grid -->
+                        <div class="flex-1 overflow-y-auto p-6">
+                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                ${sourceImages.map(image => {
+                                    const isSelected = (state.editExtractSelectedImages || []).includes(image.id);
+                                    return `
+                                        <div data-image-id="${image.id}">
+                                            <div
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
+                                                onclick="toggleEditExtractImage(${image.id})"
+                                            >
+                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
+                                            ${image.label ? `
+                                                <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 truncate">
+                                                    ${image.label}
+                                                </div>
+                                            ` : ''}
+                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
+                                                ${isSelected ? `
+                                                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                    </svg>
+                                                ` : `
+                                                    <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
+                                                `}
+                                            </div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="p-6 border-t border-gray-200">
+                            <div class="flex gap-3">
+                                <button
+                                    onclick="closeEditExtractModal()"
+                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onclick="saveEditedExtract()"
+                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount > 0 ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
+                                    ${selectedCount === 0 ? 'disabled' : ''}
+                                >
+                                    Save Changes
                                 </button>
                             </div>
                         </div>
@@ -6455,10 +6874,11 @@
 
                     ${(() => {
                         // Combine filtered contests, mergers, and extracts into a unified list
+                        // Mix them without any type priority
                         const allItems = [
+                            ...filteredContests.map(c => ({ ...c, itemType: 'contest' })),
                             ...filteredMergers.map(m => ({ ...m, itemType: 'merger' })),
-                            ...filteredExtracts.map(e => ({ ...e, itemType: 'extract' })),
-                            ...filteredContests.map(c => ({ ...c, itemType: 'contest' }))
+                            ...filteredExtracts.map(e => ({ ...e, itemType: 'extract' }))
                         ];
 
                         // Apply sorting based on selected sort option
@@ -6703,19 +7123,27 @@
 
             // Get source info (for extracts)
             let sourceHTML = '';
-            if (itemType === 'extract' && item.sourceType && item.sourceId) {
-                const sourceItem = item.sourceType === 'contest'
-                    ? state.contests.find(c => c.id === item.sourceId)
-                    : state.mergers.find(m => m.id === item.sourceId);
-                if (sourceItem) {
-                    const sourceName = sourceItem.title || sourceItem.name;
-                    sourceHTML = `
-                        <div class="mt-2">
-                            <span class="font-semibold text-gray-700">Source:</span>
-                            <span class="text-sm text-gray-600">${sourceName}</span>
-                        </div>
-                    `;
+            if (itemType === 'extract' && item.sourceType) {
+                let sourceItem = null;
+                let sourceName = 'Unknown';
+
+                if (item.sourceType === 'contest') {
+                    sourceItem = state.contests.find(c => c.id === item.sourceContestId);
+                    sourceName = sourceItem ? sourceItem.title : 'Unknown Contest';
+                } else if (item.sourceType === 'merger') {
+                    sourceItem = state.mergers.find(m => m.id === item.sourceMergerId);
+                    sourceName = sourceItem ? sourceItem.name : 'Unknown Merger';
+                } else if (item.sourceType === 'extract') {
+                    sourceItem = state.extracts.find(e => e.id === item.sourceContestId);
+                    sourceName = sourceItem ? sourceItem.name : 'Unknown Extract';
                 }
+
+                const sourceTypeLabel = item.sourceType === 'contest' ? 'contest' : item.sourceType === 'merger' ? 'merger' : 'extract';
+                sourceHTML = `
+                    <div class="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <span class="text-sm text-yellow-800">This is an extract from ${sourceTypeLabel === 'contest' ? 'another contest' : sourceTypeLabel}: <strong>${sourceName}</strong></span>
+                    </div>
+                `;
             }
 
             return `
@@ -6745,12 +7173,12 @@
                                     </div>
                                 </div>
                                 <div class="grid grid-cols-2 gap-3 text-sm">
-                                    <div>
+                                    <div class="flex items-center gap-1 whitespace-nowrap">
                                         <span class="font-semibold text-gray-700">Images:</span>
                                         <span class="text-gray-600">${imageCount}🖼️</span>
                                     </div>
-                                    <div>
-                                        <span class="font-semibold text-gray-700">Votes per image:</span>
+                                    <div class="flex items-center gap-1 whitespace-nowrap">
+                                        <span class="font-semibold text-gray-700">Voters:</span>
                                         <span class="text-gray-600">${voterCountDisplay}</span>
                                     </div>
                                 </div>
@@ -6808,6 +7236,15 @@
                                                 ${item.resultsPublic !== false ? '👁️ Public' : '🔒 Private'}
                                             </button>
                                         </div>
+                                        <!-- Edit Extract Button (Extract Only) -->
+                                        ${itemType === 'extract' ? `
+                                            <button
+                                                onclick="openEditExtractModal('${item.id}'); closeContestInfoModal();"
+                                                class="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition text-sm"
+                                            >
+                                                ✏️ Edit Extract
+                                            </button>
+                                        ` : ''}
                                         <!-- Delete Button -->
                                         <button
                                             onclick="${itemType === 'contest' ? `deleteContest('${item.id}')` : itemType === 'merger' ? `deleteMerger('${item.id}')` : `deleteExtract('${item.id}')`}; closeContestInfoModal();"
@@ -6817,7 +7254,7 @@
                                         </button>
                                     </div>
                                 </div>
-                            ` : ''}
+            ` : ''}
 
                             <!-- Voters Section -->
                             <div class="p-4 bg-blue-50 rounded-lg">
@@ -7189,11 +7626,18 @@
 
             // Check if user has voted on this extract
             // For extracts, we need to check if user has voted on ALL images in the extract
-            let hasVoted = false;
+            let hasVotedAll = false;
+            let hasVotedSome = false;
+            let hasVotedNone = true;
+
             if (extract.sourceType === 'contest' && extract.sourceContestId) {
                 const userVotes = state.userVotedContests[extract.sourceContestId] || {};
                 const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
-                hasVoted = extract.imageIds.every(imageId => votedImageIds.includes(imageId));
+                const votedCount = extract.imageIds.filter(imageId => votedImageIds.includes(imageId)).length;
+
+                hasVotedAll = votedCount === extract.imageIds.length && extract.imageIds.length > 0;
+                hasVotedSome = votedCount > 0 && votedCount < extract.imageIds.length;
+                hasVotedNone = votedCount === 0;
             } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
                 // For mergers, check if user has voted on all images from any of the merged contests
                 const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
@@ -7204,7 +7648,11 @@
                         const userVotes = state.userVotedContests[contestId] || {};
                         allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
                     });
-                    hasVoted = extract.imageIds.every(imageId => allVotedImageIds.includes(imageId));
+                    const votedCount = extract.imageIds.filter(imageId => allVotedImageIds.includes(imageId)).length;
+
+                    hasVotedAll = votedCount === extract.imageIds.length && extract.imageIds.length > 0;
+                    hasVotedSome = votedCount > 0 && votedCount < extract.imageIds.length;
+                    hasVotedNone = votedCount === 0;
                 }
             }
 
@@ -7219,8 +7667,7 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    <div class="absolute top-2 left-2 bg-yellow-500 text-white px-2 py-0.5 rounded text-xs font-bold">EXTRACT</div>
-                    <div class="flex items-start gap-2 mb-2 mt-6">
+                    <div class="flex items-start gap-2 mb-2">
                         <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
@@ -7230,9 +7677,6 @@
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
                                 <span class="ml-auto whitespace-nowrap">${voterRange} ${imageCount}🖼️</span>
                             </div>
-                            <div class="text-xs text-yellow-600 mt-1">
-                                From: ${sourceRef}
-                            </div>
                         </div>
                     </div>
 
@@ -7241,19 +7685,26 @@
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
-                        ` : hasVoted ? `
+                        ` : hasVotedAll ? `
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
                                 class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
-                        ` : `
+                        ` : hasVotedNone ? `
                             <button
                                 onclick='startExtractVoting("${extract.id}")'
                                 class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                             >
                                 Start Voting
+                            </button>
+                        ` : `
+                            <button
+                                onclick='startExtractVoting("${extract.id}")'
+                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                            >
+                                Complete Voting
                             </button>
                         `}
                         <button
@@ -8760,7 +9211,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -8821,6 +9272,8 @@
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
+        window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
+        window.handleDeleteExtractConfirmation = handleDeleteExtractConfirmation;
         window.setSortBy = setSortBy;
         window.setFilterCreator = setFilterCreator;
         window.setSearchQuery = setSearchQuery;
@@ -8873,6 +9326,10 @@
         window.setExtractName = setExtractName;
         window.updateExtractNameOnBlur = updateExtractNameOnBlur;
         window.saveExtract = saveExtract;
+        window.openEditExtractModal = openEditExtractModal;
+        window.closeEditExtractModal = closeEditExtractModal;
+        window.toggleEditExtractImage = toggleEditExtractImage;
+        window.saveEditedExtract = saveEditedExtract;
         window.openManageFoldersModal = openManageFoldersModal;
         window.closeManageFoldersModal = closeManageFoldersModal;
         window.showCreateFolderModal = showCreateFolderModal;
