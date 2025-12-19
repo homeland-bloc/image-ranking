@@ -2805,6 +2805,8 @@
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
+                        voterCountMin: e.voter_count_min || 0,
+                        voterCountMax: e.voter_count_max || 0,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
                         type: 'extract'
@@ -3663,30 +3665,98 @@
             setLoading('Creating extract...');
 
             try {
-                // Image IDs are integers in the database
-                const extractData = {
-                    name: state.newExtractName.trim(),
-                    created_by: state.user.id,
-                    source_type: state.extractSourceType,
-                    image_ids: state.extractSelectedImages
-                };
+                // Ensure image IDs are integers (convert from any type)
+                const imageIds = state.extractSelectedImages.map(id => parseInt(id));
 
-                // Only set source_contest_id for contest sources (UUID field)
-                // For other sources, set to null to avoid UUID type errors
+                // Calculate voter counts for the selected images
+                setLoading('Calculating voter counts...');
+                let voterCountMin = 0;
+                let voterCountMax = 0;
+
+                // Get source contest ID for querying votes
+                let sourceContestId = null;
                 if (state.extractSourceType === 'contest') {
-                    // Ensure we're using the UUID, not contest number
                     let contest = state.contests.find(c => c.id === state.extractSourceId);
-
-                    // Fallback: if not found by ID, try finding by contestNumber in case extractSourceId is a number
                     if (!contest) {
                         const sourceIdAsNumber = parseInt(state.extractSourceId);
                         if (!isNaN(sourceIdAsNumber)) {
                             contest = state.contests.find(c => c.contestNumber === sourceIdAsNumber);
                         }
                     }
-
                     if (contest) {
-                        extractData.source_contest_id = contest.id;
+                        sourceContestId = contest.id;
+                    }
+                } else if (state.extractSourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === state.extractSourceId);
+                    if (merger) {
+                        // For mergers, we need to query votes from all merged contests
+                        // Use the merger's contest IDs for the query
+                        sourceContestId = merger.contestIds;
+                    }
+                } else if (state.extractSourceType === 'extract') {
+                    const sourceExtract = state.extracts.find(e => e.id === state.extractSourceId);
+                    if (sourceExtract && sourceExtract.sourceContestId) {
+                        sourceContestId = sourceExtract.sourceContestId;
+                    }
+                }
+
+                // Query votes for the selected images to calculate voter counts
+                if (sourceContestId) {
+                    try {
+                        const contestIdFilter = Array.isArray(sourceContestId)
+                            ? `contest_id=in.(${sourceContestId.join(',')})`
+                            : `contest_id=eq.${sourceContestId}`;
+
+                        const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&image_id=in.(${imageIds.join(',')})&select=image_id`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
+                        });
+
+                        if (votesResponse.ok) {
+                            const votes = await votesResponse.json();
+
+                            // Count votes per image
+                            const voteCounts = {};
+                            imageIds.forEach(id => voteCounts[id] = 0);
+                            votes.forEach(vote => {
+                                if (voteCounts[vote.image_id] !== undefined) {
+                                    voteCounts[vote.image_id]++;
+                                }
+                            });
+
+                            // Calculate min and max
+                            const counts = Object.values(voteCounts);
+                            if (counts.length > 0) {
+                                voterCountMin = Math.min(...counts);
+                                voterCountMax = Math.max(...counts);
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Failed to calculate voter counts:', error);
+                        // Continue with 0 values if calculation fails
+                    }
+                }
+
+                setLoading('Creating extract...');
+
+                // Image IDs are integers in the database
+                const extractData = {
+                    name: state.newExtractName.trim(),
+                    created_by: state.user.id,
+                    source_type: state.extractSourceType,
+                    image_ids: imageIds,
+                    voter_count_min: voterCountMin,
+                    voter_count_max: voterCountMax
+                };
+
+                // Only set source_contest_id for contest sources (UUID field)
+                // For other sources, set to null to avoid UUID type errors
+                if (state.extractSourceType === 'contest') {
+                    if (sourceContestId) {
+                        extractData.source_contest_id = sourceContestId;
                     } else {
                         throw new Error('Contest not found');
                     }
@@ -7013,6 +7083,11 @@
             }
 
             const imageCount = extract.imageIds.length;
+            const voterRange = extract.voterCountMin !== undefined && extract.voterCountMax !== undefined
+                ? (extract.voterCountMin === extract.voterCountMax
+                    ? `${extract.voterCountMax}👥`
+                    : `${extract.voterCountMin}-${extract.voterCountMax}👥`)
+                : '0👥';
             const isBanned = state.bannedUsers.includes(state.user.id);
             const createdDate = formatDate(extract.createdAt);
 
@@ -7027,7 +7102,7 @@
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${voterRange} ${imageCount}🖼️</span>
                             </div>
                             <div class="text-xs text-yellow-600 mt-1">
                                 From: ${sourceRef}
