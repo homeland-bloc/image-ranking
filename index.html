@@ -2494,8 +2494,8 @@
                     if (contestIds.length === 0) {
                         voters = [];
                     } else {
-                        // Get all votes from merged contests
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
+                        // Get all votes from merged contests (with high limit to avoid pagination issues)
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=5000&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2518,7 +2518,7 @@
                     if (sourceContestIds.length === 0) {
                         voters = [];
                     } else {
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&select=user_id,users!inner(id,username,avatar,is_banned)`, {
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2527,9 +2527,9 @@
                         });
                     }
                 } else {
-                    // For regular contests, query using the contest_id
+                    // For regular contests, query using the contest_id (with high limit)
                     const contestId = item.id;
-                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar,is_banned)`, {
+                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -7700,12 +7700,18 @@
                             <!-- Created Items Section -->
                             ${allCreatedItems.length > 0 ? `
                                 <div class="mb-6">
-                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Created (${allCreatedItems.length})</h3>
+                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Items Created (${allCreatedItems.length})</h3>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                         ${allCreatedItems.map(item => {
                                             const title = item.title || item.name;
+                                            const colorClass = item.itemType === 'merger' ? 'text-blue-700' :
+                                                              item.itemType === 'extract' ? 'text-yellow-700' :
+                                                              'text-gray-700';
+                                            const hoverClass = item.itemType === 'merger' ? 'hover:text-blue-900 hover:bg-blue-50' :
+                                                              item.itemType === 'extract' ? 'hover:text-yellow-900 hover:bg-yellow-50' :
+                                                              'hover:text-mauve-600 hover:bg-gray-50';
                                             return `
-                                                <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                                <div class="text-sm ${colorClass} ${hoverClass} transition p-2 rounded font-medium">
                                                     • ${title}
                                                 </div>
                                             `;
@@ -7716,7 +7722,7 @@
 
                             <!-- Voting History Section -->
                             <div class="mb-4">
-                                <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Voted On (${allVotedItems.length})</h3>
+                                <h3 class="text-lg font-bold text-gray-800 mb-3">Items Voted On (${allVotedItems.length})</h3>
                             </div>
 
                             ${allVotedItems.length === 0 ? `
@@ -7727,8 +7733,14 @@
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     ${allVotedItems.map(item => {
                                         const title = item.title || item.name;
+                                        const colorClass = item.itemType === 'merger' ? 'text-blue-700' :
+                                                          item.itemType === 'extract' ? 'text-yellow-700' :
+                                                          'text-gray-700';
+                                        const hoverClass = item.itemType === 'merger' ? 'hover:text-blue-900 hover:bg-blue-50' :
+                                                          item.itemType === 'extract' ? 'hover:text-yellow-900 hover:bg-yellow-50' :
+                                                          'hover:text-mauve-600 hover:bg-gray-50';
                                         return `
-                                            <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                            <div class="text-sm ${colorClass} ${hoverClass} transition p-2 rounded font-medium">
                                                 • ${title}
                                             </div>
                                         `;
@@ -8603,9 +8615,9 @@
                                         `;
                                     })()}
                                     ${voterStats.map(voter => `
-                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
-                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
-                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">
+                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">
                                                 ${voter.username}
                                             </div>
                                             <div class="text-xl font-bold text-white score-text">
@@ -8884,9 +8896,9 @@
                                                 return `
                                                     <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
                                                         <div class="flex items-center gap-3">
-                                                            <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
+                                                            <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');" />
                                                             <div>
-                                                                <div class="font-semibold text-gray-800">${user.username}</div>
+                                                                <div class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');">${user.username}</div>
                                                                 <div class="text-xs text-gray-500">${user.id}</div>
                                                                 ${isBanned ? '<span class="text-xs text-red-600 font-semibold">BANNED</span>' : ''}
                                                             </div>
@@ -9418,9 +9430,9 @@
                                         `;
                                     })()}
                                     ${voterStats.map(voter => `
-                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
-                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
-                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">
+                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">
                                                 ${voter.username}
                                             </div>
                                             <div class="text-xl font-bold text-white score-text">
