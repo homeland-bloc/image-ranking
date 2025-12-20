@@ -2495,27 +2495,62 @@
             }
         }
 
+        // Helper function to fetch all votes with pagination (works around 2000 row DB limit)
+        async function fetchAllVotesPaginated(filterQuery, selectFields) {
+            let allVotes = [];
+            let offset = 0;
+            const limit = 2000; // Database row limit per query
+            let hasMore = true;
+
+            while (hasMore) {
+                const url = `${SUPABASE_URL}/rest/v1/votes?${filterQuery}&limit=${limit}&offset=${offset}&select=${selectFields}`;
+                const response = await fetch(url, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch votes: ${response.statusText}`);
+                }
+
+                const batch = await response.json();
+                if (!Array.isArray(batch)) {
+                    break;
+                }
+
+                allVotes = allVotes.concat(batch);
+
+                // If we got fewer than limit rows, we've reached the end
+                if (batch.length < limit) {
+                    hasMore = false;
+                } else {
+                    offset += limit;
+                }
+            }
+
+            return allVotes;
+        }
+
         async function showContestInfoModal(item, itemType) {
             try {
                 // Fetch voters for this contest/merger/extract
                 let voters = [];
+                let votesData = [];
 
-                // Query for voters who have completed voting
-                let votesResponse;
                 if (itemType === 'merger') {
                     // For mergers, we need to get all voters and calculate how many contests they voted on
                     const contestIds = item.contestIds || [];
                     if (contestIds.length === 0) {
                         voters = [];
                     } else {
-                        // Get all votes from merged contests (with high limit to avoid pagination issues)
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=5000&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
+                        // Get all votes from merged contests with pagination
+                        votesData = await fetchAllVotesPaginated(
+                            `contest_id=in.(${contestIds.join(',')})`,
+                            'user_id,contest_id,users!inner(id,username,avatar,is_banned)'
+                        );
                     }
                 } else if (itemType === 'extract') {
                     // For extracts, query votes from source contest(s)
@@ -2532,29 +2567,22 @@
                     if (sourceContestIds.length === 0) {
                         voters = [];
                     } else {
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
+                        votesData = await fetchAllVotesPaginated(
+                            `contest_id=in.(${sourceContestIds.join(',')})`,
+                            'user_id,users!inner(id,username,avatar,is_banned)'
+                        );
                     }
                 } else {
-                    // For regular contests, query using the contest_id (with high limit)
+                    // For regular contests, query using the contest_id with pagination
                     const contestId = item.id;
-                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
-                    });
+                    votesData = await fetchAllVotesPaginated(
+                        `contest_id=eq.${contestId}`,
+                        'user_id,users!inner(id,username,avatar,is_banned)'
+                    );
                 }
 
                 // Deduplicate voters and sort by username (exclude banned users)
-                if (votesResponse) {
-                    const votesData = await votesResponse.json();
+                if (votesData && votesData.length > 0) {
                     if (Array.isArray(votesData)) {
                         if (itemType === 'merger') {
                             // For mergers, calculate how many contests each user voted on
