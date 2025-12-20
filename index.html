@@ -2638,7 +2638,40 @@
 
         async function shareContestFromModal() {
             if (!state.contestInfoModal) return;
-            await shareContest(state.contestInfoModal.item.id);
+
+            const { item, itemType } = state.contestInfoModal;
+            let shareUrl;
+
+            if (itemType === 'merger') {
+                shareUrl = `${window.location.origin}${window.location.pathname}#merger=${item.id}`;
+            } else if (itemType === 'extract') {
+                shareUrl = `${window.location.origin}${window.location.pathname}#extract=${item.id}`;
+            } else {
+                shareUrl = `${window.location.origin}${window.location.pathname}#contest=${item.id}`;
+            }
+
+            try {
+                // Try to use modern clipboard API
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(shareUrl);
+                } else {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = shareUrl;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+
+                const itemTypeName = itemType === 'merger' ? 'Merger' : itemType === 'extract' ? 'Extract' : 'Contest';
+                showToast(`🔗 ${itemTypeName} link copied!`, 'success');
+            } catch (error) {
+                console.error('Failed to copy link:', error);
+                showToast('Failed to copy link', 'error');
+            }
         }
 
         function showBreakdownMerged(imageId) {
@@ -2855,12 +2888,157 @@
                 return;
             }
 
-            // Check for single contest share: #contest={uuid}
+            // Parse hash parameters
             const params = new URLSearchParams(hash);
             const contestId = params.get('contest');
+            const mergerId = params.get('merger');
+            const extractId = params.get('extract');
+
+            // Check for contest share: #contest={uuid}
             if (contestId && state.isLoggedIn) {
                 console.log('🔗 [NAVIGATION] Detected contest share link');
                 loadSharedContest(contestId);
+            }
+            // Check for merger share: #merger={uuid}
+            else if (mergerId && state.isLoggedIn) {
+                console.log('🔗 [NAVIGATION] Detected merger share link');
+                loadSharedMerger(mergerId);
+            }
+            // Check for extract share: #extract={uuid}
+            else if (extractId && state.isLoggedIn) {
+                console.log('🔗 [NAVIGATION] Detected extract share link');
+                loadSharedExtract(extractId);
+            }
+        }
+
+        async function loadSharedMerger(mergerId) {
+            try {
+                console.log('Loading shared merger:', mergerId);
+
+                // Fetch merger from database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}&select=*,creator:users!mergers_created_by_fkey(username,avatar)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
+                });
+
+                const mergers = await response.json();
+
+                if (!mergers || mergers.length === 0) {
+                    showAlert('Merger not found. It may have been deleted.', '❌');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                const mergerData = mergers[0];
+                const merger = {
+                    id: mergerData.id,
+                    title: mergerData.title,
+                    contestIds: mergerData.contest_ids,
+                    resultsPublic: mergerData.results_public,
+                    createdBy: mergerData.created_by,
+                    creatorName: mergerData.creator.username,
+                    creatorAvatar: mergerData.creator.avatar,
+                    createdAt: mergerData.created_at,
+                    voterCountMin: mergerData.voter_count_min,
+                    voterCountMax: mergerData.voter_count_max
+                };
+
+                // Check if user is banned
+                if (state.bannedUsers.includes(state.user?.id)) {
+                    showAlert('Your account has been restricted. You cannot access this merger.', '🚫');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                // Reload data and show info modal
+                await loadContests();
+                await loadMergers();
+                await loadExtracts();
+
+                state.view = 'home';
+                showContestInfoModal(merger, 'merger');
+            } catch (error) {
+                console.error('Error loading shared merger:', error);
+                showAlert('Failed to load merger: ' + error.message, '❌');
+                window.location.hash = '';
+                state.view = 'home';
+                render();
+            }
+        }
+
+        async function loadSharedExtract(extractId) {
+            try {
+                console.log('Loading shared extract:', extractId);
+
+                // Fetch extract from database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}&select=*,creator:users!extracts_created_by_fkey(username,avatar)`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
+                });
+
+                const extracts = await response.json();
+
+                if (!extracts || extracts.length === 0) {
+                    showAlert('Extract not found. It may have been deleted.', '❌');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                const extractData = extracts[0];
+                const extract = {
+                    id: extractData.id,
+                    title: extractData.title,
+                    imageIds: extractData.image_ids,
+                    sourceType: extractData.source_type,
+                    sourceContestId: extractData.source_contest_id,
+                    sourceMergerId: extractData.source_merger_id,
+                    resultsPublic: extractData.results_public,
+                    createdBy: extractData.created_by,
+                    creatorName: extractData.creator.username,
+                    creatorAvatar: extractData.creator.avatar,
+                    createdAt: extractData.created_at,
+                    voterCountMin: extractData.voter_count_min,
+                    voterCountMax: extractData.voter_count_max
+                };
+
+                // Check if user is banned
+                if (state.bannedUsers.includes(state.user?.id)) {
+                    showAlert('Your account has been restricted. You cannot access this extract.', '🚫');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                // Reload data and show info modal
+                await loadContests();
+                await loadMergers();
+                await loadExtracts();
+
+                state.view = 'home';
+                showContestInfoModal(extract, 'extract');
+            } catch (error) {
+                console.error('Error loading shared extract:', error);
+                showAlert('Failed to load extract: ' + error.message, '❌');
+                window.location.hash = '';
+                state.view = 'home';
+                render();
             }
         }
 
@@ -7585,14 +7763,30 @@
                                 <h3 class="font-semibold text-gray-800 mb-3">Users that have voted (${voters.length})</h3>
                                 ${voters.length > 0 ? `
                                     ${itemType === 'merger' ? `
-                                        <div class="space-y-2 max-h-64 overflow-y-auto">
-                                            ${voters.map(voter => `
-                                                <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
-                                                    <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                    <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
-                                                    <span class="text-xs font-semibold px-2 py-1 bg-blue-200 text-blue-800 rounded" title="Completed Merged Contests">${voter.completedContests}/${voter.totalContests}</span>
+                                        ${(() => {
+                                            const fullyCompletedCount = voters.filter(v => v.completedContests === v.totalContests).length;
+                                            const completionRate = voters.length > 0 ? Math.round((fullyCompletedCount / voters.length) * 100) : 0;
+                                            return `
+                                                <div class="mb-3 p-2 bg-white rounded-lg border border-blue-200">
+                                                    <div class="text-sm font-semibold text-gray-700">
+                                                        Completion rate: <span class="text-blue-600">${completionRate}%</span>
+                                                        <span class="text-xs text-gray-500 ml-2">(${fullyCompletedCount}/${voters.length} users)</span>
+                                                    </div>
                                                 </div>
-                                            `).join('')}
+                                            `;
+                                        })()}
+                                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                                            ${voters.map(voter => {
+                                                const isComplete = voter.completedContests === voter.totalContests;
+                                                const badgeColor = isComplete ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800';
+                                                return `
+                                                    <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
+                                                        <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
+                                                        <span class="text-xs font-semibold px-2 py-1 ${badgeColor} rounded" title="Completed Merged Contests">${voter.completedContests}/${voter.totalContests}</span>
+                                                    </div>
+                                                `;
+                                            }).join('')}
                                         </div>
                                     ` : `
                                         <div class="space-y-2 max-h-64 overflow-y-auto">
