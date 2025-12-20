@@ -355,7 +355,7 @@
             showManageFoldersModal: false, // Show manage folders modal
             newMergerName: '', // Name for new merger being created
             newExtractName: '', // Name for new extract being created
-            extractSourceType: null, // 'contest', 'merger', or 'extract'
+            extractSourceType: null, // 'contest' or 'merger' only
             extractSourceId: null, // ID of source contest/merger
             extractSelectedImages: [], // Array of image IDs selected for extract
             selectedFolderId: null, // Currently selected folder for viewing
@@ -4099,7 +4099,7 @@
             // Update the count display and button state without full re-render to prevent blink
             const countDisplay = document.querySelector('[data-extract-count]');
             if (countDisplay) {
-                countDisplay.textContent = `From: ${state.extractSourceType === 'contest' ? state.contests.find(c => c.id === state.extractSourceId)?.title : state.extractSourceType === 'merger' ? state.mergers.find(m => m.id === state.extractSourceId)?.name : state.extracts.find(e => e.id === state.extractSourceId)?.name} (${state.extractSelectedImages.length} selected)`;
+                countDisplay.textContent = `From: ${state.extractSourceType === 'contest' ? state.contests.find(c => c.id === state.extractSourceId)?.title : state.mergers.find(m => m.id === state.extractSourceId)?.name} (${state.extractSelectedImages.length} selected)`;
             }
 
             // Update save button state
@@ -4220,14 +4220,6 @@
                         voterCountMax = merger.voterCountMax !== undefined ? merger.voterCountMax : 0;
                         sourceContestId = merger.contestIds;
                     }
-                } else if (state.extractSourceType === 'extract') {
-                    const sourceExtract = state.extracts.find(e => e.id === state.extractSourceId);
-                    if (sourceExtract) {
-                        // Inherit voter counts from the source extract
-                        voterCountMin = sourceExtract.voterCountMin !== undefined ? sourceExtract.voterCountMin : 0;
-                        voterCountMax = sourceExtract.voterCountMax !== undefined ? sourceExtract.voterCountMax : 0;
-                        sourceContestId = sourceExtract.sourceContestId;
-                    }
                 }
 
                 setLoading('Creating extract...');
@@ -4260,8 +4252,7 @@
                         throw new Error('Merger not found');
                     }
                 } else {
-                    // For extracts from extracts, set source_contest_id to null
-                    extractData.source_contest_id = null;
+                    throw new Error('Invalid extract source type. Must be contest or merger.');
                 }
 
                 // Save to extracts table
