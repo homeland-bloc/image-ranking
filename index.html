@@ -2915,42 +2915,7 @@
             try {
                 console.log('Loading shared merger:', mergerId);
 
-                // Fetch merger from database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}&select=*,creator:users!mergers_created_by_fkey(username,avatar)`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
-
-                const mergers = await response.json();
-
-                if (!mergers || mergers.length === 0) {
-                    showAlert('Merger not found. It may have been deleted.', '❌');
-                    window.location.hash = '';
-                    state.view = 'home';
-                    render();
-                    return;
-                }
-
-                const mergerData = mergers[0];
-                const merger = {
-                    id: mergerData.id,
-                    title: mergerData.title,
-                    contestIds: mergerData.contest_ids,
-                    resultsPublic: mergerData.results_public,
-                    createdBy: mergerData.created_by,
-                    creatorName: mergerData.creator.username,
-                    creatorAvatar: mergerData.creator.avatar,
-                    createdAt: mergerData.created_at,
-                    voterCountMin: mergerData.voter_count_min,
-                    voterCountMax: mergerData.voter_count_max
-                };
-
-                // Check if user is banned
+                // Check if user is banned first
                 if (state.bannedUsers.includes(state.user?.id)) {
                     showAlert('Your account has been restricted. You cannot access this merger.', '🚫');
                     window.location.hash = '';
@@ -2959,13 +2924,45 @@
                     return;
                 }
 
-                // Reload data and show info modal
+                // Reload data to get latest state
                 await loadContests();
                 await loadMergers();
                 await loadExtracts();
 
-                state.view = 'home';
-                showContestInfoModal(merger, 'merger');
+                // Find the merger in state
+                const merger = state.mergers.find(m => m.id === mergerId);
+
+                if (!merger) {
+                    showAlert('Merger not found. It may have been deleted.', '❌');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                // Get all contests in the merger
+                const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                const isCreator = state.user && state.user.id === merger.createdBy;
+
+                // Check if user has voted on all contests
+                const unlockedContests = mergedContests.filter(c => !c.isLocked);
+                const votedContests = unlockedContests.filter(c => state.userVotedContests[c.id]);
+                const hasVotedAll = votedContests.length === unlockedContests.length && unlockedContests.length > 0;
+                const hasVotedSome = votedContests.length > 0 && votedContests.length < unlockedContests.length;
+                const hasVotedNone = votedContests.length === 0;
+
+                // Route user based on their voting status
+                if (hasVotedAll || isAdmin || isCreator) {
+                    // User has voted on all contests or is admin/creator -> show results
+                    await viewMergerResults(mergerId);
+                } else if (hasVotedSome) {
+                    // User has voted on some contests -> show "Complete Voting" modal
+                    showMergerVoteModal(mergerId);
+                } else {
+                    // User hasn't voted on any -> start merger voting
+                    startMergerVoting(mergerId, false);
+                }
             } catch (error) {
                 console.error('Error loading shared merger:', error);
                 showAlert('Failed to load merger: ' + error.message, '❌');
@@ -2979,45 +2976,7 @@
             try {
                 console.log('Loading shared extract:', extractId);
 
-                // Fetch extract from database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}&select=*,creator:users!extracts_created_by_fkey(username,avatar)`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
-
-                const extracts = await response.json();
-
-                if (!extracts || extracts.length === 0) {
-                    showAlert('Extract not found. It may have been deleted.', '❌');
-                    window.location.hash = '';
-                    state.view = 'home';
-                    render();
-                    return;
-                }
-
-                const extractData = extracts[0];
-                const extract = {
-                    id: extractData.id,
-                    title: extractData.title,
-                    imageIds: extractData.image_ids,
-                    sourceType: extractData.source_type,
-                    sourceContestId: extractData.source_contest_id,
-                    sourceMergerId: extractData.source_merger_id,
-                    resultsPublic: extractData.results_public,
-                    createdBy: extractData.created_by,
-                    creatorName: extractData.creator.username,
-                    creatorAvatar: extractData.creator.avatar,
-                    createdAt: extractData.created_at,
-                    voterCountMin: extractData.voter_count_min,
-                    voterCountMax: extractData.voter_count_max
-                };
-
-                // Check if user is banned
+                // Check if user is banned first
                 if (state.bannedUsers.includes(state.user?.id)) {
                     showAlert('Your account has been restricted. You cannot access this extract.', '🚫');
                     window.location.hash = '';
@@ -3026,13 +2985,49 @@
                     return;
                 }
 
-                // Reload data and show info modal
+                // Reload data to get latest state
                 await loadContests();
                 await loadMergers();
                 await loadExtracts();
 
-                state.view = 'home';
-                showContestInfoModal(extract, 'extract');
+                // Find the extract in state
+                const extract = state.extracts.find(e => e.id === extractId);
+
+                if (!extract) {
+                    showAlert('Extract not found. It may have been deleted.', '❌');
+                    window.location.hash = '';
+                    state.view = 'home';
+                    render();
+                    return;
+                }
+
+                // Check if user has voted on the source
+                let hasVotedOnSource = false;
+
+                if (extract.sourceType === 'contest') {
+                    // For contest source, check if user has voted on the contest
+                    hasVotedOnSource = !!state.userVotedContests[extract.sourceContestId];
+                } else if (extract.sourceType === 'merger') {
+                    // For merger source, check if user has voted on all contests in the merger
+                    const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                    if (sourceMerger) {
+                        const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
+                        const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+                        hasVotedOnSource = votedContests.length === mergedContests.length && mergedContests.length > 0;
+                    }
+                }
+
+                // Route user based on their voting status
+                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                const isCreator = state.user && state.user.id === extract.createdBy;
+
+                if (hasVotedOnSource || isAdmin || isCreator) {
+                    // User has voted on source or is admin/creator -> show extract results
+                    await viewExtractResults(extractId);
+                } else {
+                    // User hasn't voted on source -> show redirect modal
+                    showExtractVotingRedirectModal(extractId);
+                }
             } catch (error) {
                 console.error('Error loading shared extract:', error);
                 showAlert('Failed to load extract: ' + error.message, '❌');
