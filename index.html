@@ -1712,9 +1712,9 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
-        // Comprehensive image compression targeting 750 KB
-        async function compressImage(file, maxSizeKB = 750, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
-            const maxSizeBytes = maxSizeKB * 1024; // 750 KB = 768000 bytes
+        // Comprehensive image compression targeting 500 KB
+        async function compressImage(file, maxSizeKB = 500, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
+            const maxSizeBytes = maxSizeKB * 1024; // 500 KB = 512000 bytes
 
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1975,7 +1975,7 @@
                 const fileState = state.compressionProgress.files[i];
 
                 try {
-                    const result = await compressImage(file, 750, (progress) => {
+                    const result = await compressImage(file, 500, (progress) => {
                         fileState.progress = progress;
                         render();
                     });
@@ -2216,6 +2216,20 @@
             if (!state.compressionProgress || !state.compressionProgress.allComplete) return;
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const maxSizeBytes = 500 * 1024; // 500 KB limit
+
+            // Check if any non-admin files exceed the limit (e.g., after "Reset to Original")
+            if (!isAdmin) {
+                const oversizedFiles = state.compressionProgress.files.filter(f =>
+                    (f.status === 'complete' && f.compressedSize > maxSizeBytes)
+                );
+
+                if (oversizedFiles.length > 0) {
+                    const fileNames = oversizedFiles.map(f => `${f.name} (${formatFileSize(f.compressedSize)})`).join(', ');
+                    showAlert(`Cannot add ${oversizedFiles.length} image(s) exceeding 500 KB limit: ${fileNames}. Please compress further or remove these images.`, '⚠️');
+                    return;
+                }
+            }
 
             // Add successfully compressed images to contest
             state.compressionProgress.files.forEach((fileState, index) => {
@@ -2283,7 +2297,7 @@
             render();
 
             try {
-                const result = await compressImage(fileState.originalFile, 750, (progress) => {
+                const result = await compressImage(fileState.originalFile, 500, (progress) => {
                     fileState.progress = progress;
                     render();
                 }, newQuality, newMaxDimension);
@@ -2367,7 +2381,7 @@
             fileState.adminBypass = true;
 
             // Show notification to admin
-            showToast(`Admin: Bypassing 750 KB size limit for ${fileState.name}`, 'info');
+            showToast(`Admin: Bypassing 500 KB size limit for ${fileState.name}`, 'info');
 
             render();
         }
@@ -2481,27 +2495,62 @@
             }
         }
 
+        // Helper function to fetch all votes with pagination (works around 2000 row DB limit)
+        async function fetchAllVotesPaginated(filterQuery, selectFields) {
+            let allVotes = [];
+            let offset = 0;
+            const limit = 2000; // Database row limit per query
+            let hasMore = true;
+
+            while (hasMore) {
+                const url = `${SUPABASE_URL}/rest/v1/votes?${filterQuery}&limit=${limit}&offset=${offset}&select=${selectFields}`;
+                const response = await fetch(url, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch votes: ${response.statusText}`);
+                }
+
+                const batch = await response.json();
+                if (!Array.isArray(batch)) {
+                    break;
+                }
+
+                allVotes = allVotes.concat(batch);
+
+                // If we got fewer than limit rows, we've reached the end
+                if (batch.length < limit) {
+                    hasMore = false;
+                } else {
+                    offset += limit;
+                }
+            }
+
+            return allVotes;
+        }
+
         async function showContestInfoModal(item, itemType) {
             try {
                 // Fetch voters for this contest/merger/extract
                 let voters = [];
+                let votesData = [];
 
-                // Query for voters who have completed voting
-                let votesResponse;
                 if (itemType === 'merger') {
                     // For mergers, we need to get all voters and calculate how many contests they voted on
                     const contestIds = item.contestIds || [];
                     if (contestIds.length === 0) {
                         voters = [];
                     } else {
-                        // Get all votes from merged contests (with high limit to avoid pagination issues)
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=5000&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
+                        // Get all votes from merged contests with pagination
+                        votesData = await fetchAllVotesPaginated(
+                            `contest_id=in.(${contestIds.join(',')})`,
+                            'user_id,contest_id,users!inner(id,username,avatar,is_banned)'
+                        );
                     }
                 } else if (itemType === 'extract') {
                     // For extracts, query votes from source contest(s)
@@ -2518,29 +2567,22 @@
                     if (sourceContestIds.length === 0) {
                         voters = [];
                     } else {
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
+                        votesData = await fetchAllVotesPaginated(
+                            `contest_id=in.(${sourceContestIds.join(',')})`,
+                            'user_id,users!inner(id,username,avatar,is_banned)'
+                        );
                     }
                 } else {
-                    // For regular contests, query using the contest_id (with high limit)
+                    // For regular contests, query using the contest_id with pagination
                     const contestId = item.id;
-                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
-                    });
+                    votesData = await fetchAllVotesPaginated(
+                        `contest_id=eq.${contestId}`,
+                        'user_id,users!inner(id,username,avatar,is_banned)'
+                    );
                 }
 
                 // Deduplicate voters and sort by username (exclude banned users)
-                if (votesResponse) {
-                    const votesData = await votesResponse.json();
+                if (votesData && votesData.length > 0) {
                     if (Array.isArray(votesData)) {
                         if (itemType === 'merger') {
                             // For mergers, calculate how many contests each user voted on
@@ -6765,7 +6807,7 @@
                                                     <p class="text-xs text-red-600 mt-1">❌ ${fileState.error}</p>
                                                 ` : ''}
                                                 ${fileState.adminBypass ? `
-                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 750 KB limit</p>
+                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 500 KB limit</p>
                                                 ` : ''}
                                             </div>
                                             <div class="ml-3 text-2xl flex-shrink-0">
