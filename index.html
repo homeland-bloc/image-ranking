@@ -1933,11 +1933,16 @@
             // Check if adding all files would exceed the 50 image limit (admin can bypass)
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const totalImages = state.newContest.images.length + files.length;
-            if (totalImages > 50 && !isAdmin) {
-                const availableSlots = 50 - state.newContest.images.length;
-                showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 50 total)`, '❌');
-                fileInput.value = '';
-                return;
+            if (totalImages > 50) {
+                if (!isAdmin) {
+                    const availableSlots = 50 - state.newContest.images.length;
+                    showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 50 total)`, '❌');
+                    fileInput.value = '';
+                    return;
+                } else {
+                    // Admin bypassing limit - show notification
+                    showToast(`Admin: Bypassing 50 image limit (adding ${files.length} images, total: ${totalImages})`, 'info');
+                }
             }
 
             fileInput.value = '';
@@ -2278,7 +2283,7 @@
             render();
 
             try {
-                const result = await compressImage(fileState.originalFile, 500, (progress) => {
+                const result = await compressImage(fileState.originalFile, 750, (progress) => {
                     fileState.progress = progress;
                     render();
                 }, newQuality, newMaxDimension);
@@ -2312,6 +2317,27 @@
             render();
         }
 
+        function resetToOriginalImage(fileIndex) {
+            const fileState = state.compressionProgress.files[fileIndex];
+            if (!fileState || !fileState.originalFile) return;
+
+            // Reset to original file
+            fileState.file = fileState.originalFile;
+            fileState.compressedSize = fileState.originalSize;
+            fileState.savingsPercent = 0;
+            fileState.currentQuality = null;
+            fileState.currentMaxDimension = null;
+            fileState.canCompressMore = true;
+
+            // Update preview URL
+            if (fileState.previewUrl) {
+                URL.revokeObjectURL(fileState.previewUrl);
+            }
+            fileState.previewUrl = URL.createObjectURL(fileState.originalFile);
+
+            render();
+        }
+
         function cancelCompressionImage(fileIndex) {
             if (!state.compressionProgress) return;
 
@@ -2339,6 +2365,10 @@
 
             // Mark as admin bypass
             fileState.adminBypass = true;
+
+            // Show notification to admin
+            showToast(`Admin: Bypassing 750 KB size limit for ${fileState.name}`, 'info');
+
             render();
         }
 
@@ -2464,8 +2494,8 @@
                     if (contestIds.length === 0) {
                         voters = [];
                     } else {
-                        // Get all votes from merged contests
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
+                        // Get all votes from merged contests (with high limit to avoid pagination issues)
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=5000&select=user_id,contest_id,users!inner(id,username,avatar,is_banned)`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2488,7 +2518,7 @@
                     if (sourceContestIds.length === 0) {
                         voters = [];
                     } else {
-                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&select=user_id,users!inner(id,username,avatar,is_banned)`, {
+                        votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2497,9 +2527,9 @@
                         });
                     }
                 } else {
-                    // For regular contests, query using the contest_id
+                    // For regular contests, query using the contest_id (with high limit)
                     const contestId = item.id;
-                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&select=user_id,users!inner(id,username,avatar,is_banned)`, {
+                    votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=5000&select=user_id,users!inner(id,username,avatar,is_banned)`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -3933,69 +3963,86 @@
             startVoting(votingContest);
         }
 
-        // Extract "Complete Voting" modal (similar to contest and merger)
-        function showExtractVoteModal(extractId) {
+        // Extract voting redirect modal
+        function showExtractVotingRedirectModal(extractId) {
             const extract = state.extracts.find(e => e.id === extractId);
             if (!extract) {
                 showToast('Extract not found', 'error');
                 return;
             }
 
-            // Determine which source contest(s) to check for votes
-            let votedImageIds = [];
-            if (extract.sourceType === 'contest' && extract.sourceContestId) {
-                const userVotes = state.userVotedContests[extract.sourceContestId] || {};
-                votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
-            } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
-                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                if (merger) {
-                    let allVotedImageIds = [];
-                    merger.contestIds.forEach(contestId => {
-                        const userVotes = state.userVotedContests[contestId] || {};
-                        allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
-                    });
-                    votedImageIds = allVotedImageIds;
-                }
+            // Determine the source
+            let sourceName = '';
+            let sourceType = '';
+            if (extract.sourceType === 'contest') {
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                sourceName = sourceContest ? sourceContest.title : 'Unknown Contest';
+                sourceType = 'contest';
+            } else if (extract.sourceType === 'merger') {
+                const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                sourceName = sourceMerger ? sourceMerger.name : 'Unknown Merger';
+                sourceType = 'merger';
             }
 
-            // Filter to extract images only
-            const votedExtractImageIds = extract.imageIds.filter(id => votedImageIds.includes(id));
-            const unvotedExtractImages = extract.imageIds.filter(id => !votedImageIds.includes(id));
+            const message = `In order to be able to see this extract's results, you will be prompted to vote in the original ${sourceType}: ${sourceName}`;
 
-            // Show modal with options
-            const message = `You've voted on ${votedExtractImageIds.length} out of ${extract.imageIds.length} images.\n\nUnvoted images: ${unvotedExtractImages.length}\n\nWhat would you like to do?`;
-
-            // Store the extractId for the action functions
+            // Store the extractId for the action function
             state.pendingExtractId = extractId;
 
             state.modal = {
-                icon: '🔄',
-                title: 'Complete Voting - ' + extract.name,
+                icon: '📋',
+                title: 'Vote on Extract',
                 message: message,
                 buttons: [
-                    { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Vote Missing Only', action: 'confirmExtractVoteMissingOnly', primary: true },
-                    { text: 'Revote All', action: 'confirmExtractRevoteAll', primary: true }
+                    { text: 'OK', action: 'redirectToExtractSource', primary: true }
                 ]
             };
             document.body.classList.add('modal-open');
             render();
         }
 
-        function confirmExtractVoteMissingOnly() {
+        function redirectToExtractSource() {
             const extractId = state.pendingExtractId;
-            state.modal = null;
-            state.pendingExtractId = null;
-            document.body.classList.remove('modal-open');
-            startExtractVoting(extractId, false);
-        }
+            const extract = state.extracts.find(e => e.id === extractId);
 
-        function confirmExtractRevoteAll() {
-            const extractId = state.pendingExtractId;
             state.modal = null;
             state.pendingExtractId = null;
             document.body.classList.remove('modal-open');
-            startExtractVoting(extractId, true);
+
+            if (!extract) {
+                showToast('Extract not found', 'error');
+                return;
+            }
+
+            // Redirect to source contest or merger voting
+            if (extract.sourceType === 'contest') {
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
+                if (sourceContest) {
+                    // Check if user has partially voted
+                    const userVotes = state.userVotedContests[sourceContest.id] || {};
+                    const votedImageCount = Object.keys(userVotes).length;
+                    const hasVotedSome = votedImageCount > 0 && votedImageCount < sourceContest.images.length;
+
+                    // Start voting on the contest
+                    startVoting(sourceContest);
+                }
+            } else if (extract.sourceType === 'merger') {
+                const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (sourceMerger) {
+                    // Check if user has partially voted on the merger
+                    const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
+                    const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
+                    const hasVotedSome = votedContests.length > 0 && votedContests.length < mergedContests.length;
+
+                    if (hasVotedSome) {
+                        // Show merger "Complete Voting" modal
+                        showMergerVoteModal(sourceMerger.id);
+                    } else {
+                        // Start voting on the merger
+                        startMergerVoting(sourceMerger.id, false);
+                    }
+                }
+            }
         }
 
         // ==================== END MERGER SYSTEM FUNCTIONS ====================
@@ -4008,6 +4055,7 @@
             state.extractSourceId = null;
             state.extractSelectedImages = [];
             state.newExtractName = '';
+            state.extractContestFilter = 'all'; // For filtering merger contests
             document.body.classList.add('modal-open');
             render();
         }
@@ -4018,6 +4066,7 @@
             state.extractSourceId = null;
             state.extractSelectedImages = [];
             state.newExtractName = '';
+            state.extractContestFilter = 'all';
             document.body.classList.remove('modal-open');
             render();
         }
@@ -4026,6 +4075,12 @@
             state.extractSourceType = sourceType;
             state.extractSourceId = sourceId;
             state.extractSelectedImages = [];
+            state.extractContestFilter = 'all';
+            render();
+        }
+
+        function setExtractContestFilter(contestId) {
+            state.extractContestFilter = contestId;
             render();
         }
 
@@ -4136,12 +4191,12 @@
                 // Ensure image IDs are integers (convert from any type)
                 const imageIds = state.extractSelectedImages.map(id => parseInt(id));
 
-                // Calculate voter counts for the selected images
-                setLoading('Calculating voter counts...');
+                // Inherit voter counts from the source contest/merger
+                setLoading('Retrieving voter counts from source...');
                 let voterCountMin = 0;
                 let voterCountMax = 0;
 
-                // Get source contest ID for querying votes
+                // Get source contest ID and voter counts
                 let sourceContestId = null;
                 if (state.extractSourceType === 'contest') {
                     let contest = state.contests.find(c => c.id === state.extractSourceId);
@@ -4153,58 +4208,25 @@
                     }
                     if (contest) {
                         sourceContestId = contest.id;
+                        // Inherit voter counts from the contest
+                        voterCountMin = contest.voterCountMin !== undefined ? contest.voterCountMin : 0;
+                        voterCountMax = contest.voterCountMax !== undefined ? contest.voterCountMax : 0;
                     }
                 } else if (state.extractSourceType === 'merger') {
                     const merger = state.mergers.find(m => m.id === state.extractSourceId);
                     if (merger) {
-                        // For mergers, we need to query votes from all merged contests
-                        // Use the merger's contest IDs for the query
+                        // Inherit voter counts from the merger
+                        voterCountMin = merger.voterCountMin !== undefined ? merger.voterCountMin : 0;
+                        voterCountMax = merger.voterCountMax !== undefined ? merger.voterCountMax : 0;
                         sourceContestId = merger.contestIds;
                     }
                 } else if (state.extractSourceType === 'extract') {
                     const sourceExtract = state.extracts.find(e => e.id === state.extractSourceId);
-                    if (sourceExtract && sourceExtract.sourceContestId) {
+                    if (sourceExtract) {
+                        // Inherit voter counts from the source extract
+                        voterCountMin = sourceExtract.voterCountMin !== undefined ? sourceExtract.voterCountMin : 0;
+                        voterCountMax = sourceExtract.voterCountMax !== undefined ? sourceExtract.voterCountMax : 0;
                         sourceContestId = sourceExtract.sourceContestId;
-                    }
-                }
-
-                // Query votes for the selected images to calculate voter counts
-                if (sourceContestId) {
-                    try {
-                        const contestIdFilter = Array.isArray(sourceContestId)
-                            ? `contest_id=in.(${sourceContestId.join(',')})`
-                            : `contest_id=eq.${sourceContestId}`;
-
-                        const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?${contestIdFilter}&image_id=in.(${imageIds.join(',')})&select=image_id`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
-
-                        if (votesResponse.ok) {
-                            const votes = await votesResponse.json();
-
-                            // Count votes per image
-                            const voteCounts = {};
-                            imageIds.forEach(id => voteCounts[id] = 0);
-                            votes.forEach(vote => {
-                                if (voteCounts[vote.image_id] !== undefined) {
-                                    voteCounts[vote.image_id]++;
-                                }
-                            });
-
-                            // Calculate min and max
-                            const counts = Object.values(voteCounts);
-                            if (counts.length > 0) {
-                                voterCountMin = Math.min(...counts);
-                                voterCountMax = Math.max(...counts);
-                            }
-                        }
-                    } catch (error) {
-                        console.warn('Failed to calculate voter counts:', error);
-                        // Continue with 0 values if calculation fails
                     }
                 }
 
@@ -6228,6 +6250,8 @@
             // Step 2: Visual image picker
             let sourceImages = [];
             let sourceName = '';
+            let mergedContests = [];
+            let showContestFilter = false;
 
             if (state.extractSourceType === 'contest') {
                 const contest = state.contests.find(c => c.id === state.extractSourceId);
@@ -6238,9 +6262,17 @@
             } else if (state.extractSourceType === 'merger') {
                 const merger = state.mergers.find(m => m.id === state.extractSourceId);
                 if (merger) {
-                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                    sourceImages = mergedContests.flatMap(c => c.images);
+                    mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
                     sourceName = merger.name;
+                    showContestFilter = true;
+
+                    // Apply contest filter
+                    if (state.extractContestFilter === 'all') {
+                        sourceImages = mergedContests.flatMap(c => c.images);
+                    } else {
+                        const filteredContest = mergedContests.find(c => c.id === state.extractContestFilter);
+                        sourceImages = filteredContest ? filteredContest.images : [];
+                    }
                 }
             }
 
@@ -6264,6 +6296,24 @@
                                     </svg>
                                 </button>
                             </div>
+                            ${showContestFilter ? `
+                                <div class="mt-4">
+                                    <label class="text-sm font-medium text-gray-700 mb-2 block">Filter by Contest:</label>
+                                    <select
+                                        onchange="setExtractContestFilter(this.value)"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-yellow-400 focus:outline-none"
+                                    >
+                                        <option value="all" ${state.extractContestFilter === 'all' ? 'selected' : ''}>
+                                            Show All Contests (${mergedContests.reduce((sum, c) => sum + c.images.length, 0)} images)
+                                        </option>
+                                        ${mergedContests.map(contest => `
+                                            <option value="${contest.id}" ${state.extractContestFilter === contest.id ? 'selected' : ''}>
+                                                ${contest.title} (${contest.images.length} images)
+                                            </option>
+                                        `).join('')}
+                                    </select>
+                                </div>
+                            ` : ''}
                         </div>
 
                         <!-- Image Grid -->
@@ -6706,13 +6756,13 @@
                                                     ${fileState.name}
                                                 </p>
                                                 <div class="flex flex-wrap gap-3 mt-2 text-xs text-gray-600">
-                                                    <span><strong>Original:</strong> ${formatFileSize(fileState.originalSize)}</span>
-                                                    ${fileState.compressedSize ? `
-                                                        <span><strong>Compressed:</strong> ${formatFileSize(fileState.compressedSize)}</span>
-                                                    ` : ''}
                                                     ${fileState.savingsPercent > 0 ? `
+                                                        <span><strong>Original:</strong> ${formatFileSize(fileState.originalSize)}</span>
+                                                        <span><strong>Compressed:</strong> ${formatFileSize(fileState.compressedSize)}</span>
                                                         <span class="text-green-600 font-semibold">Saved ${fileState.savingsPercent}%</span>
-                                                    ` : ''}
+                                                    ` : `
+                                                        <span><strong>Original:</strong> ${formatFileSize(fileState.originalSize)}</span>
+                                                    `}
                                                 </div>
                                                 ${fileState.status === 'compressing' ? `
                                                     <p class="text-xs text-blue-600 mt-1">🔄 Compressing...</p>
@@ -6724,7 +6774,7 @@
                                                     <p class="text-xs text-red-600 mt-1">❌ ${fileState.error}</p>
                                                 ` : ''}
                                                 ${fileState.adminBypass ? `
-                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 500 KB limit</p>
+                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 750 KB limit</p>
                                                 ` : ''}
                                             </div>
                                             <div class="ml-3 text-2xl flex-shrink-0">
@@ -6745,6 +6795,12 @@
 
                                         <!-- Action Buttons -->
                                         <div class="flex gap-2 mt-3">
+                                            ${fileState.status === 'complete' && fileState.savingsPercent > 0 ? `
+                                                <button onclick="resetToOriginalImage(${index})"
+                                                        class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition font-medium">
+                                                    ↺ Reset to Original
+                                                </button>
+                                            ` : ''}
                                             ${fileState.status === 'complete' && fileState.canCompressMore ? `
                                                 <button onclick="compressMoreImage(${index})"
                                                         class="px-3 py-1.5 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-medium">
@@ -7644,12 +7700,18 @@
                             <!-- Created Items Section -->
                             ${allCreatedItems.length > 0 ? `
                                 <div class="mb-6">
-                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Created (${allCreatedItems.length})</h3>
+                                    <h3 class="text-lg font-bold text-gray-800 mb-3">Items Created (${allCreatedItems.length})</h3>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                         ${allCreatedItems.map(item => {
                                             const title = item.title || item.name;
+                                            const colorClass = item.itemType === 'merger' ? 'text-blue-700' :
+                                                              item.itemType === 'extract' ? 'text-yellow-700' :
+                                                              'text-gray-700';
+                                            const hoverClass = item.itemType === 'merger' ? 'hover:text-blue-900 hover:bg-blue-50' :
+                                                              item.itemType === 'extract' ? 'hover:text-yellow-900 hover:bg-yellow-50' :
+                                                              'hover:text-mauve-600 hover:bg-gray-50';
                                             return `
-                                                <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                                <div class="text-sm ${colorClass} ${hoverClass} transition p-2 rounded font-medium">
                                                     • ${title}
                                                 </div>
                                             `;
@@ -7660,7 +7722,7 @@
 
                             <!-- Voting History Section -->
                             <div class="mb-4">
-                                <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Voted On (${allVotedItems.length})</h3>
+                                <h3 class="text-lg font-bold text-gray-800 mb-3">Items Voted On (${allVotedItems.length})</h3>
                             </div>
 
                             ${allVotedItems.length === 0 ? `
@@ -7671,8 +7733,14 @@
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     ${allVotedItems.map(item => {
                                         const title = item.title || item.name;
+                                        const colorClass = item.itemType === 'merger' ? 'text-blue-700' :
+                                                          item.itemType === 'extract' ? 'text-yellow-700' :
+                                                          'text-gray-700';
+                                        const hoverClass = item.itemType === 'merger' ? 'hover:text-blue-900 hover:bg-blue-50' :
+                                                          item.itemType === 'extract' ? 'hover:text-yellow-900 hover:bg-yellow-50' :
+                                                          'hover:text-mauve-600 hover:bg-gray-50';
                                         return `
-                                            <div class="text-sm text-gray-700 hover:text-mauve-600 transition p-2 hover:bg-gray-50 rounded">
+                                            <div class="text-sm ${colorClass} ${hoverClass} transition p-2 rounded font-medium">
                                                 • ${title}
                                             </div>
                                         `;
@@ -7754,13 +7822,6 @@
                                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                                 🚫 Account restricted
                                             </div>
-                                        ` : hasVotedSome ? `
-                                            <button
-                                                onclick='showContestVoteModal("${contest.id}")'
-                                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
-                                            >
-                                                Complete Voting
-                                            </button>
                                         ` : `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
@@ -7981,19 +8042,12 @@
                             >
                                 View Results
                             </button>
-                        ` : hasVotedNone ? `
+                        ` : `
                             <button
-                                onclick='startExtractVoting("${extract.id}")'
+                                onclick='showExtractVotingRedirectModal("${extract.id}")'
                                 class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                             >
                                 Start Voting
-                            </button>
-                        ` : `
-                            <button
-                                onclick='showExtractVoteModal("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
-                            >
-                                Complete Voting
                             </button>
                         `}
                         <button
@@ -8561,9 +8615,9 @@
                                         `;
                                     })()}
                                     ${voterStats.map(voter => `
-                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
-                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
-                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">
+                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">
                                                 ${voter.username}
                                             </div>
                                             <div class="text-xl font-bold text-white score-text">
@@ -8842,9 +8896,9 @@
                                                 return `
                                                     <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
                                                         <div class="flex items-center gap-3">
-                                                            <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full" />
+                                                            <img src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');" />
                                                             <div>
-                                                                <div class="font-semibold text-gray-800">${user.username}</div>
+                                                                <div class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');">${user.username}</div>
                                                                 <div class="text-xs text-gray-500">${user.id}</div>
                                                                 ${isBanned ? '<span class="text-xs text-red-600 font-semibold">BANNED</span>' : ''}
                                                             </div>
@@ -9376,9 +9430,9 @@
                                         `;
                                     })()}
                                     ${voterStats.map(voter => `
-                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
-                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
-                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">
+                                        <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                            <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">
                                                 ${voter.username}
                                             </div>
                                             <div class="text-xl font-bold text-white score-text">
