@@ -988,7 +988,7 @@
             state.toast = { message, icon };
             render();
 
-            // Auto-dismiss after 2.5 seconds
+            // Auto-dismiss after 5 seconds for better visibility
             setTimeout(() => {
                 const toastEl = document.querySelector('.toast-notification');
                 if (toastEl) {
@@ -998,7 +998,7 @@
                     state.toast = null;
                     render();
                 }, 300);
-            }, 2500);
+            }, 5000);
         }
 
         function showInputModal(title, placeholder, onConfirmAction, allowEmpty = false) {
@@ -2009,7 +2009,7 @@
                 const fileState = state.compressionProgress.files[i];
 
                 try {
-                    const result = await compressImage(file, 500, (progress) => {
+                    const result = await compressImage(file, 1000, (progress) => {
                         fileState.progress = progress;
                         render();
                     });
@@ -2331,7 +2331,7 @@
             render();
 
             try {
-                const result = await compressImage(fileState.originalFile, 500, (progress) => {
+                const result = await compressImage(fileState.originalFile, 1000, (progress) => {
                     fileState.progress = progress;
                     render();
                 }, newQuality, newMaxDimension);
