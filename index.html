@@ -2989,6 +2989,11 @@
 
             // Check for contest share: #contest={uuid}
             if (contestId && state.isLoggedIn) {
+                // Prevent infinite loop: don't reload if already viewing this contest's results
+                if (state.view === 'results' && state.currentContest && state.currentContest.id === contestId) {
+                    console.log('🔗 [NAVIGATION] Already viewing results for this contest, skipping reload');
+                    return;
+                }
                 console.log('🔗 [NAVIGATION] Detected contest share link');
                 loadSharedContest(contestId);
             }
