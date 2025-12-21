@@ -1208,9 +1208,22 @@
 
                     const existingVotes = await existingVotesResponse.json();
 
-                    if (existingVotes.length > 0) {
-                        // Votes exist - update them using PATCH
-                        const updatePromises = contestVotes.map(async (vote) => {
+                    // Separate votes into updates and inserts
+                    const votesToUpdate = [];
+                    const votesToInsert = [];
+
+                    contestVotes.forEach(vote => {
+                        const existingVote = existingVotes.find(ev => ev.image_id === vote.image_id);
+                        if (existingVote) {
+                            votesToUpdate.push(vote);
+                        } else {
+                            votesToInsert.push(vote);
+                        }
+                    });
+
+                    // Update existing votes
+                    if (votesToUpdate.length > 0) {
+                        const updatePromises = votesToUpdate.map(async (vote) => {
                             const response = await fetch(
                                 `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
                                 {
@@ -1232,8 +1245,10 @@
                         });
 
                         await Promise.all(updatePromises);
-                    } else {
-                        // No existing votes - insert new ones using POST
+                    }
+
+                    // Insert new votes
+                    if (votesToInsert.length > 0) {
                         const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
                             method: 'POST',
                             headers: {
@@ -1243,11 +1258,11 @@
                                 'Prefer': 'return=minimal',
                                 'Cache-Control': 'no-cache'
                             },
-                            body: JSON.stringify(contestVotes)
+                            body: JSON.stringify(votesToInsert)
                         });
 
                         if (!response.ok) {
-                            throw new Error('Failed to submit votes');
+                            throw new Error('Failed to insert new votes');
                         }
                     }
                 }
@@ -1341,7 +1356,7 @@
                         state.showMyVotes = false;
 
                         // Update URL hash
-                        window.location.hash = `merge=${state.currentMergerId}`;
+                        window.location.hash = `merger=${state.currentMergerId}`;
                     } else {
                         // Merger not found - reload mergers and show menu
                         await loadMergers();
@@ -2888,6 +2903,9 @@
                 const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
                 const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
 
+                // Clear the hash to avoid issues on reload
+                window.location.hash = '';
+
                 if (contest.isLocked || hasVotedAll) {
                     // Show results
                     await viewResults(contest);
@@ -2984,6 +3002,9 @@
                 const hasVotedSome = votedContests.length > 0 && votedContests.length < unlockedContests.length;
                 const hasVotedNone = votedContests.length === 0;
 
+                // Clear the hash to avoid issues on reload
+                window.location.hash = '';
+
                 // Route user based on their voting status
                 if (hasVotedAll || isAdmin || isCreator) {
                     // User has voted on all contests or is admin/creator -> show results
@@ -3048,6 +3069,9 @@
                         hasVotedOnSource = votedContests.length === mergedContests.length && mergedContests.length > 0;
                     }
                 }
+
+                // Clear the hash to avoid issues on reload
+                window.location.hash = '';
 
                 // Route user based on their voting status
                 const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -4229,7 +4253,7 @@
             state.currentContest = null;
 
             // Update URL hash for shareable link
-            window.location.hash = `merge=${mergerId}`;
+            window.location.hash = `merger=${mergerId}`;
 
             render();
         }
@@ -4337,7 +4361,7 @@
 
         async function shareMerger(mergerId) {
             try {
-                const shareUrl = `${window.location.origin}${window.location.pathname}#merge=${mergerId}`;
+                const shareUrl = `${window.location.origin}${window.location.pathname}#merger=${mergerId}`;
 
                 if (navigator.share) {
                     await navigator.share({
@@ -7124,7 +7148,7 @@
                                                 <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
                                             </div>
                                             <p class="text-xs text-gray-500">
-                                                ${contest.creatorName} • ${contest.images.length} images • ${contest.voterCount || 0} voters
+                                                ${contest.creatorName} • ${contest.images.length} images
                                             </p>
                                         </div>
                                     </div>
@@ -7293,7 +7317,7 @@
                         <!-- File List -->
                         <div class="flex-1 overflow-y-auto p-6 space-y-4">
                             ${state.compressionProgress.files.map((fileState, index) => {
-                                const isOversized = fileState.status === 'failed' && fileState.compressedSize > 500 * 1024;
+                                const isOversized = fileState.status === 'failed' && fileState.compressedSize > 1000 * 1024;
                                 const bgColor = fileState.status === 'complete' || fileState.adminBypass ? 'bg-green-50 border-green-200' :
                                                 fileState.status === 'failed' ? 'bg-red-50 border-red-200' :
                                                 'bg-blue-50 border-blue-200';
