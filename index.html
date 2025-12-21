@@ -2875,12 +2875,25 @@
                     return;
                 }
 
-                // Check if user has already voted
-                const hasVoted = state.userVotedContests[contest.id];
+                // Add contest to state if not already present (for Complete Voting modal to work)
+                const existingContest = state.contests.find(c => c.id === contest.id);
+                if (!existingContest) {
+                    state.contests.push(contest);
+                }
 
-                if (hasVoted || contest.isLocked) {
+                // Check voting status
+                const userVotes = state.userVotedContests[contest.id] || {};
+                const votedImageCount = Object.keys(userVotes).length;
+                const totalImageCount = contest.images.length;
+                const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
+                const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
+
+                if (contest.isLocked || hasVotedAll) {
                     // Show results
                     await viewResults(contest);
+                } else if (hasVotedSome) {
+                    // Show Complete Voting modal
+                    showContestVoteModal(contest.id);
                 } else {
                     // Start voting
                     startVoting(contest);
@@ -4164,19 +4177,36 @@
                 return;
             }
 
-            // Determine which contests to vote on based on user's vote status
-            let contestsToVote;
-            if (revoteAll) {
-                // Revote all unlocked contests
-                contestsToVote = unlockedContests;
-            } else {
-                // Check which contests user hasn't voted in yet
-                const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
-                contestsToVote = unvotedContests.length > 0 ? unvotedContests : unlockedContests;
-            }
+            // Determine which images to vote on based on user's vote status
+            let allImages = [];
 
-            // Collect all images from the contests to vote on
-            const allImages = contestsToVote.flatMap(c => c.images);
+            if (revoteAll) {
+                // Revote all images in all unlocked contests
+                allImages = unlockedContests.flatMap(c => c.images);
+                state.mergerContestIds = unlockedContests.map(c => c.id);
+            } else {
+                // Collect only unvoted images from each contest
+                const contestsWithMissingVotes = [];
+
+                unlockedContests.forEach(c => {
+                    const userVotes = state.userVotedContests[c.id] || {};
+                    const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+                    const unvotedImages = c.images.filter(img => !votedImageIds.includes(img.id));
+
+                    if (unvotedImages.length > 0) {
+                        allImages.push(...unvotedImages);
+                        contestsWithMissingVotes.push(c.id);
+                    }
+                });
+
+                state.mergerContestIds = contestsWithMissingVotes;
+
+                // If no missing votes, include all images (fallback)
+                if (allImages.length === 0) {
+                    allImages = unlockedContests.flatMap(c => c.images);
+                    state.mergerContestIds = unlockedContests.map(c => c.id);
+                }
+            }
 
             if (allImages.length === 0) {
                 showToast('No images available to vote on', 'error');
@@ -4185,7 +4215,7 @@
 
             // Store merger context
             state.currentMergerId = mergerId;
-            state.mergerContestIds = contestsToVote.map(c => c.id);
+            // mergerContestIds is already set in the if/else block above
 
             // Shuffle all images together
             state.shuffledImages = shuffleArray(allImages);
@@ -4226,11 +4256,51 @@
 
             // Find which contests user hasn't voted in (excluding locked ones)
             const unlockedContests = mergedContests.filter(c => !c.isLocked);
-            const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
-            const votedContests = unlockedContests.filter(c => state.userVotedContests[c.id]);
 
-            // Show modal with options
-            const message = `You've voted in ${votedContests.length} out of ${unlockedContests.length} unlocked contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
+            // Check for contests with incomplete voting
+            const contestsWithStatus = unlockedContests.map(c => {
+                const userVotes = state.userVotedContests[c.id] || {};
+                const votedImageCount = Object.keys(userVotes).length;
+                const totalImageCount = c.images.length;
+                const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
+                const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
+                const missingVotes = totalImageCount - votedImageCount;
+
+                return {
+                    contest: c,
+                    hasVotedAll,
+                    hasVotedSome,
+                    hasVotedNone: votedImageCount === 0,
+                    votedImageCount,
+                    totalImageCount,
+                    missingVotes
+                };
+            });
+
+            const fullyVoted = contestsWithStatus.filter(cs => cs.hasVotedAll);
+            const partiallyVoted = contestsWithStatus.filter(cs => cs.hasVotedSome);
+            const unvoted = contestsWithStatus.filter(cs => cs.hasVotedNone);
+
+            // Build detailed message
+            let messageLines = [];
+            messageLines.push(`You've fully voted in ${fullyVoted.length} out of ${unlockedContests.length} unlocked contests.`);
+
+            if (partiallyVoted.length > 0) {
+                messageLines.push(`\nContests with incomplete voting (${partiallyVoted.length}):`);
+                partiallyVoted.forEach(cs => {
+                    messageLines.push(`• ${cs.contest.title}: ${cs.missingVotes} new image(s) added`);
+                });
+            }
+
+            if (unvoted.length > 0) {
+                messageLines.push(`\nUnvoted contests (${unvoted.length}):`);
+                unvoted.forEach(cs => {
+                    messageLines.push(`• ${cs.contest.title}`);
+                });
+            }
+
+            messageLines.push('\nWhat would you like to do?');
+            const message = messageLines.join('\n');
 
             // Store the mergerId for the action functions
             state.pendingMergerId = mergerId;
@@ -8312,7 +8382,11 @@
                                     </div>
 
                                     <div class="flex gap-2">
-                                        ${contest.isLocked ? `
+                                        ${isBanned ? `
+                                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
+                                                🚫 Account restricted
+                                            </div>
+                                        ` : contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
@@ -8326,10 +8400,20 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : isBanned ? `
-                                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
-                                                🚫 Account restricted
-                                            </div>
+                                        ` : hasVotedSome ? `
+                                            <button
+                                                onclick='showContestVoteModal("${contest.id}")'
+                                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                                            >
+                                                Complete Voting
+                                            </button>
+                                        ` : hasVotedNone ? `
+                                            <button
+                                                onclick='startVoting(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                            >
+                                                Start Voting
+                                            </button>
                                         ` : `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
@@ -8364,11 +8448,24 @@
                     : `${merger.voterCountMin}-${merger.voterCountMax}👥`)
                 : '0👥';
 
-            // Check if user has voted in all, some, or no merged contests
-            const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
-            const hasVotedAll = votedContests.length === mergedContests.length && mergedContests.length > 0;
-            const hasVotedSome = votedContests.length > 0 && votedContests.length < mergedContests.length;
-            const hasVotedNone = votedContests.length === 0;
+            // Check if user has voted on ALL images in ALL contests
+            const contestVotingStatus = mergedContests.map(c => {
+                const userVotes = state.userVotedContests[c.id] || {};
+                const votedImageCount = Object.keys(userVotes).length;
+                const totalImageCount = c.images.length;
+                return {
+                    contest: c,
+                    hasVotedAll: votedImageCount === totalImageCount && totalImageCount > 0,
+                    hasVotedSome: votedImageCount > 0 && votedImageCount < totalImageCount
+                };
+            });
+
+            const fullyVotedContests = contestVotingStatus.filter(cs => cs.hasVotedAll);
+            const partiallyVotedContests = contestVotingStatus.filter(cs => cs.hasVotedSome);
+
+            const hasVotedAll = fullyVotedContests.length === mergedContests.length && mergedContests.length > 0;
+            const hasVotedSome = (fullyVotedContests.length > 0 || partiallyVotedContests.length > 0) && !hasVotedAll;
+            const hasVotedNone = fullyVotedContests.length === 0 && partiallyVotedContests.length === 0;
 
             const isBanned = state.bannedUsers.includes(state.user.id);
 
