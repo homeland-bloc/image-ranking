@@ -2638,15 +2638,58 @@
                                 totalContests: item.contestIds.length
                             })).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
                         } else {
-                            // For contests and extracts, just deduplicate
-                            const uniqueVotersMap = new Map();
-                            votesData.forEach(vote => {
-                                if (vote.users && !vote.users.is_banned) {
-                                    uniqueVotersMap.set(vote.user_id, vote.users);
+                            // For contests and extracts, calculate image completion per voter
+                            // First, need to fetch full vote data with image_id
+                            let fullVotesData = [];
+                            if (itemType === 'extract') {
+                                // For extracts, get source contests
+                                let sourceContestIds = [];
+                                if (item.sourceType === 'contest') {
+                                    sourceContestIds = [item.sourceContestId];
+                                } else if (item.sourceType === 'merger') {
+                                    const merger = state.mergers.find(m => m.id === item.sourceMergerId);
+                                    if (merger) {
+                                        sourceContestIds = merger.contestIds;
+                                    }
+                                }
+                                if (sourceContestIds.length > 0) {
+                                    fullVotesData = await fetchAllVotesPaginated(
+                                        `contest_id=in.(${sourceContestIds.join(',')})`,
+                                        'user_id,image_id,users!inner(id,username,avatar,is_banned)'
+                                    );
+                                }
+                            } else {
+                                // For contests
+                                const contestId = item.id;
+                                fullVotesData = await fetchAllVotesPaginated(
+                                    `contest_id=eq.${contestId}`,
+                                    'user_id,image_id,users!inner(id,username,avatar,is_banned)'
+                                );
+                            }
+
+                            // Calculate how many images each user has voted on
+                            const voterImagesMap = new Map();
+                            const relevantImageIds = itemType === 'extract'
+                                ? (item.imageIds || [])
+                                : item.images.map(img => img.id);
+
+                            fullVotesData.forEach(vote => {
+                                if (vote.users && !vote.users.is_banned && relevantImageIds.includes(vote.image_id)) {
+                                    if (!voterImagesMap.has(vote.user_id)) {
+                                        voterImagesMap.set(vote.user_id, {
+                                            user: vote.users,
+                                            imageIds: new Set()
+                                        });
+                                    }
+                                    voterImagesMap.get(vote.user_id).imageIds.add(vote.image_id);
                                 }
                             });
-                            voters = Array.from(uniqueVotersMap.values())
-                                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+
+                            voters = Array.from(voterImagesMap.entries()).map(([userId, data]) => ({
+                                ...data.user,
+                                completedImages: data.imageIds.size,
+                                totalImages: relevantImageIds.length
+                            })).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
                         }
                     }
                 }
@@ -4058,6 +4101,14 @@
                 // Reload mergers to get updated data
                 await loadMergers();
 
+                // If currently viewing this merger's results, reload them
+                if (state.view === 'mergedResults' && state.currentMergerId === mergerId) {
+                    const updatedMerger = state.mergers.find(m => m.id === mergerId);
+                    if (updatedMerger) {
+                        await loadMergedResults(updatedMerger.contestIds);
+                    }
+                }
+
                 closeEditMergerModal();
                 showToast('Merger updated successfully', 'success');
             } catch (error) {
@@ -5230,7 +5281,7 @@
                 return;
             }
             showConfirm(
-                'Your votes cannot be changed after submission. If you made a mistake, you can contact me.',
+                'Click confirm to save and submit your votes. Individual vote adjustments will not be available afterward; only complete revoting is possible. Please double-check your votes before submitting.',
                 'confirmSubmitVotes',
                 '🗳️'
             );
@@ -5447,6 +5498,7 @@
 
             // Reset all contest-related state
             state.view = 'home';
+            window.location.hash = ''; // Clear hash to avoid confusion on reload
             state.currentContest = null;
             state.showBreakdownModal = null;
             state.results = null;
@@ -8045,6 +8097,31 @@
                                 ${sourceHTML}
                             </div>
 
+                            <!-- User Completion Status (for contests and extracts) -->
+                            ${itemType === 'contest' || itemType === 'extract' ? (() => {
+                                const userVotes = state.userVotedContests[item.id] || {};
+                                const votedImageCount = Object.keys(userVotes).length;
+                                const totalImageCount = imageCount;
+                                const completionRate = totalImageCount > 0 ? Math.round((votedImageCount / totalImageCount) * 100) : 0;
+                                const isComplete = votedImageCount === totalImageCount && totalImageCount > 0;
+                                const badgeColor = isComplete ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800';
+
+                                return `
+                                    <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                                        <h3 class="font-semibold text-gray-800 mb-2">Your Voting Progress</h3>
+                                        <div class="flex items-center justify-between">
+                                            <div class="text-sm text-gray-700">
+                                                <span class="font-medium">Images completed voting on:</span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-sm font-semibold px-2 py-1 ${badgeColor} rounded">${votedImageCount}/${totalImageCount}</span>
+                                                <span class="text-sm text-gray-600">(${completionRate}%)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            })() : ''}
+
                             <!-- Actions Section (visible to all) -->
                             <div class="mb-6 p-4 bg-gray-50 rounded-lg">
                                 <h3 class="font-semibold text-gray-800 mb-3">Actions</h3>
@@ -8150,6 +8227,10 @@
                                                 </div>
                                             `;
                                         })()}
+                                        <div class="mb-2 flex items-center justify-between px-2">
+                                            <span class="text-xs font-medium text-gray-600">User</span>
+                                            <span class="text-xs font-medium text-gray-600">Contests completed voting on</span>
+                                        </div>
                                         <div class="space-y-2 max-h-64 overflow-y-auto">
                                             ${voters.map(voter => {
                                                 const isComplete = voter.completedContests === voter.totalContests;
@@ -8158,19 +8239,41 @@
                                                     <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
                                                         <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
                                                         <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
-                                                        <span class="text-xs font-semibold px-2 py-1 ${badgeColor} rounded" title="Completed Merged Contests">${voter.completedContests}/${voter.totalContests}</span>
+                                                        <span class="text-xs font-semibold px-2 py-1 ${badgeColor} rounded">${voter.completedContests}/${voter.totalContests}</span>
                                                     </div>
                                                 `;
                                             }).join('')}
                                         </div>
                                     ` : `
-                                        <div class="space-y-2 max-h-64 overflow-y-auto">
-                                            ${voters.map(voter => `
-                                                <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
-                                                    <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full" />
-                                                    <span class="text-sm font-medium text-gray-700">${voter.username}</span>
+                                        ${(() => {
+                                            // Calculate overall completion rate for contests/extracts
+                                            const fullyCompletedCount = voters.filter(v => v.completedImages === v.totalImages).length;
+                                            const completionRate = voters.length > 0 ? Math.round((fullyCompletedCount / voters.length) * 100) : 0;
+                                            return `
+                                                <div class="mb-3 p-2 bg-white rounded-lg border border-blue-200">
+                                                    <div class="text-sm font-semibold text-gray-700">
+                                                        Completion rate: <span class="text-blue-600">${completionRate}%</span>
+                                                        <span class="text-xs text-gray-500 ml-2">(${fullyCompletedCount}/${voters.length} users)</span>
+                                                    </div>
                                                 </div>
-                                            `).join('')}
+                                            `;
+                                        })()}
+                                        <div class="mb-2 flex items-center justify-between px-2">
+                                            <span class="text-xs font-medium text-gray-600">User</span>
+                                            <span class="text-xs font-medium text-gray-600">Images completed voting on</span>
+                                        </div>
+                                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                                            ${voters.map(voter => {
+                                                const isComplete = voter.completedImages === voter.totalImages;
+                                                const badgeColor = isComplete ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800';
+                                                return `
+                                                    <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
+                                                        <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
+                                                        <span class="text-xs font-semibold px-2 py-1 ${badgeColor} rounded">${voter.completedImages}/${voter.totalImages}</span>
+                                                    </div>
+                                                `;
+                                            }).join('')}
                                         </div>
                                     `}
                                 ` : `
