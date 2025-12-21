@@ -1862,13 +1862,13 @@
                                 return;
                             }
                         } else {
-                            // Apply strongest reasonable compression by default (quality 0.4, 800px max)
+                            // Apply strongest reasonable compression by default (quality 0.4, 1000px max)
                             if (progressCallback) progressCallback(50);
-                            result = await tryCompress(0.4, 800);
+                            result = await tryCompress(0.4, 1000);
 
                             if (result && result.blob.size <= maxSizeBytes) {
                                 finalQuality = 0.4;
-                                finalMaxDimension = 800;
+                                finalMaxDimension = 1000;
                             }
                         }
 
@@ -2022,7 +2022,7 @@
                     fileState.savingsPercent = result.savingsPercent;
                     fileState.currentQuality = result.currentQuality;
                     fileState.currentMaxDimension = result.currentMaxDimension;
-                    fileState.canCompressMore = result.currentQuality > 0.3 || result.currentMaxDimension === null || result.currentMaxDimension > 800;
+                    fileState.canCompressMore = result.currentQuality > 0.3 || result.currentMaxDimension === null || result.currentMaxDimension > 1000;
                     fileState.progress = 100;
                 } catch (error) {
                     // Failed
@@ -2305,7 +2305,7 @@
             if (newQuality > 0.3) {
                 // Try lower quality
                 newQuality = Math.max(0.3, newQuality - 0.1);
-            } else if (newMaxDimension === null || newMaxDimension > 800) {
+            } else if (newMaxDimension === null || newMaxDimension > 1000) {
                 // Start resizing or go smaller
                 if (newMaxDimension === null) {
                     newMaxDimension = 2000;
@@ -2313,10 +2313,8 @@
                     newMaxDimension = 1500;
                 } else if (newMaxDimension > 1200) {
                     newMaxDimension = 1200;
-                } else if (newMaxDimension > 1000) {
-                    newMaxDimension = 1000;
                 } else {
-                    newMaxDimension = 800;
+                    newMaxDimension = 1000;
                 }
                 newQuality = 0.4;
             } else {
@@ -2345,7 +2343,7 @@
                 fileState.savingsPercent = result.savingsPercent;
                 fileState.currentQuality = result.currentQuality;
                 fileState.currentMaxDimension = result.currentMaxDimension;
-                fileState.canCompressMore = result.currentQuality > 0.3 || result.currentMaxDimension === null || result.currentMaxDimension > 800;
+                fileState.canCompressMore = result.currentQuality > 0.3 || result.currentMaxDimension === null || result.currentMaxDimension > 1000;
                 fileState.progress = 100;
             } catch (error) {
                 // Failed
