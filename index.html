@@ -1593,6 +1593,49 @@
             render();
         }
 
+        function openEditContestModal(contestId) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) {
+                showToast('Contest not found', 'error');
+                return;
+            }
+
+            // Set up editing mode
+            state.editingContestId = contestId;
+            state.newContest.title = contest.title;
+            state.newContest.images = [...contest.images.map(img => ({...img, isExisting: true}))]; // Copy existing images and mark them
+            state.newContest.labelsEnabled = contest.images.some(img => img.label); // Enable labels if any existing image has a label
+            state.view = 'createContest'; // Reuse the create contest view
+            render();
+        }
+
+        function cancelEditContest() {
+            showConfirm(
+                'Your changes will be lost if you proceed. Are you sure?',
+                'confirmCancelEdit',
+                '🚨'
+            );
+        }
+
+        function confirmCancelEdit() {
+            state.modalProcessing = true;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            // Revoke Object URLs for newly added images
+            state.newContest.images.forEach(img => {
+                if (!img.isExisting && img.isLocalFile && img.url.startsWith('blob:')) {
+                    URL.revokeObjectURL(img.url);
+                }
+            });
+
+            state.view = 'home';
+            state.newContest = { title: '', images: [] };
+            state.editingContestId = null;
+            state.modalProcessing = false;
+            render();
+        }
+
         async function addImageFromUrl(urlInputId) {
             const input = document.getElementById(urlInputId);
             let url = input.value.trim();
@@ -1623,8 +1666,8 @@
 
             // Admin can bypass 50-image limit
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 50 && !isAdmin) {
-                showAlert('Maximum 50 images per contest!', '❌');
+            if (state.newContest.images.length >= 100 && !isAdmin) {
+                showAlert('Maximum 100 images per contest!', '❌');
                 return;
             }
 
@@ -1663,8 +1706,8 @@
 
             // Admin can bypass 50-image limit
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 50 && !isAdmin) {
-                showAlert('Maximum 50 images per contest!', '❌');
+            if (state.newContest.images.length >= 100 && !isAdmin) {
+                showAlert('Maximum 100 images per contest!', '❌');
                 state.tempDuplicateUrl = null;
                 state.tempDuplicateUrlInputId = null;
                 state.modalProcessing = false;
@@ -1712,9 +1755,9 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
-        // Comprehensive image compression targeting 500 KB
-        async function compressImage(file, maxSizeKB = 500, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
-            const maxSizeBytes = maxSizeKB * 1024; // 500 KB = 512000 bytes
+        // Comprehensive image compression targeting 1000 KB
+        async function compressImage(file, maxSizeKB = 1000, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
+            const maxSizeBytes = maxSizeKB * 1024; // 1000 KB = 1024000 bytes
 
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1804,37 +1847,13 @@
                                 return;
                             }
                         } else {
-                            // Step 1: Try quality reduction first (no resizing)
-                            const qualityLevels = [0.8, 0.7, 0.6, 0.5];
-                            for (const quality of qualityLevels) {
-                                if (progressCallback) progressCallback(20 + (quality - 0.5) * 20);
-                                result = await tryCompress(quality, null);
-                                if (result && result.blob.size <= maxSizeBytes) {
-                                    finalQuality = quality;
-                                    finalMaxDimension = null;
-                                    break;
-                                }
-                            }
+                            // Apply strongest reasonable compression by default (quality 0.4, 800px max)
+                            if (progressCallback) progressCallback(50);
+                            result = await tryCompress(0.4, 800);
 
-                            // Step 2: If quality reduction insufficient, try resizing
-                            if (!result || result.blob.size > maxSizeBytes) {
-                                const resizeStrategies = [
-                                    { maxDim: 2000, quality: 0.6 },
-                                    { maxDim: 1500, quality: 0.5 },
-                                    { maxDim: 1200, quality: 0.5 },
-                                    { maxDim: 1000, quality: 0.4 },
-                                    { maxDim: 800, quality: 0.4 }
-                                ];
-
-                                for (const strategy of resizeStrategies) {
-                                    if (progressCallback) progressCallback(50 + resizeStrategies.indexOf(strategy) * 10);
-                                    result = await tryCompress(strategy.quality, strategy.maxDim);
-                                    if (result && result.blob.size <= maxSizeBytes) {
-                                        finalQuality = strategy.quality;
-                                        finalMaxDimension = strategy.maxDim;
-                                        break;
-                                    }
-                                }
+                            if (result && result.blob.size <= maxSizeBytes) {
+                                finalQuality = 0.4;
+                                finalMaxDimension = 800;
                             }
                         }
 
@@ -2216,7 +2235,7 @@
             if (!state.compressionProgress || !state.compressionProgress.allComplete) return;
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const maxSizeBytes = 500 * 1024; // 500 KB limit
+            const maxSizeBytes = 1000 * 1024; // 1000 KB limit
 
             // Check if any non-admin files exceed the limit (e.g., after "Reset to Original")
             if (!isAdmin) {
@@ -2226,7 +2245,7 @@
 
                 if (oversizedFiles.length > 0) {
                     const fileNames = oversizedFiles.map(f => `${f.name} (${formatFileSize(f.compressedSize)})`).join(', ');
-                    showAlert(`Cannot add ${oversizedFiles.length} image(s) exceeding 500 KB limit: ${fileNames}. Please compress further or remove these images.`, '⚠️');
+                    showAlert(`Cannot add ${oversizedFiles.length} image(s) exceeding 1000 KB limit: ${fileNames}. Please compress further or remove these images.`, '⚠️');
                     return;
                 }
             }
@@ -2381,7 +2400,7 @@
             fileState.adminBypass = true;
 
             // Show notification to admin
-            showToast(`Admin: Bypassing 500 KB size limit for ${fileState.name}`, 'info');
+            showToast(`Admin: Bypassing 1000 KB size limit for ${fileState.name}`, 'info');
 
             render();
         }
@@ -2856,12 +2875,25 @@
                     return;
                 }
 
-                // Check if user has already voted
-                const hasVoted = state.userVotedContests[contest.id];
+                // Add contest to state if not already present (for Complete Voting modal to work)
+                const existingContest = state.contests.find(c => c.id === contest.id);
+                if (!existingContest) {
+                    state.contests.push(contest);
+                }
 
-                if (hasVoted || contest.isLocked) {
+                // Check voting status
+                const userVotes = state.userVotedContests[contest.id] || {};
+                const votedImageCount = Object.keys(userVotes).length;
+                const totalImageCount = contest.images.length;
+                const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
+                const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
+
+                if (contest.isLocked || hasVotedAll) {
                     // Show results
                     await viewResults(contest);
+                } else if (hasVotedSome) {
+                    // Show Complete Voting modal
+                    showContestVoteModal(contest.id);
                 } else {
                     // Start voting
                     startVoting(contest);
@@ -3047,24 +3079,38 @@
         }
 
         function finishCreateContest() {
-            if (state.newContest.images.length === 0) {
+            const isEditMode = !!state.editingContestId;
+            const newImages = isEditMode ? state.newContest.images.filter(img => !img.isExisting) : state.newContest.images;
+
+            if (!isEditMode && state.newContest.images.length === 0) {
                 showAlert('Add at least one image!', '❌');
                 return;
             }
 
-            // Check for duplicate title
-            const duplicateTitle = state.contests.some(c =>
-                c.title.toLowerCase().trim() === state.newContest.title.toLowerCase().trim()
-            );
-
-            if (duplicateTitle) {
-                showAlert('A contest with this title already exists. Please choose a different title.', '❌');
+            if (isEditMode && newImages.length === 0) {
+                showAlert('Add at least one new image!', '❌');
                 return;
             }
 
+            // Check for duplicate title (only in create mode)
+            if (!isEditMode) {
+                const duplicateTitle = state.contests.some(c =>
+                    c.title.toLowerCase().trim() === state.newContest.title.toLowerCase().trim()
+                );
+
+                if (duplicateTitle) {
+                    showAlert('A contest with this title already exists. Please choose a different title.', '❌');
+                    return;
+                }
+            }
+
             // Show confirmation popup
+            const message = isEditMode
+                ? `Add ${newImages.length} new image(s) to contest "${state.newContest.title}"?`
+                : `Create contest "${state.newContest.title}" with ${state.newContest.images.length} images?`;
+
             showConfirm(
-                `Create contest "${state.newContest.title}" with ${state.newContest.images.length} images?`,
+                message,
                 'confirmFinishCreateContest',
                 '🚨'
             );
@@ -3075,8 +3121,12 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
+            const isEditMode = !!state.editingContestId;
+            const imagesToProcess = isEditMode
+                ? state.newContest.images.filter(img => !img.isExisting)
+                : state.newContest.images;
             const uploadedUrls = [];
-            const localFilesToUpload = state.newContest.images.filter(img => img.isLocalFile);
+            const localFilesToUpload = imagesToProcess.filter(img => img.isLocalFile);
 
             try {
                 // Step 1: Upload all local files first
@@ -3099,60 +3149,98 @@
                     }
                 }
 
-                // Step 2: Insert contest - database auto-generates UUID
-                setLoading('Creating contest...');
-                const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=representation',
-                        'Cache-Control': 'no-cache'
-                    },
-                    body: JSON.stringify({
-                        title: state.newContest.title,
-                        created_by: state.user.id
-                    })
-                });
+                let contestId;
 
-                if (!contestResponse.ok) {
-                    const errorData = await contestResponse.json();
-                    console.error('Contest creation failed:', errorData);
-                    throw new Error(errorData.message || 'Failed to create contest');
+                if (isEditMode) {
+                    // Step 2a: Use existing contest ID
+                    contestId = state.editingContestId;
+                    setLoading('Adding images to contest...');
+
+                    // Get the current max image_order for this contest
+                    const existingImagesCount = state.newContest.images.filter(img => img.isExisting).length;
+
+                    // Insert only new images
+                    const imagesToInsert = imagesToProcess.map((img, i) => ({
+                        contest_id: contestId,
+                        url: img.url,
+                        is_file_upload: img.isFileUpload,
+                        author: img.author,
+                        image_order: existingImagesCount + i
+                    }));
+
+                    const imagesResponse = await fetch(`${SUPABASE_URL}/rest/v1/images`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Prefer': 'return=minimal',
+                            'Cache-Control': 'no-cache'
+                        },
+                        body: JSON.stringify(imagesToInsert)
+                    });
+
+                    if (!imagesResponse.ok) {
+                        const errorData = await imagesResponse.json();
+                        console.error('Image insertion failed:', errorData);
+                        throw new Error(errorData.message || 'Failed to add images');
+                    }
+                } else {
+                    // Step 2b: Insert contest - database auto-generates UUID
+                    setLoading('Creating contest...');
+                    const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Prefer': 'return=representation',
+                            'Cache-Control': 'no-cache'
+                        },
+                        body: JSON.stringify({
+                            title: state.newContest.title,
+                            created_by: state.user.id
+                        })
+                    });
+
+                    if (!contestResponse.ok) {
+                        const errorData = await contestResponse.json();
+                        console.error('Contest creation failed:', errorData);
+                        throw new Error(errorData.message || 'Failed to create contest');
+                    }
+
+                    const createdContests = await contestResponse.json();
+                    contestId = createdContests[0].id;
+
+                    // Step 3: Insert images
+                    const imagesToInsert = state.newContest.images.map((img, i) => ({
+                        contest_id: contestId,
+                        url: img.url,
+                        is_file_upload: img.isFileUpload,
+                        author: img.author,
+                        image_order: i
+                    }));
+
+                    const imagesResponse = await fetch(`${SUPABASE_URL}/rest/v1/images`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Prefer': 'return=minimal',
+                            'Cache-Control': 'no-cache'
+                        },
+                        body: JSON.stringify(imagesToInsert)
+                    });
+
+                    if (!imagesResponse.ok) {
+                        const errorData = await imagesResponse.json();
+                        console.error('Image insertion failed:', errorData);
+                        throw new Error(errorData.message || 'Failed to add images');
+                    }
                 }
 
-                const createdContests = await contestResponse.json();
-                const contestId = createdContests[0].id;
-
-                // Step 3: Insert images
-                const imagesToInsert = state.newContest.images.map((img, i) => ({
-                    contest_id: contestId,
-                    url: img.url,
-                    is_file_upload: img.isFileUpload,
-                    author: img.author,
-                    image_order: i
-                }));
-
-                const imagesResponse = await fetch(`${SUPABASE_URL}/rest/v1/images`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
-                    body: JSON.stringify(imagesToInsert)
-                });
-
-                if (!imagesResponse.ok) {
-                    const errorData = await imagesResponse.json();
-                    console.error('Image insertion failed:', errorData);
-                    throw new Error(errorData.message || 'Failed to add images');
-                }
-
-                // Revoke all Object URLs after successful creation
+                // Revoke all Object URLs after successful creation/editing
                 state.newContest.images.forEach(img => {
                     if (img.url.startsWith('blob:')) {
                         URL.revokeObjectURL(img.url);
@@ -3160,17 +3248,21 @@
                 });
 
                 state.newContest = { title: '', images: [] };
+                state.editingContestId = null;
                 await loadContests();
                 state.view = 'home';
                 state.modalProcessing = false;
 
                 // Show success message
-                showAlert('Contest created successfully!', '✨');
+                const successMessage = isEditMode
+                    ? `Images added successfully! ${imagesToProcess.length} new image(s) added to contest.`
+                    : 'Contest created successfully!';
+                showAlert(successMessage, '✨');
 
             } catch (error) {
-                console.error('Full contest creation error:', error);
+                console.error('Full contest creation/edit error:', error);
 
-                // Clean up uploaded files if contest creation failed
+                // Clean up uploaded files if contest creation/edit failed
                 if (uploadedUrls.length > 0) {
                     console.log('Cleaning up uploaded files due to error...');
                     for (const url of uploadedUrls) {
@@ -3186,7 +3278,10 @@
                 }
 
                 state.modalProcessing = false;
-                showAlert('Failed to create contest: ' + error.message, '❌');
+                const errorMessage = isEditMode
+                    ? 'Failed to add images: ' + error.message
+                    : 'Failed to create contest: ' + error.message;
+                showAlert(errorMessage, '❌');
             } finally {
                 clearLoading();
             }
@@ -3838,6 +3933,117 @@
             }
         }
 
+        function openEditMergerModal(mergerId) {
+            const merger = state.mergers.find(m => m.id === mergerId);
+            if (!merger) {
+                showToast('Merger not found', 'error');
+                return;
+            }
+
+            // Store the merger being edited
+            state.editingMergerId = mergerId;
+            state.editMergerSelectedContests = [...merger.contestIds]; // Copy current contest IDs
+            state.showEditMergerModal = true;
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeEditMergerModal() {
+            state.showEditMergerModal = false;
+            state.editingMergerId = null;
+            state.editMergerSelectedContests = [];
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function toggleContestForEditMerger(contestId) {
+            if (!state.editMergerSelectedContests) {
+                state.editMergerSelectedContests = [];
+            }
+
+            const index = state.editMergerSelectedContests.indexOf(contestId);
+            if (index > -1) {
+                // Remove contest
+                state.editMergerSelectedContests.splice(index, 1);
+            } else {
+                // Add contest
+                state.editMergerSelectedContests.push(contestId);
+            }
+
+            // Preserve scroll position
+            const modalContent = document.querySelector('.modal-content .overflow-y-auto');
+            const scrollTop = modalContent ? modalContent.scrollTop : 0;
+
+            render();
+
+            // Restore scroll position after render
+            setTimeout(() => {
+                const newModalContent = document.querySelector('.modal-content .overflow-y-auto');
+                if (newModalContent && scrollTop > 0) {
+                    newModalContent.scrollTop = scrollTop;
+                }
+            }, 0);
+        }
+
+        async function saveEditedMerger() {
+            const mergerId = state.editingMergerId;
+            const merger = state.mergers.find(m => m.id === mergerId);
+
+            if (!merger) {
+                showToast('Merger not found', 'error');
+                return;
+            }
+
+            if (state.editMergerSelectedContests.length < 2) {
+                showAlert('Please select at least 2 contests', '❌');
+                return;
+            }
+
+            try {
+                setLoading('Saving merger...');
+
+                // Calculate voter counts for the new contest set
+                const selectedContests = state.contests.filter(c => state.editMergerSelectedContests.includes(c.id));
+                const voterCounts = selectedContests.map(c => c.voterCount || 0);
+                const voterCountMin = Math.min(...voterCounts);
+                const voterCountMax = Math.max(...voterCounts);
+
+                // Update merger in database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: JSON.stringify({
+                        contest_ids: state.editMergerSelectedContests,
+                        voter_count_min: voterCountMin,
+                        voter_count_max: voterCountMax
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Merger update failed:', errorData);
+                    throw new Error(errorData.message || 'Failed to update merger');
+                }
+
+                // Reload mergers to get updated data
+                await loadMergers();
+
+                closeEditMergerModal();
+                showToast('Merger updated successfully', 'success');
+            } catch (error) {
+                console.error('Error updating merger:', error);
+                showToast('Failed to update merger: ' + error.message, 'error');
+            } finally {
+                clearLoading();
+            }
+        }
+
         function deleteMerger(mergerId) {
             const merger = state.mergers.find(m => m.id === mergerId);
             if (!merger) return;
@@ -3971,19 +4177,36 @@
                 return;
             }
 
-            // Determine which contests to vote on based on user's vote status
-            let contestsToVote;
-            if (revoteAll) {
-                // Revote all unlocked contests
-                contestsToVote = unlockedContests;
-            } else {
-                // Check which contests user hasn't voted in yet
-                const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
-                contestsToVote = unvotedContests.length > 0 ? unvotedContests : unlockedContests;
-            }
+            // Determine which images to vote on based on user's vote status
+            let allImages = [];
 
-            // Collect all images from the contests to vote on
-            const allImages = contestsToVote.flatMap(c => c.images);
+            if (revoteAll) {
+                // Revote all images in all unlocked contests
+                allImages = unlockedContests.flatMap(c => c.images);
+                state.mergerContestIds = unlockedContests.map(c => c.id);
+            } else {
+                // Collect only unvoted images from each contest
+                const contestsWithMissingVotes = [];
+
+                unlockedContests.forEach(c => {
+                    const userVotes = state.userVotedContests[c.id] || {};
+                    const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
+                    const unvotedImages = c.images.filter(img => !votedImageIds.includes(img.id));
+
+                    if (unvotedImages.length > 0) {
+                        allImages.push(...unvotedImages);
+                        contestsWithMissingVotes.push(c.id);
+                    }
+                });
+
+                state.mergerContestIds = contestsWithMissingVotes;
+
+                // If no missing votes, include all images (fallback)
+                if (allImages.length === 0) {
+                    allImages = unlockedContests.flatMap(c => c.images);
+                    state.mergerContestIds = unlockedContests.map(c => c.id);
+                }
+            }
 
             if (allImages.length === 0) {
                 showToast('No images available to vote on', 'error');
@@ -3992,7 +4215,7 @@
 
             // Store merger context
             state.currentMergerId = mergerId;
-            state.mergerContestIds = contestsToVote.map(c => c.id);
+            // mergerContestIds is already set in the if/else block above
 
             // Shuffle all images together
             state.shuffledImages = shuffleArray(allImages);
@@ -4033,11 +4256,51 @@
 
             // Find which contests user hasn't voted in (excluding locked ones)
             const unlockedContests = mergedContests.filter(c => !c.isLocked);
-            const unvotedContests = unlockedContests.filter(c => !state.userVotedContests[c.id]);
-            const votedContests = unlockedContests.filter(c => state.userVotedContests[c.id]);
 
-            // Show modal with options
-            const message = `You've voted in ${votedContests.length} out of ${unlockedContests.length} unlocked contests.\n\nUnvoted contests:\n${unvotedContests.map(c => '• ' + c.title).join('\n')}\n\nWhat would you like to do?`;
+            // Check for contests with incomplete voting
+            const contestsWithStatus = unlockedContests.map(c => {
+                const userVotes = state.userVotedContests[c.id] || {};
+                const votedImageCount = Object.keys(userVotes).length;
+                const totalImageCount = c.images.length;
+                const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
+                const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
+                const missingVotes = totalImageCount - votedImageCount;
+
+                return {
+                    contest: c,
+                    hasVotedAll,
+                    hasVotedSome,
+                    hasVotedNone: votedImageCount === 0,
+                    votedImageCount,
+                    totalImageCount,
+                    missingVotes
+                };
+            });
+
+            const fullyVoted = contestsWithStatus.filter(cs => cs.hasVotedAll);
+            const partiallyVoted = contestsWithStatus.filter(cs => cs.hasVotedSome);
+            const unvoted = contestsWithStatus.filter(cs => cs.hasVotedNone);
+
+            // Build detailed message
+            let messageLines = [];
+            messageLines.push(`You've fully voted in ${fullyVoted.length} out of ${unlockedContests.length} unlocked contests.`);
+
+            if (partiallyVoted.length > 0) {
+                messageLines.push(`\nContests with incomplete voting (${partiallyVoted.length}):`);
+                partiallyVoted.forEach(cs => {
+                    messageLines.push(`• ${cs.contest.title}: ${cs.missingVotes} new image(s) added`);
+                });
+            }
+
+            if (unvoted.length > 0) {
+                messageLines.push(`\nUnvoted contests (${unvoted.length}):`);
+                unvoted.forEach(cs => {
+                    messageLines.push(`• ${cs.contest.title}`);
+                });
+            }
+
+            messageLines.push('\nWhat would you like to do?');
+            const message = messageLines.join('\n');
 
             // Store the mergerId for the action functions
             state.pendingMergerId = mergerId;
@@ -6811,6 +7074,87 @@
             `;
         }
 
+        function renderEditMergerModal() {
+            if (!state.showEditMergerModal) return '';
+
+            const merger = state.mergers.find(m => m.id === state.editingMergerId);
+            if (!merger) return '';
+
+            // State for selected contests for editing
+            const selectedContests = state.editMergerSelectedContests || [];
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeEditMergerModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-800">Edit Merger - ${merger.name}</h3>
+                                    <p class="text-sm text-gray-600 mt-1">
+                                        Select contests to include in this merger (${selectedContests.length} selected, min 2 required)
+                                    </p>
+                                </div>
+                                <button onclick="closeEditMergerModal()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Contest List -->
+                        <div class="flex-1 overflow-y-auto p-6 space-y-2">
+                            ${state.contests.map(contest => {
+                                const isSelected = selectedContests.includes(contest.id);
+
+                                return `
+                                    <div class="border ${isSelected ? 'border-purple-400 bg-purple-50' : 'border-gray-200'} rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-purple-300"
+                                         onclick="toggleContestForEditMerger('${contest.id}')">
+                                        <input
+                                            type="checkbox"
+                                            ${isSelected ? 'checked' : ''}
+                                            class="w-5 h-5 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                                            onclick="event.stopPropagation()"
+                                            onchange="toggleContestForEditMerger('${contest.id}')"
+                                        />
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
+                                            </div>
+                                            <p class="text-xs text-gray-500">
+                                                ${contest.creatorName} • ${contest.images.length} images • ${contest.voterCount || 0} voters
+                                            </p>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="p-6 border-t border-gray-200">
+                            <div class="flex gap-3">
+                                <button
+                                    onclick="closeEditMergerModal()"
+                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onclick="saveEditedMerger()"
+                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedContests.length >= 2 ? 'bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
+                                    ${selectedContests.length < 2 ? 'disabled' : ''}
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderUploadProgressModal() {
             if (!state.uploadProgress) return '';
 
@@ -6980,7 +7324,7 @@
                                                     <p class="text-xs text-red-600 mt-1">❌ ${fileState.error}</p>
                                                 ` : ''}
                                                 ${fileState.adminBypass ? `
-                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 500 KB limit</p>
+                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 1000 KB limit</p>
                                                 ` : ''}
                                             </div>
                                             <div class="ml-3 text-2xl flex-shrink-0">
@@ -7001,16 +7345,10 @@
 
                                         <!-- Action Buttons -->
                                         <div class="flex gap-2 mt-3">
-                                            ${fileState.status === 'complete' && fileState.savingsPercent > 0 ? `
+                                            ${fileState.status === 'complete' && fileState.savingsPercent > 0 && isAdmin ? `
                                                 <button onclick="resetToOriginalImage(${index})"
                                                         class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition font-medium">
                                                     ↺ Reset to Original
-                                                </button>
-                                            ` : ''}
-                                            ${fileState.status === 'complete' && fileState.canCompressMore ? `
-                                                <button onclick="compressMoreImage(${index})"
-                                                        class="px-3 py-1.5 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-medium">
-                                                    🔽 Compress More
                                                 </button>
                                             ` : ''}
                                             ${fileState.status === 'failed' && isAdmin && isOversized && !fileState.adminBypass ? `
@@ -7742,6 +8080,24 @@
                                                 ✏️ Edit Extract
                                             </button>
                                         ` : ''}
+                                        <!-- Edit Merger Button (Merger Only) -->
+                                        ${itemType === 'merger' ? `
+                                            <button
+                                                onclick="openEditMergerModal('${item.id}'); closeContestInfoModal();"
+                                                class="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition text-sm"
+                                            >
+                                                ✏️ Edit Merger
+                                            </button>
+                                        ` : ''}
+                                        <!-- Edit Contest Button (Contest Only) -->
+                                        ${itemType === 'contest' ? `
+                                            <button
+                                                onclick="openEditContestModal('${item.id}'); closeContestInfoModal();"
+                                                class="w-full px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg font-semibold hover:from-green-600 hover:to-green-700 transition text-sm"
+                                            >
+                                                ✏️ Add More Images
+                                            </button>
+                                        ` : ''}
                                         <!-- Delete Button -->
                                         <button
                                             onclick="${itemType === 'contest' ? `deleteContest('${item.id}')` : itemType === 'merger' ? `deleteMerger('${item.id}')` : `deleteExtract('${item.id}')`}; closeContestInfoModal();"
@@ -8026,7 +8382,11 @@
                                     </div>
 
                                     <div class="flex gap-2">
-                                        ${contest.isLocked ? `
+                                        ${isBanned ? `
+                                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
+                                                🚫 Account restricted
+                                            </div>
+                                        ` : contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
@@ -8040,10 +8400,20 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : isBanned ? `
-                                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
-                                                🚫 Account restricted
-                                            </div>
+                                        ` : hasVotedSome ? `
+                                            <button
+                                                onclick='showContestVoteModal("${contest.id}")'
+                                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                                            >
+                                                Complete Voting
+                                            </button>
+                                        ` : hasVotedNone ? `
+                                            <button
+                                                onclick='startVoting(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                            >
+                                                Start Voting
+                                            </button>
                                         ` : `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
@@ -8078,11 +8448,24 @@
                     : `${merger.voterCountMin}-${merger.voterCountMax}👥`)
                 : '0👥';
 
-            // Check if user has voted in all, some, or no merged contests
-            const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
-            const hasVotedAll = votedContests.length === mergedContests.length && mergedContests.length > 0;
-            const hasVotedSome = votedContests.length > 0 && votedContests.length < mergedContests.length;
-            const hasVotedNone = votedContests.length === 0;
+            // Check if user has voted on ALL images in ALL contests
+            const contestVotingStatus = mergedContests.map(c => {
+                const userVotes = state.userVotedContests[c.id] || {};
+                const votedImageCount = Object.keys(userVotes).length;
+                const totalImageCount = c.images.length;
+                return {
+                    contest: c,
+                    hasVotedAll: votedImageCount === totalImageCount && totalImageCount > 0,
+                    hasVotedSome: votedImageCount > 0 && votedImageCount < totalImageCount
+                };
+            });
+
+            const fullyVotedContests = contestVotingStatus.filter(cs => cs.hasVotedAll);
+            const partiallyVotedContests = contestVotingStatus.filter(cs => cs.hasVotedSome);
+
+            const hasVotedAll = fullyVotedContests.length === mergedContests.length && mergedContests.length > 0;
+            const hasVotedSome = (fullyVotedContests.length > 0 || partiallyVotedContests.length > 0) && !hasVotedAll;
+            const hasVotedNone = fullyVotedContests.length === 0 && partiallyVotedContests.length === 0;
 
             const isBanned = state.bannedUsers.includes(state.user.id);
 
@@ -8285,14 +8668,20 @@
         }
 
         function renderCreateContest() {
+            const isEditMode = !!state.editingContestId;
+            const newImagesCount = isEditMode
+                ? state.newContest.images.filter(img => !img.isExisting).length
+                : state.newContest.images.length;
+
             return `
                 <div class="max-w-5xl mx-auto px-3 py-4">
                     <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
                         <div class="flex justify-between items-center mb-4">
                             <div>
-                                <h2 class="text-2xl font-bold text-gray-800">${state.newContest.title}</h2>
+                                <h2 class="text-2xl font-bold text-gray-800">${isEditMode ? 'Edit Contest: ' : ''}${state.newContest.title}</h2>
+                                ${isEditMode ? `<p class="text-sm text-gray-600 mt-1">Adding images to existing contest (${newImagesCount} new image(s))</p>` : ''}
                             </div>
-                            <button onclick="cancelCreateContest()" class="text-gray-600 hover:text-gray-800 flex items-center gap-1 text-sm">
+                            <button onclick="${isEditMode ? 'cancelEditContest()' : 'cancelCreateContest()'}" class="text-gray-600 hover:text-gray-800 flex items-center gap-1 text-sm">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                                 </svg>
@@ -8315,7 +8704,7 @@
                                 📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 10MB each, multiple files supported)
                             </p>
                             <p class="text-xs text-green-800 font-semibold">
-                                ⚡ Uploaded files are automatically compressed to 500 KB max to optimize loading speed
+                                ⚡ Uploaded files are automatically compressed to 1000 KB max to optimize loading speed
                             </p>
                         </div>
 
@@ -8363,7 +8752,7 @@
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
                             <div class="text-sm font-semibold text-gray-800">
-                                ${state.newContest.images.length} / 50 images added
+                                ${state.newContest.images.length} / 100 images added
                             </div>
                             <label class="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" ${state.newContest.labelsEnabled ? 'checked' : ''} onchange="toggleImageLabels()" class="w-4 h-4 text-mauve-500 rounded focus:ring-mauve-400">
@@ -8379,9 +8768,15 @@
                             ` : state.newContest.images.map((img, index) => `
                                 <div class="relative group">
                                     <img src="${img.url}" class="w-full h-48 object-contain rounded-lg bg-gray-100" />
-                                    <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-lg">
-                                        ×
-                                    </button>
+                                    ${img.isExisting ? `
+                                        <div class="absolute top-1 right-1 bg-blue-500 text-white px-2 py-1 rounded text-xs shadow-lg">
+                                            Existing
+                                        </div>
+                                    ` : `
+                                        <button onclick="removeContestImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-lg">
+                                            ×
+                                        </button>
+                                    `}
                                     ${img.compressedSize ? `
                                         <div class="text-xs text-center text-gray-600 mt-1 font-medium">
                                             ${formatFileSize(img.compressedSize)}
@@ -8401,12 +8796,12 @@
                             `).join('')}
                         </div>
 
-                        <button 
-                            onclick="finishCreateContest()" 
-                            ${state.newContest.images.length === 0 ? 'disabled' : ''}
+                        <button
+                            onclick="finishCreateContest()"
+                            ${(isEditMode ? newImagesCount : state.newContest.images.length) === 0 ? 'disabled' : ''}
                             class="w-full bg-gradient-to-r from-green-500 to-green-700 text-white py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                         >
-                            Create Contest (${state.newContest.images.length} images)
+                            ${isEditMode ? `Add Images (${newImagesCount} new)` : `Create Contest (${state.newContest.images.length} images)`}
                         </button>
                     </div>
                 </div>
@@ -9776,7 +10171,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -9791,6 +10186,9 @@
         window.confirmCreateWithDuplicateTitle = confirmCreateWithDuplicateTitle;
         window.cancelCreateContest = cancelCreateContest;
         window.confirmCancelCreate = confirmCancelCreate;
+        window.openEditContestModal = openEditContestModal;
+        window.cancelEditContest = cancelEditContest;
+        window.confirmCancelEdit = confirmCancelEdit;
         window.addImageFromUrl = addImageFromUrl;
         window.clearUrlInput = clearUrlInput;
         window.handleFileSelect = handleFileSelect;
@@ -9870,6 +10268,10 @@
         window.setMergerName = setMergerName;
         window.updateMergerNameOnBlur = updateMergerNameOnBlur;
         window.saveMerger = saveMerger;
+        window.openEditMergerModal = openEditMergerModal;
+        window.closeEditMergerModal = closeEditMergerModal;
+        window.toggleContestForEditMerger = toggleContestForEditMerger;
+        window.saveEditedMerger = saveEditedMerger;
         window.deleteMerger = deleteMerger;
         window.viewMergerResults = viewMergerResults;
         window.startMergerVoting = startMergerVoting;
