@@ -1054,62 +1054,7 @@
                     return votedInSet === imageIds.length ? userId : null;
                 }).filter(userId => userId !== null);
 
-                const voterCountMin = voterCounts.length;
-                const voterCountMax = voterCounts.length;
-
-                // Update the database based on item type
-                if (itemType === 'contest') {
-                    await fetch(
-                        `${SUPABASE_URL}/rest/v1/contests?id=eq.${itemId}`,
-                        {
-                            method: 'PATCH',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Prefer': 'return=minimal'
-                            },
-                            body: JSON.stringify({
-                                voter_count_min: voterCountMin,
-                                voter_count_max: voterCountMax
-                            })
-                        }
-                    );
-                } else if (itemType === 'merger') {
-                    await fetch(
-                        `${SUPABASE_URL}/rest/v1/mergers?id=eq.${itemId}`,
-                        {
-                            method: 'PATCH',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Prefer': 'return=minimal'
-                            },
-                            body: JSON.stringify({
-                                voter_count_min: voterCountMin,
-                                voter_count_max: voterCountMax
-                            })
-                        }
-                    );
-                } else if (itemType === 'extract') {
-                    await fetch(
-                        `${SUPABASE_URL}/rest/v1/extracts?id=eq.${itemId}`,
-                        {
-                            method: 'PATCH',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Prefer': 'return=minimal'
-                            },
-                            body: JSON.stringify({
-                                voter_count_min: voterCountMin,
-                                voter_count_max: voterCountMax
-                            })
-                        }
-                    );
-                }
+                // Voter count calculation complete (no longer storing in database)
             } catch (error) {
                 console.error(`Error recalculating voter counts for ${itemType} ${itemId}:`, error);
             }
@@ -3452,8 +3397,6 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
-                    voterCountMin: contest.voter_count_min || 0,
-                    voterCountMax: contest.voter_count_max || 0,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -3493,8 +3436,6 @@
                         creatorAvatar: m.creator.avatar,
                         createdAt: m.created_at,
                         contestIds: m.contest_ids,
-                        voterCountMin: m.voter_count_min,
-                        voterCountMax: m.voter_count_max,
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
                         type: 'merger'
@@ -3527,8 +3468,6 @@
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
-                        voterCountMin: e.voter_count_min || 0,
-                        voterCountMax: e.voter_count_max || 0,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
                         type: 'extract'
@@ -3961,12 +3900,6 @@
             setLoading('Creating merger...');
 
             try {
-                // Calculate voter count min/max across selected contests
-                const selectedContests = state.contests.filter(c => state.selectedContestsForMerge.includes(c.id));
-                const voterCounts = selectedContests.map(c => c.voterCount || 0);
-                const voterCountMin = Math.min(...voterCounts);
-                const voterCountMax = Math.max(...voterCounts);
-
                 // Save to mergers table
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers`, {
                     method: 'POST',
@@ -3978,9 +3911,7 @@
                     body: JSON.stringify({
                         name: state.newMergerName.trim(),
                         created_by: state.user.id,
-                        contest_ids: state.selectedContestsForMerge,
-                        voter_count_min: voterCountMin,
-                        voter_count_max: voterCountMax
+                        contest_ids: state.selectedContestsForMerge
                     })
                 });
 
@@ -4072,33 +4003,77 @@
             try {
                 setLoading('Saving merger...');
 
-                // Calculate voter counts for the new contest set
-                const selectedContests = state.contests.filter(c => state.editMergerSelectedContests.includes(c.id));
-                const voterCounts = selectedContests.map(c => c.voterCount || 0);
-                const voterCountMin = Math.min(...voterCounts);
-                const voterCountMax = Math.max(...voterCounts);
+                // Validate that contest_ids is an array
+                if (!Array.isArray(state.editMergerSelectedContests)) {
+                    throw new Error('Invalid contest selection');
+                }
 
-                // Update merger in database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
+                // Verify user is logged in
+                if (!state.user || !state.user.id) {
+                    throw new Error('You must be logged in to update mergers');
+                }
+
+                // Verify user owns this merger
+                if (merger.createdBy !== state.user.id) {
+                    throw new Error('You can only update mergers you created');
+                }
+
+                console.log('🔄 Updating merger:', {
+                    mergerId,
+                    userId: state.user.id,
+                    currentContestIds: merger.contestIds,
+                    newContestIds: state.editMergerSelectedContests
+                });
+
+                // Update merger in database with user context
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}&created_by=eq.${state.user.id}`, {
                     method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
+                        'Prefer': 'return=representation',
+                        'Cache-Control': 'no-cache',
+                        'X-Client-Info': JSON.stringify({ user_id: state.user.id })
                     },
                     body: JSON.stringify({
-                        contest_ids: state.editMergerSelectedContests,
-                        voter_count_min: voterCountMin,
-                        voter_count_max: voterCountMax
+                        contest_ids: state.editMergerSelectedContests
                     })
                 });
 
+                console.log('📡 Response status:', response.status, response.statusText);
+
                 if (!response.ok) {
                     const errorData = await response.json();
-                    console.error('Merger update failed:', errorData);
-                    throw new Error(errorData.message || 'Failed to update merger');
+                    console.error('❌ Merger update failed:', {
+                        status: response.status,
+                        error: errorData,
+                        mergerId,
+                        userId: state.user.id
+                    });
+
+                    // Provide specific error messages
+                    if (response.status === 403) {
+                        throw new Error('Permission denied: RLS policy may be blocking this update. Check that you own this merger.');
+                    } else if (response.status === 404) {
+                        throw new Error('Merger not found or you do not have permission to update it.');
+                    }
+
+                    throw new Error(errorData.message || errorData.hint || `Failed to update merger (${response.status})`);
+                }
+
+                // Verify the update by checking the response
+                const updatedData = await response.json();
+                console.log('✅ Merger updated successfully:', updatedData);
+
+                if (Array.isArray(updatedData) && updatedData.length === 0) {
+                    console.warn('⚠️ No rows updated - possible causes:');
+                    console.warn('  1. Merger does not exist');
+                    console.warn('  2. RLS policy is blocking the update');
+                    console.warn('  3. User does not own this merger');
+                    console.warn('  Current user ID:', state.user.id);
+                    console.warn('  Merger created_by:', merger.createdBy);
+                    throw new Error('Update failed: No rows were updated. You may not have permission to edit this merger.');
                 }
 
                 // Reload mergers to get updated data
@@ -4747,12 +4722,9 @@
                 // Ensure image IDs are integers (convert from any type)
                 const imageIds = state.extractSelectedImages.map(id => parseInt(id));
 
-                // Inherit voter counts from the source contest/merger
-                setLoading('Retrieving voter counts from source...');
-                let voterCountMin = 0;
-                let voterCountMax = 0;
+                setLoading('Creating extract...');
 
-                // Get source contest ID and voter counts
+                // Get source contest ID
                 let sourceContestId = null;
                 if (state.extractSourceType === 'contest') {
                     let contest = state.contests.find(c => c.id === state.extractSourceId);
@@ -4764,30 +4736,20 @@
                     }
                     if (contest) {
                         sourceContestId = contest.id;
-                        // Inherit voter counts from the contest
-                        voterCountMin = contest.voterCountMin !== undefined ? contest.voterCountMin : 0;
-                        voterCountMax = contest.voterCountMax !== undefined ? contest.voterCountMax : 0;
                     }
                 } else if (state.extractSourceType === 'merger') {
                     const merger = state.mergers.find(m => m.id === state.extractSourceId);
                     if (merger) {
-                        // Inherit voter counts from the merger
-                        voterCountMin = merger.voterCountMin !== undefined ? merger.voterCountMin : 0;
-                        voterCountMax = merger.voterCountMax !== undefined ? merger.voterCountMax : 0;
                         sourceContestId = merger.contestIds;
                     }
                 }
-
-                setLoading('Creating extract...');
 
                 // Image IDs are integers in the database
                 const extractData = {
                     name: state.newExtractName.trim(),
                     created_by: state.user.id,
                     source_type: state.extractSourceType,
-                    image_ids: imageIds,
-                    voter_count_min: voterCountMin,
-                    voter_count_max: voterCountMax
+                    image_ids: imageIds
                 };
 
                 // Set source_contest_id based on source type
@@ -4973,56 +4935,6 @@
             try {
                 setLoading('Saving extract...');
 
-                // Calculate voter counts for the new image set
-                // Query votes to see who has voted on all the new images
-                let voterCountMin = 0;
-                let voterCountMax = 0;
-
-                // Get the source contest ID(s) for querying votes
-                let contestIdsForVotes = [];
-                if (extract.sourceType === 'contest') {
-                    contestIdsForVotes = [extract.sourceContestId];
-                } else if (extract.sourceType === 'merger') {
-                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                    if (merger) {
-                        contestIdsForVotes = merger.contestIds;
-                    }
-                }
-
-                // Fetch all votes for images in this extract
-                const votesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIdsForVotes.join(',')})&image_id=in.(${state.editExtractSelectedImages.join(',')})&select=user_id,image_id`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
-                    }
-                );
-
-                if (votesResponse.ok) {
-                    const votes = await votesResponse.json();
-
-                    // Group votes by user
-                    const votesByUser = {};
-                    votes.forEach(vote => {
-                        if (!votesByUser[vote.user_id]) {
-                            votesByUser[vote.user_id] = new Set();
-                        }
-                        votesByUser[vote.user_id].add(vote.image_id);
-                    });
-
-                    // Count users who have voted on ALL images in the extract
-                    const usersWithCompleteVotes = Object.keys(votesByUser).filter(userId => {
-                        const userVotedImages = votesByUser[userId];
-                        return state.editExtractSelectedImages.every(imageId => userVotedImages.has(imageId));
-                    });
-
-                    voterCountMin = usersWithCompleteVotes.length;
-                    voterCountMax = usersWithCompleteVotes.length;
-                }
-
                 // Update extract in database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}`, {
                     method: 'PATCH',
@@ -5034,9 +4946,7 @@
                         'Cache-Control': 'no-cache'
                     },
                     body: JSON.stringify({
-                        image_ids: state.editExtractSelectedImages,
-                        voter_count_min: voterCountMin,
-                        voter_count_max: voterCountMax
+                        image_ids: state.editExtractSelectedImages
                     })
                 });
 
@@ -5284,7 +5194,7 @@
                 return;
             }
             showConfirm(
-                'Click confirm to save and submit your votes. Individual vote adjustments will not be available afterward; only complete revoting is possible. Please double-check your votes before submitting.',
+                'Confirm to submit your votes. After submission, you can only revote completely.',
                 'confirmSubmitVotes',
                 '🗳️'
             );
@@ -7735,8 +7645,6 @@
                                 <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
                                 <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
                                 <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
-                                <option value="mostVoted" ${state.filters.sortBy === 'mostVoted' || state.filters.sortBy === 'votersDesc' ? 'selected' : ''}>Most Voters</option>
-                                <option value="leastVoted" ${state.filters.sortBy === 'leastVoted' || state.filters.sortBy === 'votersAsc' ? 'selected' : ''}>Fewest Voters</option>
                                 <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
                                 <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
                             </select>
@@ -7789,14 +7697,6 @@
 
                         // Apply sorting based on selected sort option
                         allItems.sort((a, b) => {
-                            // Get voter counts (handle both single voterCount and min/max ranges)
-                            const getVoterCount = (item) => {
-                                if (item.voterCountMax !== undefined) return item.voterCountMax;
-                                if (item.voterCount !== undefined) return item.voterCount;
-                                return 0;
-                            };
-                            const voterCountA = getVoterCount(a);
-                            const voterCountB = getVoterCount(b);
 
                             // Get image/item counts
                             const getItemCount = (item) => {
@@ -7834,12 +7734,6 @@
                                     return titleA.localeCompare(titleB);
                                 case 'titleDesc':
                                     return titleB.localeCompare(titleA);
-                                case 'mostVoted':
-                                case 'votersDesc':
-                                    return voterCountB - voterCountA;
-                                case 'leastVoted':
-                                case 'votersAsc':
-                                    return voterCountA - voterCountB;
                                 case 'imagesDesc':
                                     return itemCountB - itemCountA;
                                 case 'imagesAsc':
@@ -7998,18 +7892,8 @@
             // Format date
             const createdDate = formatDate(item.createdAt);
 
-            // Get voter count display
-            let voterCountDisplay;
-            if (itemType === 'merger' || itemType === 'contest' || itemType === 'extract') {
-                // All types use voterCountMin/Max fields
-                voterCountDisplay = item.voterCountMin !== undefined && item.voterCountMax !== undefined
-                    ? (item.voterCountMin === item.voterCountMax
-                        ? `${item.voterCountMax}👥`
-                        : `${item.voterCountMin}-${item.voterCountMax}👥`)
-                    : '0👥';
-            } else {
-                voterCountDisplay = '0👥';
-            }
+            // Get voter count display from actual voters
+            const voterCount = voters ? voters.length : 0;
 
             // Get merged contests info (for mergers) and calculate image count
             let mergedContestsHTML = '';
@@ -8084,14 +7968,10 @@
                                         <div class="text-sm text-gray-500">${createdDate || 'Date unknown'}</div>
                                     </div>
                                 </div>
-                                <div class="grid grid-cols-2 gap-3 text-sm">
+                                <div class="text-sm">
                                     <div class="flex items-center gap-1 whitespace-nowrap">
-                                        <span class="font-semibold text-gray-700">Images:</span>
-                                        <span class="text-gray-600">${imageCount}🖼️</span>
-                                    </div>
-                                    <div class="flex items-center gap-1 whitespace-nowrap">
-                                        <span class="font-semibold text-gray-700">Votes per image:</span>
-                                        <span class="text-gray-600">${voterCountDisplay}</span>
+                                        <span class="font-semibold text-gray-700">Voters:</span>
+                                        <span class="text-gray-600">${voterCount}👥 ${imageCount}🖼️</span>
                                     </div>
                                 </div>
                                 ${mergedContestsHTML}
@@ -8476,13 +8356,6 @@
                                 const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
                                 const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
                                 const hasVotedNone = votedImageCount === 0;
-
-                                // Display voter range (min-max) or single value if they're equal
-                                const voterDisplay = contest.voterCountMin !== undefined && contest.voterCountMax !== undefined
-                                    ? (contest.voterCountMin === contest.voterCountMax
-                                        ? `${contest.voterCountMax}👥`
-                                        : `${contest.voterCountMin}-${contest.voterCountMax}👥`)
-                                    : '0👥';
                             const canDelete = canDeleteContest(contest);
                             const isBanned = state.bannedUsers.includes(state.user.id);
                             const createdDate = formatDate(contest.createdAt);
@@ -8504,7 +8377,7 @@
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${voterDisplay} ${contest.images.length}🖼️</span>
+                                                <span class="ml-auto whitespace-nowrap">${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
                                     </div>
@@ -8521,7 +8394,7 @@
                                             >
                                                 View Results
                                             </button>
-                                        ` : hasVotedAll && (contest.voterCountMax > 0) ? `
+                                        ` : hasVotedAll ? `
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
@@ -8570,11 +8443,6 @@
             // Get contest details for the merged contests
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
-            const voterRange = merger.voterCountMin !== undefined && merger.voterCountMax !== undefined
-                ? (merger.voterCountMin === merger.voterCountMax
-                    ? `${merger.voterCountMax}👥`
-                    : `${merger.voterCountMin}-${merger.voterCountMax}👥`)
-                : '0👥';
 
             // Check if user has voted on ALL images in ALL contests
             const contestVotingStatus = mergedContests.map(c => {
@@ -8621,7 +8489,7 @@
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${voterRange} ${totalImages}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${totalImages}🖼️</span>
                             </div>
                         </div>
                     </div>
@@ -8712,11 +8580,6 @@
             }
 
             const imageCount = extract.imageIds.length;
-            const voterRange = extract.voterCountMin !== undefined && extract.voterCountMax !== undefined
-                ? (extract.voterCountMin === extract.voterCountMax
-                    ? `${extract.voterCountMax}👥`
-                    : `${extract.voterCountMin}-${extract.voterCountMax}👥`)
-                : '0👥';
             const isBanned = state.bannedUsers.includes(state.user.id);
             const createdDate = formatDate(extract.createdAt);
 
@@ -8758,7 +8621,7 @@
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${voterRange} ${imageCount}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
                             </div>
                         </div>
                     </div>
@@ -10462,53 +10325,70 @@
                     // Check if token is expired
                     if (user.expiresAt && Date.now() < user.expiresAt) {
                         // Check if user is banned and get ban reason
-                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
+                        // Only clear auth on confirmed ban, not on network errors
+                        try {
+                            const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason`, {
+                                headers: {
+                                    'apikey': SUPABASE_ANON_KEY,
+                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                    'Cache-Control': 'no-cache'
+                                }
+                            });
+
+                            if (banCheckResponse.ok) {
+                                const userData = await banCheckResponse.json();
+
+                                // If user is banned, log them out with reason
+                                if (userData && userData.length > 0 && userData[0].is_banned === true) {
+                                    const banReason = userData[0].ban_reason || 'No reason provided';
+                                    localStorage.removeItem('peony_user');
+                                    showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
+                                    return; // Exit early, don't proceed with login
+                                }
+                            } else {
+                                // Network error or API issue - don't log out, just warn
+                                console.warn('Failed to check ban status, proceeding with cached session');
                             }
-                        });
-
-                        const userData = await banCheckResponse.json();
-
-                        // If user is banned, log them out with reason
-                        if (userData && userData.length > 0 && userData[0].is_banned === true) {
-                            const banReason = userData[0].ban_reason || 'No reason provided';
-                            localStorage.removeItem('peony_user');
-                            showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
-                        } else {
-                            // User not banned, proceed with login
-                            state.isLoggedIn = true;
-                            // AFTER: ensure user exists, then continue
-                            state.user = { 
-                                id: user.id, 
-                                username: user.username, 
-                                avatar: user.avatar 
-                            };
-
-                            // Ensure the row exists in public.users, then continue
-                            ensureLocalUser(state.user)
-                                .then(async () => {
-                                    // proceed normally once the user row is present (or insertion attempted)
-                                    await loadContests();
-
-                                    render();
-                                })
-                                .catch(async (err) => {
-                                    // should not happen because ensureLocalUser swallows errors, but safe fallback
-                                    console.error('ensureLocalUser unexpected error:', err);
-                                    await loadContests();
-                                    render();
-                                });
+                        } catch (banCheckError) {
+                            // Network error checking ban status - don't log out the user
+                            console.warn('Ban check failed, proceeding with cached session:', banCheckError);
                         }
+
+                        // User not banned (or ban check failed), proceed with login
+                        state.isLoggedIn = true;
+                        // AFTER: ensure user exists, then continue
+                        state.user = {
+                            id: user.id,
+                            username: user.username,
+                            avatar: user.avatar
+                        };
+
+                        // Ensure the row exists in public.users, then continue
+                        ensureLocalUser(state.user)
+                            .then(async () => {
+                                // proceed normally once the user row is present (or insertion attempted)
+                                await loadContests();
+
+                                render();
+                            })
+                            .catch(async (err) => {
+                                // should not happen because ensureLocalUser swallows errors, but safe fallback
+                                console.error('ensureLocalUser unexpected error:', err);
+                                await loadContests();
+                                render();
+                            });
                     } else {
                         // Token expired, clear it
                         localStorage.removeItem('peony_user');
                     }
                 } catch (e) {
+                    // Only clear localStorage if it's a JSON parse error (corrupted data)
+                    // Don't clear on network errors or other transient issues
                     console.error('Error loading user session:', e);
-                    localStorage.removeItem('peony_user');
+                    if (e instanceof SyntaxError) {
+                        // JSON parse error - clear corrupted data
+                        localStorage.removeItem('peony_user');
+                    }
                 }
             }
 
