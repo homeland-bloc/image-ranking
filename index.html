@@ -3397,6 +3397,7 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
+                    voterCount: contest.voter_count || 0,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -3438,6 +3439,7 @@
                         contestIds: m.contest_ids,
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
+                        voterCount: m.voter_count || 0,
                         type: 'merger'
                     }));
                 }
@@ -3470,6 +3472,7 @@
                         imageIds: e.image_ids,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
+                        voterCount: e.voter_count || 0,
                         type: 'extract'
                     }));
                 }
@@ -4915,7 +4918,30 @@
                 state.editExtractSelectedImages.push(imageId);
             }
 
+            // Preserve scroll position of the modal
+            const modalContent = document.querySelector('.fixed.inset-0.modal-overlay[style*="z-index: 60"], .fixed.inset-0.modal-overlay.z-\\[60\\]');
+            let scrollContainer = null;
+            let scrollTop = 0;
+
+            if (modalContent) {
+                scrollContainer = modalContent.querySelector('.overflow-y-auto');
+                if (scrollContainer) {
+                    scrollTop = scrollContainer.scrollTop;
+                }
+            }
+
             render();
+
+            // Restore scroll position after render
+            requestAnimationFrame(() => {
+                const newModalContent = document.querySelector('.fixed.inset-0.modal-overlay[style*="z-index: 60"], .fixed.inset-0.modal-overlay.z-\\[60\\]');
+                if (newModalContent) {
+                    const newScrollContainer = newModalContent.querySelector('.overflow-y-auto');
+                    if (newScrollContainer && scrollTop > 0) {
+                        newScrollContainer.scrollTop = scrollTop;
+                    }
+                }
+            });
         }
 
         async function saveEditedExtract() {
@@ -6898,18 +6924,21 @@
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 transition-all ${isSelected ? 'border-blue-500 bg-blue-100 shadow-lg ring-2 ring-blue-400 ring-offset-2' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleEditExtractImage(${image.id})"
                                             >
-                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
+                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-contain bg-gray-100 ${isSelected ? 'opacity-90' : ''}" />
+                                            ${isSelected ? `
+                                                <div class="absolute inset-0 bg-blue-500 bg-opacity-10 pointer-events-none"></div>
+                                            ` : ''}
                                             ${image.label ? `
                                                 <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 truncate">
                                                     ${image.label}
                                                 </div>
                                             ` : ''}
-                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
+                                            <div class="absolute top-2 left-2 rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'}">
                                                 ${isSelected ? `
-                                                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                                                     </svg>
                                                 ` : `
@@ -7969,9 +7998,15 @@
                                     </div>
                                 </div>
                                 <div class="text-sm">
-                                    <div class="flex items-center gap-1 whitespace-nowrap">
-                                        <span class="font-semibold text-gray-700">Voters:</span>
-                                        <span class="text-gray-600">${voterCount}👥 ${imageCount}🖼️</span>
+                                    <div class="flex items-center justify-between gap-4">
+                                        <div class="flex items-center gap-1 whitespace-nowrap">
+                                            <span class="font-semibold text-gray-700">Voters:</span>
+                                            <span class="text-gray-600">${voterCount}👥</span>
+                                        </div>
+                                        <div class="flex items-center gap-1 whitespace-nowrap">
+                                            <span class="font-semibold text-gray-700">Images:</span>
+                                            <span class="text-gray-600">${imageCount}🖼️</span>
+                                        </div>
                                     </div>
                                 </div>
                                 ${mergedContestsHTML}
@@ -8377,7 +8412,7 @@
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${contest.images.length}🖼️</span>
+                                                <span class="ml-auto whitespace-nowrap">${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
                                     </div>
@@ -8489,7 +8524,7 @@
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${totalImages}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
                             </div>
                         </div>
                     </div>
@@ -8621,7 +8656,7 @@
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${imageCount}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
                             </div>
                         </div>
                     </div>
