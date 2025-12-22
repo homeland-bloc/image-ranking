@@ -3373,6 +3373,74 @@
             render();
         }
 
+        async function loadVoterCounts() {
+            try {
+                // Fetch all votes to calculate voter counts
+                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const votes = await votesResponse.json();
+
+                if (Array.isArray(votes)) {
+                    // Calculate voter counts for each contest
+                    const contestVoterCounts = new Map();
+                    votes.forEach(vote => {
+                        if (!contestVoterCounts.has(vote.contest_id)) {
+                            contestVoterCounts.set(vote.contest_id, new Set());
+                        }
+                        contestVoterCounts.get(vote.contest_id).add(vote.user_id);
+                    });
+
+                    // Update contest voter counts
+                    state.contests.forEach(contest => {
+                        const voters = contestVoterCounts.get(contest.id);
+                        contest.voterCount = voters ? voters.size : 0;
+                    });
+
+                    // Update merger voter counts (count unique voters across all merged contests)
+                    state.mergers.forEach(merger => {
+                        const allVoters = new Set();
+                        merger.contestIds.forEach(contestId => {
+                            const voters = contestVoterCounts.get(contestId);
+                            if (voters) {
+                                voters.forEach(voterId => allVoters.add(voterId));
+                            }
+                        });
+                        merger.voterCount = allVoters.size;
+                    });
+
+                    // Update extract voter counts (count unique voters from source)
+                    state.extracts.forEach(extract => {
+                        const allVoters = new Set();
+                        if (extract.sourceType === 'contest') {
+                            const voters = contestVoterCounts.get(extract.sourceContestId);
+                            if (voters) {
+                                voters.forEach(voterId => allVoters.add(voterId));
+                            }
+                        } else if (extract.sourceType === 'merger') {
+                            const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                            if (merger) {
+                                merger.contestIds.forEach(contestId => {
+                                    const voters = contestVoterCounts.get(contestId);
+                                    if (voters) {
+                                        voters.forEach(voterId => allVoters.add(voterId));
+                                    }
+                                });
+                            }
+                        }
+                        extract.voterCount = allVoters.size;
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading voter counts:', error);
+                // Don't throw - just log the error and continue with 0 voter counts
+            }
+        }
+
         async function loadContests() {
             setLoading('Loading contests...');
             try {
@@ -3397,7 +3465,7 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
-                    voterCount: contest.voter_count || 0,
+                    voterCount: 0, // Will be updated after fetching voter counts
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -3407,6 +3475,9 @@
                             isFileUpload: img.is_file_upload
                         }))
                 }));
+
+                // Fetch voter counts for all contests
+                await loadVoterCounts();
 
                 render();
             } catch (error) {
@@ -3439,7 +3510,7 @@
                         contestIds: m.contest_ids,
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
-                        voterCount: m.voter_count || 0,
+                        voterCount: 0, // Will be updated by loadVoterCounts
                         type: 'merger'
                     }));
                 }
@@ -3472,7 +3543,7 @@
                         imageIds: e.image_ids,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
-                        voterCount: e.voter_count || 0,
+                        voterCount: 0, // Will be updated by loadVoterCounts
                         type: 'extract'
                     }));
                 }
@@ -6918,16 +6989,16 @@
 
                         <!-- Image Grid -->
                         <div class="flex-1 overflow-y-auto p-6">
-                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                            <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                                 ${sourceImages.map(image => {
                                     const isSelected = (state.editExtractSelectedImages || []).includes(image.id);
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 transition-all ${isSelected ? 'border-blue-500 bg-blue-100 shadow-lg ring-2 ring-blue-400 ring-offset-2' : 'border-transparent hover:border-blue-300'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all aspect-square ${isSelected ? 'border-blue-500 bg-blue-100 shadow-lg ring-2 ring-blue-400' : 'border-transparent hover:border-blue-300 bg-gray-100'}"
                                                 onclick="toggleEditExtractImage(${image.id})"
                                             >
-                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-contain bg-gray-100 ${isSelected ? 'opacity-90' : ''}" />
+                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-full object-contain ${isSelected ? 'opacity-90' : ''}" />
                                             ${isSelected ? `
                                                 <div class="absolute inset-0 bg-blue-500 bg-opacity-10 pointer-events-none"></div>
                                             ` : ''}
@@ -6936,13 +7007,13 @@
                                                     ${image.label}
                                                 </div>
                                             ` : ''}
-                                            <div class="absolute top-2 left-2 rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'}">
+                                            <div class="absolute top-1 left-1 rounded-full w-6 h-6 flex items-center justify-center shadow-md border ${isSelected ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'}">
                                                 ${isSelected ? `
-                                                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                                                     </svg>
                                                 ` : `
-                                                    <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
+                                                    <div class="w-3 h-3 border border-gray-400 rounded"></div>
                                                 `}
                                             </div>
                                             </div>
