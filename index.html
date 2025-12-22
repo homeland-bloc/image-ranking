@@ -2969,6 +2969,7 @@
                 await loadContests();
                 await loadMergers();
                 await loadExtracts();
+                await loadVoterCounts();
 
                 // Find the merger in state
                 const merger = state.mergers.find(m => m.id === mergerId);
@@ -3033,6 +3034,7 @@
                 await loadContests();
                 await loadMergers();
                 await loadExtracts();
+                await loadVoterCounts();
 
                 // Find the extract in state
                 const extract = state.extracts.find(e => e.id === extractId);
@@ -3434,6 +3436,9 @@
                         }
                         extract.voterCount = allVoters.size;
                     });
+
+                    // Re-render to show updated voter counts
+                    render();
                 }
             } catch (error) {
                 console.error('Error loading voter counts:', error);
@@ -3475,9 +3480,6 @@
                             isFileUpload: img.is_file_upload
                         }))
                 }));
-
-                // Fetch voter counts for all contests
-                await loadVoterCounts();
 
                 render();
             } catch (error) {
@@ -10504,6 +10506,10 @@
                 loadExtracts(),
                 loadAppSettings()
             ]);
+
+            // Load voter counts after all contests, mergers, and extracts are loaded
+            await loadVoterCounts();
+
             if (state.user) {
                 await loadUserVotes();
             }
