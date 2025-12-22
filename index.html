@@ -4008,36 +4008,72 @@
                     throw new Error('Invalid contest selection');
                 }
 
-                console.log('Updating merger with contest_ids:', state.editMergerSelectedContests);
+                // Verify user is logged in
+                if (!state.user || !state.user.id) {
+                    throw new Error('You must be logged in to update mergers');
+                }
 
-                // Update merger in database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
+                // Verify user owns this merger
+                if (merger.createdBy !== state.user.id) {
+                    throw new Error('You can only update mergers you created');
+                }
+
+                console.log('🔄 Updating merger:', {
+                    mergerId,
+                    userId: state.user.id,
+                    currentContestIds: merger.contestIds,
+                    newContestIds: state.editMergerSelectedContests
+                });
+
+                // Update merger in database with user context
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}&created_by=eq.${state.user.id}`, {
                     method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Prefer': 'return=representation',
-                        'Cache-Control': 'no-cache'
+                        'Cache-Control': 'no-cache',
+                        'X-Client-Info': JSON.stringify({ user_id: state.user.id })
                     },
                     body: JSON.stringify({
                         contest_ids: state.editMergerSelectedContests
                     })
                 });
 
+                console.log('📡 Response status:', response.status, response.statusText);
+
                 if (!response.ok) {
                     const errorData = await response.json();
-                    console.error('Merger update failed:', errorData);
-                    throw new Error(errorData.message || errorData.hint || 'Failed to update merger');
+                    console.error('❌ Merger update failed:', {
+                        status: response.status,
+                        error: errorData,
+                        mergerId,
+                        userId: state.user.id
+                    });
+
+                    // Provide specific error messages
+                    if (response.status === 403) {
+                        throw new Error('Permission denied: RLS policy may be blocking this update. Check that you own this merger.');
+                    } else if (response.status === 404) {
+                        throw new Error('Merger not found or you do not have permission to update it.');
+                    }
+
+                    throw new Error(errorData.message || errorData.hint || `Failed to update merger (${response.status})`);
                 }
 
                 // Verify the update by checking the response
                 const updatedData = await response.json();
-                console.log('Merger updated successfully:', updatedData);
+                console.log('✅ Merger updated successfully:', updatedData);
 
                 if (Array.isArray(updatedData) && updatedData.length === 0) {
-                    console.warn('No rows updated - merger may not exist or RLS policy may be blocking');
-                    throw new Error('Merger update returned no rows - check permissions');
+                    console.warn('⚠️ No rows updated - possible causes:');
+                    console.warn('  1. Merger does not exist');
+                    console.warn('  2. RLS policy is blocking the update');
+                    console.warn('  3. User does not own this merger');
+                    console.warn('  Current user ID:', state.user.id);
+                    console.warn('  Merger created_by:', merger.createdBy);
+                    throw new Error('Update failed: No rows were updated. You may not have permission to edit this merger.');
                 }
 
                 // Reload mergers to get updated data
