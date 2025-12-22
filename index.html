@@ -1312,7 +1312,6 @@
                 } else {
                     // Refresh contest list to update voter counts FIRST
                     await loadContests();
-                    await loadVoterCounts();
 
                     // Switch to single contest results view
                     // If this was partial voting, load results for the original full contest
@@ -1334,7 +1333,6 @@
                 // Refresh contest list one more time if it was merger voting
                 if (isMergerVoting) {
                     await loadContests();
-                    await loadVoterCounts();
                 }
 
                 // Clear processing state and clear loading before final render
@@ -1469,7 +1467,6 @@
                 }
 
                 await loadContests();
-                await loadVoterCounts();
                 delete state.userVotedContests[contestId];
                 state.modalProcessing = false;
                 showAlert('Contest deleted successfully!', '✅');
@@ -3484,8 +3481,9 @@
                         }))
                 }));
 
-                // Only render if not in initialization phase
+                // Load voter counts after loading contests (unless in initialization phase)
                 if (!state.isInitializing) {
+                    await loadVoterCounts();
                     render();
                 }
             } catch (error) {
