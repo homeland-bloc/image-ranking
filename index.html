@@ -3376,6 +3376,7 @@
         }
 
         async function loadVoterCounts() {
+            setLoading('Loading voter counts...');
             try {
                 // Fetch all votes using pagination to avoid row limit
                 const votes = await fetchAllVotesPaginated('', 'contest_id,user_id');
@@ -3436,6 +3437,8 @@
             } catch (error) {
                 console.error('Error loading voter counts:', error);
                 // Don't throw - just log the error and continue with 0 voter counts
+            } finally {
+                clearLoading();
             }
         }
 
