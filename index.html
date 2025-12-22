@@ -357,6 +357,7 @@
             newExtractName: '', // Name for new extract being created
             extractSourceType: null, // 'contest' or 'merger' only
             extractSourceId: null, // ID of source contest/merger
+            isInitializing: false, // Flag to prevent rendering during initialization
             extractSelectedImages: [], // Array of image IDs selected for extract
             selectedFolderId: null, // Currently selected folder for viewing
             expandedFolderIds: [], // Array of folder IDs that are expanded
@@ -1311,6 +1312,7 @@
                 } else {
                     // Refresh contest list to update voter counts FIRST
                     await loadContests();
+                    await loadVoterCounts();
 
                     // Switch to single contest results view
                     // If this was partial voting, load results for the original full contest
@@ -1332,6 +1334,7 @@
                 // Refresh contest list one more time if it was merger voting
                 if (isMergerVoting) {
                     await loadContests();
+                    await loadVoterCounts();
                 }
 
                 // Clear processing state and clear loading before final render
@@ -1466,6 +1469,7 @@
                 }
 
                 await loadContests();
+                await loadVoterCounts();
                 delete state.userVotedContests[contestId];
                 state.modalProcessing = false;
                 showAlert('Contest deleted successfully!', '✅');
@@ -3376,7 +3380,10 @@
         }
 
         async function loadVoterCounts() {
-            setLoading('Loading voter counts...');
+            // Only show loading modal if not in initialization phase
+            if (!state.isInitializing) {
+                setLoading('Loading voter counts...');
+            }
             try {
                 // Fetch all votes using pagination to avoid row limit
                 const votes = await fetchAllVotesPaginated('', 'contest_id,user_id');
@@ -3435,7 +3442,10 @@
                 console.error('Error loading voter counts:', error);
                 // Don't throw - just log the error and continue with 0 voter counts
             } finally {
-                clearLoading();
+                // Only clear loading if not in initialization phase
+                if (!state.isInitializing) {
+                    clearLoading();
+                }
             }
         }
 
@@ -3474,13 +3484,19 @@
                         }))
                 }));
 
-                render();
+                // Only render if not in initialization phase
+                if (!state.isInitializing) {
+                    render();
+                }
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
             } finally {
-                clearLoading();
+                // Only clear loading if not in initialization phase
+                if (!state.isInitializing) {
+                    clearLoading();
+                }
             }
         }
 
@@ -10493,6 +10509,10 @@
                 }
             }
 
+            // Set initialization flag to prevent premature rendering
+            state.isInitializing = true;
+            setLoading('Loading...');
+
             await Promise.all([
                 loadContests(),
                 loadMergers(),
@@ -10514,6 +10534,9 @@
                 state.filters.searchQuery = searchQuery;
             }
 
+            // Clear initialization flag and render
+            state.isInitializing = false;
+            clearLoading();
             render();
 
             // Setup hash change listener for browser back/forward
