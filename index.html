@@ -3377,15 +3377,8 @@
 
         async function loadVoterCounts() {
             try {
-                // Fetch all votes to calculate voter counts
-                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=contest_id,user_id`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
-                });
-                const votes = await votesResponse.json();
+                // Fetch all votes using pagination to avoid row limit
+                const votes = await fetchAllVotesPaginated('', 'contest_id,user_id');
 
                 if (Array.isArray(votes)) {
                     // Calculate voter counts for each contest
