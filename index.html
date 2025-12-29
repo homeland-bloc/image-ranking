@@ -340,6 +340,8 @@
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             showAppSettingsModal: false, // Show app settings modal (admin only)
+            showActivityLogsModal: false, // Show activity logs modal (admin only)
+            activityLogs: [], // Recent vote submission activity
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             filters: {
                 createdBy: null,           // Username or null
@@ -3612,6 +3614,73 @@
             }
         }
 
+        async function loadActivityLogs() {
+            try {
+                // Get the start of current week (Monday)
+                const now = new Date();
+                const currentDay = now.getDay();
+                const diff = currentDay === 0 ? -6 : 1 - currentDay; // If Sunday (0), go back 6 days, else go back to Monday
+                const monday = new Date(now);
+                monday.setDate(now.getDate() + diff);
+                monday.setHours(0, 0, 0, 0);
+                const weekStart = monday.toISOString();
+
+                // Query votes from the current week, grouped by user and contest
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStart}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar),contest:contests(title)&order=created_at.desc`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch activity logs');
+                }
+
+                const votes = await response.json();
+
+                // Group by user-contest combination and get the most recent vote for each
+                const activityMap = new Map();
+                votes.forEach(vote => {
+                    const key = `${vote.user_id}-${vote.contest_id}`;
+                    if (!activityMap.has(key) || new Date(vote.created_at) > new Date(activityMap.get(key).created_at)) {
+                        activityMap.set(key, {
+                            userId: vote.user_id,
+                            username: vote.voter?.username || 'Unknown User',
+                            avatar: vote.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${vote.user_id}`,
+                            contestId: vote.contest_id,
+                            contestTitle: vote.contest?.title || 'Unknown Contest',
+                            timestamp: vote.created_at
+                        });
+                    }
+                });
+
+                // Convert to array and sort by timestamp (most recent first)
+                state.activityLogs = Array.from(activityMap.values()).sort((a, b) =>
+                    new Date(b.timestamp) - new Date(a.timestamp)
+                );
+
+                render();
+            } catch (error) {
+                console.error('Error loading activity logs:', error);
+                showToast('Failed to load activity logs', 'error');
+            }
+        }
+
+        function showActivityLogs() {
+            state.showActivityLogsModal = true;
+            loadActivityLogs();
+        }
+
+        function closeActivityLogs() {
+            state.showActivityLogsModal = false;
+            render();
+        }
+
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
         function ensureLocalUser(user) {
             // returns a Promise that resolves when the user exists (or after insertion)
@@ -5549,6 +5618,9 @@
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
             state.contestVoters = [];
+
+            // Clear URL hash
+            window.location.hash = '';
 
             state.modalProcessing = false;
             render();
@@ -7717,7 +7789,7 @@
                                     </button>
                                 `;
                             })()}
-                            <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                            <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                 + Create Merge
                             </button>
                             <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
@@ -9585,7 +9657,12 @@
 
                             <div class="space-y-4">
                                 <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
-                                    <h4 class="font-bold text-gray-800 mb-3">Statistics</h4>
+                                    <div class="flex justify-between items-center mb-3">
+                                        <h4 class="font-bold text-gray-800">Statistics</h4>
+                                        <button onclick="showActivityLogs()" class="bg-mauve-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-mauve-600 transition shadow-lg">
+                                            📊 Recent Activity
+                                        </button>
+                                    </div>
                                     <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
@@ -9710,6 +9787,93 @@
                                     </p>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderActivityLogsModal() {
+            if (!state.showActivityLogsModal) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            // Helper function to format timestamp
+            const formatTimestamp = (timestamp) => {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMs / 3600000);
+                const diffDays = Math.floor(diffMs / 86400000);
+
+                if (diffMins < 1) return 'Just now';
+                if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+                if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+                if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+
+                // Full date if older than a week
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+            };
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-2xl font-bold text-gray-800">📊 Recent Activity</h3>
+                                <button onclick="closeActivityLogs()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <p class="text-sm text-gray-600 mt-2">Vote submissions from the current week</p>
+                        </div>
+
+                        <div class="p-6 overflow-y-auto flex-1">
+                            ${state.activityLogs.length > 0 ? `
+                                <div class="space-y-3">
+                                    ${state.activityLogs.map(log => `
+                                        <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                                            <img
+                                                src="${log.avatar}"
+                                                alt="${log.username}"
+                                                class="w-12 h-12 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition flex-shrink-0"
+                                                onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
+                                            />
+                                            <div class="flex-1 min-w-0">
+                                                <div
+                                                    class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition truncate"
+                                                    onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
+                                                >
+                                                    ${log.username}
+                                                </div>
+                                                <div class="text-sm text-gray-600 truncate">
+                                                    Voted on: <span class="font-medium">${log.contestTitle}</span>
+                                                </div>
+                                                <div class="text-xs text-gray-500 mt-1">
+                                                    ${formatTimestamp(log.timestamp)}
+                                                </div>
+                                            </div>
+                                            <button
+                                                onclick="window.location.hash='contest=${log.contestId}'; closeActivityLogs();"
+                                                class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition flex-shrink-0"
+                                            >
+                                                View Contest
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Recent Activity</h3>
+                                    <p class="text-gray-600">No votes have been submitted this week yet.</p>
+                                </div>
+                            `}
                         </div>
                     </div>
                 </div>
@@ -10277,7 +10441,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -10356,6 +10520,8 @@
         window.showAppSettings = showAppSettings;
         window.closeAppSettings = closeAppSettings;
         window.toggleAppSetting = toggleAppSetting;
+        window.showActivityLogs = showActivityLogs;
+        window.closeActivityLogs = closeActivityLogs;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
