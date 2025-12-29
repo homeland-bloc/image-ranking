@@ -376,7 +376,8 @@
             mergerContestIds: [],  // Array of contest IDs in current merger voting session
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
             votingMode: 'single',  // 'single' or 'multi' - voting view mode
-            showUnifiedCreateModal: false  // Show unified creation modal
+            showUnifiedCreateModal: false,  // Show unified creation modal
+            extractImageScale: 100  // Image scale for extract image selection pages (100-400%)
         };
 
         function shuffleArray(array) {
@@ -4891,24 +4892,23 @@
         // ==================== EXTRACT SYSTEM FUNCTIONS ====================
 
         function openCreateExtractModal() {
-            state.showCreateExtractModal = true;
+            state.view = 'createExtract';
             state.extractSourceType = null;
             state.extractSourceId = null;
             state.extractSelectedImages = [];
             state.newExtractName = '';
             state.extractContestFilter = 'all'; // For filtering merger contests
-            document.body.classList.add('modal-open');
+            state.extractImageScale = 100;
             render();
         }
 
         function closeCreateExtractModal() {
-            state.showCreateExtractModal = false;
+            state.view = 'home';
             state.extractSourceType = null;
             state.extractSourceId = null;
             state.extractSelectedImages = [];
             state.newExtractName = '';
             state.extractContestFilter = 'all';
-            document.body.classList.remove('modal-open');
             render();
         }
 
@@ -4990,6 +4990,11 @@
             state.newExtractName = name;
             // Update button state without full render
             updateExtractSaveButtonState();
+        }
+
+        function updateExtractImageScale(value) {
+            state.extractImageScale = parseInt(value);
+            render();
         }
 
         function updateExtractNameOnBlur() {
@@ -5198,16 +5203,15 @@
             // Store the extract being edited
             state.editingExtractId = extractId;
             state.editExtractSelectedImages = [...extract.imageIds]; // Copy current image IDs
-            state.showEditExtractModal = true;
-            document.body.classList.add('modal-open');
+            state.view = 'editExtract';
+            state.extractImageScale = 100;
             render();
         }
 
         function closeEditExtractModal() {
-            state.showEditExtractModal = false;
+            state.view = 'home';
             state.editingExtractId = null;
             state.editExtractSelectedImages = [];
-            document.body.classList.remove('modal-open');
             render();
         }
 
@@ -7079,33 +7083,24 @@
             `;
         }
 
-        function renderCreateExtractModal() {
-            if (!state.showCreateExtractModal) return '';
+        function renderCreateExtract() {
+            // Full page view for creating extract
 
             // Step 1: Select source (contest or merger)
             if (!state.extractSourceType) {
                 return `
-                    <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeCreateExtractModal()">
-                        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                    <div class="max-w-4xl mx-auto px-3 py-4">
+                        <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                             <!-- Header -->
                             <div class="p-6 border-b border-gray-200">
-                                <div class="flex items-center justify-between">
-                                    <div>
-                                        <h3 class="text-xl font-bold text-gray-800">Create Extract - Select Source</h3>
-                                        <p class="text-sm text-gray-600 mt-1">
-                                            Choose a contest or merger to extract images from
-                                        </p>
-                                    </div>
-                                    <button onclick="closeCreateExtractModal()" class="text-gray-500 hover:text-gray-700">
-                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                        </svg>
-                                    </button>
-                                </div>
+                                <h3 class="text-2xl font-bold text-gray-800">Create Extract - Select Source</h3>
+                                <p class="text-sm text-gray-600 mt-1">
+                                    Choose a contest or merger to extract images from
+                                </p>
                             </div>
 
                             <!-- Source Selection -->
-                            <div class="flex-1 overflow-y-auto p-6">
+                            <div class="p-6">
                                 ${state.mergers.length > 0 ? `
                                     <div class="mb-4">
                                         <h4 class="font-semibold text-gray-700 mb-2">Mergers</h4>
@@ -7153,7 +7148,7 @@
                 `;
             }
 
-            // Step 2: Visual image picker
+            // Step 2: Visual image picker with scale slider
             let sourceImages = [];
             let sourceName = '';
             let mergedContests = [];
@@ -7183,24 +7178,20 @@
             }
 
             const selectedCount = (state.extractSelectedImages || []).length;
+            const imageScale = state.extractImageScale || 100;
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeCreateExtractModal()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header -->
-                        <div class="p-6 border-b border-gray-200">
-                            <div class="flex items-center justify-between">
+                        <div class="p-4 border-b border-gray-200">
+                            <div class="flex items-center justify-between mb-3">
                                 <div>
-                                    <h3 class="text-xl font-bold text-gray-800">Create Extract - Select Images</h3>
-                                    <p class="text-sm text-gray-600 mt-1" data-extract-count>
+                                    <h3 class="text-2xl font-bold text-gray-800">Create Extract - Select Images</h3>
+                                    <p class="text-sm text-gray-600 mt-1">
                                         From: ${sourceName} (${selectedCount} selected)
                                     </p>
                                 </div>
-                                <button onclick="closeCreateExtractModal()" class="text-gray-500 hover:text-gray-700">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
                             </div>
                             ${showContestFilter ? `
                                 <div class="mt-4">
@@ -7220,26 +7211,35 @@
                                     </select>
                                 </div>
                             ` : ''}
+
+                            <!-- Image Scale Slider -->
+                            <div class="mt-3">
+                                <label class="text-sm font-medium text-gray-700 mb-2 block">Image Size: ${imageScale}%</label>
+                                <input
+                                    type="range"
+                                    min="100"
+                                    max="400"
+                                    value="${imageScale}"
+                                    oninput="updateExtractImageScale(this.value)"
+                                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                />
+                            </div>
                         </div>
 
                         <!-- Image Grid -->
-                        <div class="flex-1 overflow-y-auto p-6">
-                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        <div class="p-4">
+                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                                 ${sourceImages.map(image => {
                                     const isSelected = (state.extractSelectedImages || []).includes(image.id);
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleExtractImage(${image.id})"
+                                                style="height: ${imageScale * 1.5}px;"
                                             >
-                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-32 object-cover" />
-                                            ${image.label ? `
-                                                <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 truncate">
-                                                    ${image.label}
-                                                </div>
-                                            ` : ''}
-                                            <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
+                                                <img src="${image.url}" alt="" class="w-full h-full object-contain" />
+                                                <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
                                                 ${isSelected ? `
                                                     <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
@@ -7256,7 +7256,7 @@
                         </div>
 
                         <!-- Name Input and Footer -->
-                        <div class="p-6 border-t border-gray-200">
+                        <div class="p-4 border-t border-gray-200">
                             <div class="mb-4">
                                 <label class="text-sm font-medium text-gray-700 mb-1 block">Extract Name</label>
                                 <input
@@ -7271,18 +7271,12 @@
                             </div>
                             <div class="flex gap-3">
                                 <button
-                                    onclick="closeCreateExtractModal()"
-                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                >
-                                    Cancel
-                                </button>
-                                <button
                                     data-extract-save
                                     onclick="saveExtract()"
                                     class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount > 0 && state.newExtractName ? 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-white hover:from-yellow-600 hover:to-yellow-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
                                     ${selectedCount === 0 || !state.newExtractName ? 'disabled' : ''}
                                 >
-                                    Create Extract
+                                    Create Extract (${selectedCount} selected)
                                 </button>
                             </div>
                         </div>
@@ -7838,7 +7832,7 @@
         }
 
         function renderHeader() {
-            const showBackButton = state.view === 'results' || state.view === 'vote' || state.view === 'mergedResults';
+            const showBackButton = state.view === 'results' || state.view === 'vote' || state.view === 'mergedResults' || state.view === 'createExtract' || state.view === 'editExtract';
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isVoting = state.view === 'vote';
 
@@ -10869,6 +10863,12 @@
                 case 'mergedResults':
                     content = renderMergedResults();
                     break;
+                case 'createExtract':
+                    content = renderCreateExtract();
+                    break;
+                case 'editExtract':
+                    content = renderEditExtractModal();
+                    break;
                 default:
                     content = renderHome();
             }
@@ -11004,6 +11004,7 @@
         window.toggleExtractImage = toggleExtractImage;
         window.setExtractName = setExtractName;
         window.updateExtractNameOnBlur = updateExtractNameOnBlur;
+        window.updateExtractImageScale = updateExtractImageScale;
         window.saveExtract = saveExtract;
         window.openEditExtractModal = openEditExtractModal;
         window.closeEditExtractModal = closeEditExtractModal;
