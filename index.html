@@ -2515,6 +2515,7 @@
         }
 
         async function showContestInfoModal(item, itemType) {
+            setLoading('Loading information...');
             try {
                 // Fetch voters for this contest/merger/extract
                 let voters = [];
@@ -2647,9 +2648,11 @@
                     voters
                 };
 
+                clearLoading();
                 render();
             } catch (error) {
                 console.error('Error loading contest info:', error);
+                clearLoading();
                 showAlert('Failed to load contest info: ' + error.message, '❌');
             }
         }
@@ -7780,6 +7783,12 @@
                                         <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
                                             + Create Contest
                                         </button>
+                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
+                                            + Create Merge
+                                        </button>
+                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
+                                            + Create Extract
+                                        </button>
                                     `;
                                 }
 
@@ -7787,14 +7796,14 @@
                                     <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                         + Create Contest
                                     </button>
+                                    <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                                        + Create Merge
+                                    </button>
+                                    <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                                        + Create Extract
+                                    </button>
                                 `;
                             })()}
-                            <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
-                                + Create Merge
-                            </button>
-                            <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
-                                + Create Extract
-                            </button>
                         </div>
                     </div>
 
@@ -8550,9 +8559,16 @@
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                        <div class="absolute top-3 ${contest.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                            </svg>
+                                        </div>
+                                    ` : ''}
+                                    ${contest.resultsPublic === false ? `
+                                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
@@ -8655,16 +8671,16 @@
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${merger.isLocked ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                        <div class="absolute top-3 ${merger.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
-                    ` : merger.resultsPublic === false ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Results are private">
+                    ` : ''}
+                    ${merger.resultsPublic === false ? `
+                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
@@ -8787,16 +8803,16 @@
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${extract.isLocked ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                        <div class="absolute top-3 ${extract.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
-                    ` : extract.resultsPublic === false ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Results are private">
+                    ` : ''}
+                    ${extract.resultsPublic === false ? `
+                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
