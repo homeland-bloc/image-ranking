@@ -377,7 +377,8 @@
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
             votingMode: 'single',  // 'single' or 'multi' - voting view mode
             showUnifiedCreateModal: false,  // Show unified creation modal
-            extractImageScale: 100  // Image scale for extract image selection pages (100-400%)
+            extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
+            pinnedItems: []  // Array of pinned items from database
         };
 
         function shuffleArray(array) {
@@ -3553,6 +3554,88 @@
             }
         }
 
+        async function loadPinnedItems() {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items?select=*&order=pinned_at.desc`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                const pinnedItems = await response.json();
+                if (Array.isArray(pinnedItems)) {
+                    state.pinnedItems = pinnedItems;
+                }
+            } catch (error) {
+                console.error('Error loading pinned items:', error);
+            }
+        }
+
+        async function pinItem(itemType, itemId) {
+            if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
+                showToast('Only admins can pin items', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({
+                        item_type: itemType,
+                        item_id: itemId,
+                        pinned_by: state.user.id
+                    })
+                });
+
+                if (response.ok) {
+                    showToast('Item pinned successfully', 'success');
+                    await loadPinnedItems();
+                    render();
+                } else {
+                    const error = await response.text();
+                    console.error('Failed to pin item:', error);
+                    showToast('Failed to pin item', 'error');
+                }
+            } catch (error) {
+                console.error('Error pinning item:', error);
+                showToast('Error pinning item', 'error');
+            }
+        }
+
+        async function unpinItem(itemType, itemId) {
+            if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
+                showToast('Only admins can unpin items', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items?item_type=eq.${itemType}&item_id=eq.${itemId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    }
+                });
+
+                if (response.ok) {
+                    showToast('Item unpinned successfully', 'success');
+                    await loadPinnedItems();
+                    render();
+                } else {
+                    showToast('Failed to unpin item', 'error');
+                }
+            } catch (error) {
+                console.error('Error unpinning item:', error);
+                showToast('Error unpinning item', 'error');
+            }
+        }
 
         async function loadAppSettings() {
             try {
@@ -7286,8 +7369,7 @@
         }
 
         function renderEditExtractModal() {
-            if (!state.showEditExtractModal) return '';
-
+            // Full page view for editing extract
             const extract = state.extracts.find(e => e.id === state.editingExtractId);
             if (!extract) return '';
 
@@ -7311,56 +7393,56 @@
             }
 
             const selectedCount = (state.editExtractSelectedImages || []).length;
+            const imageScale = state.extractImageScale || 100;
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeEditExtractModal()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col modal-content" onclick="event.stopPropagation()">
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header -->
-                        <div class="p-6 border-b border-gray-200">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <h3 class="text-xl font-bold text-gray-800">Edit Extract - ${extract.name}</h3>
-                                    <p class="text-sm text-gray-600 mt-1">
-                                        From: ${sourceName} (${selectedCount} selected)
-                                    </p>
-                                </div>
-                                <button onclick="closeEditExtractModal()" class="text-gray-500 hover:text-gray-700">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </button>
+                        <div class="p-4 border-b border-gray-200">
+                            <div class="mb-3">
+                                <h3 class="text-2xl font-bold text-gray-800">Edit Extract - ${extract.name}</h3>
+                                <p class="text-sm text-gray-600 mt-1">
+                                    From: ${sourceName} (${selectedCount} selected)
+                                </p>
+                            </div>
+
+                            <!-- Image Scale Slider -->
+                            <div class="mt-3">
+                                <label class="text-sm font-medium text-gray-700 mb-2 block">Image Size: ${imageScale}%</label>
+                                <input
+                                    type="range"
+                                    min="100"
+                                    max="400"
+                                    value="${imageScale}"
+                                    oninput="updateExtractImageScale(this.value)"
+                                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                />
                             </div>
                         </div>
 
                         <!-- Image Grid -->
-                        <div class="flex-1 overflow-y-auto p-6">
-                            <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                        <div class="p-4">
+                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                                 ${sourceImages.map(image => {
                                     const isSelected = (state.editExtractSelectedImages || []).includes(image.id);
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all aspect-square ${isSelected ? 'border-blue-500 bg-blue-100 shadow-lg ring-2 ring-blue-400' : 'border-transparent hover:border-blue-300 bg-gray-100'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleEditExtractImage(${image.id})"
+                                                style="height: ${imageScale * 1.5}px;"
                                             >
-                                            <img src="${image.url}" alt="${image.label || ''}" class="w-full h-full object-contain ${isSelected ? 'opacity-90' : ''}" />
-                                            ${isSelected ? `
-                                                <div class="absolute inset-0 bg-blue-500 bg-opacity-10 pointer-events-none"></div>
-                                            ` : ''}
-                                            ${image.label ? `
-                                                <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 truncate">
-                                                    ${image.label}
-                                                </div>
-                                            ` : ''}
-                                            <div class="absolute top-1 left-1 rounded-full w-6 h-6 flex items-center justify-center shadow-md border ${isSelected ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'}">
+                                                <img src="${image.url}" alt="" class="w-full h-full object-contain" />
+                                                <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
                                                 ${isSelected ? `
-                                                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                                                     </svg>
                                                 ` : `
-                                                    <div class="w-3 h-3 border border-gray-400 rounded"></div>
+                                                    <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
                                                 `}
-                                            </div>
+                                                </div>
                                             </div>
                                         </div>
                                     `;
@@ -7369,22 +7451,14 @@
                         </div>
 
                         <!-- Footer -->
-                        <div class="p-6 border-t border-gray-200">
-                            <div class="flex gap-3">
-                                <button
-                                    onclick="closeEditExtractModal()"
-                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onclick="saveEditedExtract()"
-                                    class="flex-1 px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount > 0 ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
-                                    ${selectedCount === 0 ? 'disabled' : ''}
-                                >
-                                    Save Changes
-                                </button>
-                            </div>
+                        <div class="p-4 border-t border-gray-200">
+                            <button
+                                onclick="saveEditedExtract()"
+                                class="w-full px-5 py-3 rounded-lg font-semibold transition text-sm ${selectedCount > 0 ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}"
+                                ${selectedCount === 0 ? 'disabled' : ''}
+                            >
+                                Save Changes (${selectedCount} selected)
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -8135,6 +8209,38 @@
                     ` : ''}
 
                     ${(() => {
+                        // PINNED ITEMS SECTION
+                        const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+                        const pinnedContests = state.pinnedItems.filter(p => p.item_type === 'contest')
+                            .map(p => state.contests.find(c => c.id === p.item_id))
+                            .filter(Boolean);
+                        const pinnedMergers = state.pinnedItems.filter(p => p.item_type === 'merger')
+                            .map(p => state.mergers.find(m => m.id === p.item_id))
+                            .filter(Boolean);
+                        const pinnedExtracts = state.pinnedItems.filter(p => p.item_type === 'extract')
+                            .map(p => state.extracts.find(e => e.id === p.item_id))
+                            .filter(Boolean);
+                        const allPinnedItems = [...pinnedContests, ...pinnedMergers, ...pinnedExtracts];
+
+                        if (allPinnedItems.length > 0) {
+                            return `
+                                <div class="bg-red-50 rounded-lg p-4 mb-4 border border-red-200">
+                                    <div class="bg-red-100 px-3 py-2 rounded-t-lg mb-3">
+                                        <h3 class="text-lg font-bold text-gray-800">📌 Pinned</h3>
+                                        <p class="text-xs text-gray-600">Featured items appear here</p>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        ${pinnedContests.map(contest => renderContestCard(contest, true)).join('')}
+                                        ${pinnedMergers.map(merger => renderMergerCard(merger, true)).join('')}
+                                        ${pinnedExtracts.map(extract => renderExtractCard(extract, true)).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        return '';
+                    })()}
+
+                    ${(() => {
                         // Combine filtered contests, mergers, and extracts into a unified list
                         // Mix them without any type priority
                         const allItems = [
@@ -8812,7 +8918,7 @@
             `;
         }
 
-        function renderContestCard(contest) {
+        function renderContestCard(contest, isPinned = false) {
                         try {
                                 const userVotes = state.userVotedContests[contest.id] || {};
                                 const votedImageCount = Object.keys(userVotes).length;
@@ -8823,9 +8929,19 @@
                             const canDelete = canDeleteContest(contest);
                             const isBanned = state.bannedUsers.includes(state.user.id);
                             const createdDate = formatDate(contest.createdAt);
+                            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                                    ${isAdmin ? `
+                                        <button
+                                            onclick="event.stopPropagation(); ${isPinned ? `unpinItem('contest', ${contest.id})` : `pinItem('contest', ${contest.id})`}"
+                                            class="absolute top-3 left-3 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition z-10"
+                                            title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
+                                        >
+                                            📌
+                                        </button>
+                                    ` : ''}
                                     ${contest.isLocked ? `
                                         <div class="absolute top-3 ${contest.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -8910,7 +9026,7 @@
                             }
         }
 
-        function renderMergerCard(merger) {
+        function renderMergerCard(merger, isPinned = false) {
             // Get contest details for the merged contests
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
@@ -8935,9 +9051,19 @@
             const hasVotedNone = fullyVotedContests.length === 0 && partiallyVotedContests.length === 0;
 
             const isBanned = state.bannedUsers.includes(state.user.id);
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    ${isAdmin ? `
+                        <button
+                            onclick="event.stopPropagation(); ${isPinned ? `unpinItem('merger', '${merger.id}')` : `pinItem('merger', '${merger.id}')`}"
+                            class="absolute top-3 left-3 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition z-10"
+                            title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
+                        >
+                            📌
+                        </button>
+                    ` : ''}
                     ${merger.isLocked ? `
                         <div class="absolute top-3 ${merger.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -9004,7 +9130,7 @@
             `;
         }
 
-        function renderExtractCard(extract) {
+        function renderExtractCard(extract, isPinned = false) {
             // Get source reference
             let sourceRef = 'Unknown';
             if (extract.sourceType === 'contest') {
@@ -9023,6 +9149,7 @@
             let hasVotedAll = false;
             let hasVotedSome = false;
             let hasVotedNone = true;
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             if (extract.sourceType === 'contest' && extract.sourceContestId) {
                 const userVotes = state.userVotedContests[extract.sourceContestId] || {};
@@ -9070,6 +9197,15 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    ${isAdmin ? `
+                        <button
+                            onclick="event.stopPropagation(); ${isPinned ? `unpinItem('extract', '${extract.id}')` : `pinItem('extract', '${extract.id}')`}"
+                            class="absolute top-3 left-3 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition z-10"
+                            title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
+                        >
+                            📌
+                        </button>
+                    ` : ''}
                     ${extract.isLocked ? `
                         <div class="absolute top-3 ${extract.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -11010,6 +11146,8 @@
         window.closeEditExtractModal = closeEditExtractModal;
         window.toggleEditExtractImage = toggleEditExtractImage;
         window.saveEditedExtract = saveEditedExtract;
+        window.pinItem = pinItem;
+        window.unpinItem = unpinItem;
         window.openManageFoldersModal = openManageFoldersModal;
         window.closeManageFoldersModal = closeManageFoldersModal;
         window.showCreateFolderModal = showCreateFolderModal;
@@ -11086,6 +11224,7 @@
                             .then(async () => {
                                 // proceed normally once the user row is present (or insertion attempted)
                                 await loadContests();
+                                await loadPinnedItems();
 
                                 render();
                             })
@@ -11093,6 +11232,7 @@
                                 // should not happen because ensureLocalUser swallows errors, but safe fallback
                                 console.error('ensureLocalUser unexpected error:', err);
                                 await loadContests();
+                                await loadPinnedItems();
                                 render();
                             });
                     } else {
