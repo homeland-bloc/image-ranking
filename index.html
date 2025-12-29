@@ -3791,9 +3791,11 @@
                     const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
                     const isCreator = state.user && state.user.id === contestData.created_by;
                     const resultsPublic = contestData.results_public !== false;
+                    const hasVoted = !!state.userVotedContests[contest.id];
 
-                    if (!resultsPublic && !isAdmin && !isCreator) {
-                        showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                    // For hidden results, allow viewing with restrictions if user has voted
+                    if (!resultsPublic && !isAdmin && !isCreator && !hasVoted) {
+                        showAlert('Results are private. Only voters, the creator, or admin can view them.', '🔒');
                         return;
                     }
                 } catch (error) {
@@ -3808,6 +3810,18 @@
             state.votes = userVotes;
             await loadResults();
             state.showMyVotes = false;
+
+            // For hidden results, default to userVotes tab (showing own votes only)
+            const isPrivate = contest.resultsPublic === false;
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === contest.createdBy;
+            if (isPrivate && !isAdmin && !isCreator) {
+                state.resultsView = 'userVotes';
+                state.selectedVoterUserId = state.user.id;
+            } else {
+                state.resultsView = 'average'; // Default to average for public results
+            }
+
             state.view = 'results';
 
             // Update URL hash for shareable link (only for real contests, not extracts)
@@ -5532,7 +5546,17 @@
                 setLoading('Updating vote...');
 
                 // Find the contest ID for this image
-                const contestId = state.currentContest.id;
+                // For extracts, need to find the actual source contest ID where the vote is stored
+                let contestId = state.currentContest.id;
+                if (state.currentContest.isExtract) {
+                    // Find which source contest this image belongs to
+                    const image = state.currentContest.images.find(img => img.id === imageId);
+                    if (image && image.contestId) {
+                        contestId = image.contestId;
+                    } else if (state.currentContest.extractSourceType === 'contest') {
+                        contestId = state.currentContest.extractSourceContestId;
+                    }
+                }
 
                 // Update vote in database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
@@ -5594,7 +5618,17 @@
                 setLoading(shouldBlock ? 'Blocking vote...' : 'Unblocking vote...');
 
                 // Find the contest ID for this image
-                const contestId = state.currentContest.id;
+                // For extracts, need to find the actual source contest ID where the vote is stored
+                let contestId = state.currentContest.id;
+                if (state.currentContest.isExtract) {
+                    // Find which source contest this image belongs to
+                    const image = state.currentContest.images.find(img => img.id === imageId);
+                    if (image && image.contestId) {
+                        contestId = image.contestId;
+                    } else if (state.currentContest.extractSourceType === 'contest') {
+                        contestId = state.currentContest.extractSourceContestId;
+                    }
+                }
 
                 // Update vote in database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
@@ -9354,26 +9388,38 @@
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <!-- First row: View tabs -->
-                                <div class="flex items-center justify-center gap-3">
-                                    <button
-                                        onclick="setResultsView('average')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Total
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('userVotes')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        By User
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('byVoter')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Average
-                                    </button>
-                                </div>
+                                ${(() => {
+                                    // For hidden results (non-admin/creator), disable tab switching
+                                    const canSwitchTabs = !isPrivate || isAdmin || isCreator;
+                                    const disabledClass = canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed';
+                                    const onclick = canSwitchTabs ? 'onclick' : 'data-disabled';
+
+                                    return `
+                                        <div class="flex items-center justify-center gap-3">
+                                            <button
+                                                ${onclick}="setResultsView('average')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Total
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('userVotes')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                By User
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('byVoter')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Average
+                                            </button>
+                                        </div>
+                                    `;
+                                })()}
                                 <!-- Second row: Action buttons (only show if user has voted and contest is not locked) -->
                                 ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
                                     <div class="flex items-center justify-center gap-3">
@@ -9404,25 +9450,37 @@
                                 ` : ''}
                             </div>
                                 <!-- User selector dropdown for User Votes view -->
-                                ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? `
-                                    <div class="flex justify-center items-center gap-2">
-                                        <label class="text-xs font-medium text-gray-700">Select User:</label>
-                                        <select
-                                            onchange="setResultsView('userVotes', this.value)"
-                                            class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
-                                        >
-                                            ${state.contestVoters.map(voter => {
-                                                const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
-                                                const isCurrent = voter.userId === state.user?.id;
-                                                return `
-                                                    <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
-                                                        ${voter.username}${isCurrent ? ' (You)' : ''}
-                                                    </option>
-                                                `;
-                                            }).join('')}
-                                        </select>
-                                    </div>
-                                ` : ''}
+                                ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? (() => {
+                                    // For hidden results (non-admin/creator), disable user selection
+                                    const canSelectUser = !isPrivate || isAdmin || isCreator;
+                                    if (!canSelectUser) {
+                                        return `
+                                            <div class="flex justify-center items-center gap-2">
+                                                <label class="text-xs font-medium text-gray-700">Viewing: Your Votes Only</label>
+                                                <span class="text-xs text-gray-500">(Results are hidden)</span>
+                                            </div>
+                                        `;
+                                    }
+                                    return `
+                                        <div class="flex justify-center items-center gap-2">
+                                            <label class="text-xs font-medium text-gray-700">Select User:</label>
+                                            <select
+                                                onchange="setResultsView('userVotes', this.value)"
+                                                class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                            >
+                                                ${state.contestVoters.map(voter => {
+                                                    const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
+                                                    const isCurrent = voter.userId === state.user?.id;
+                                                    return `
+                                                        <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
+                                                            ${voter.username}${isCurrent ? ' (You)' : ''}
+                                                        </option>
+                                                    `;
+                                                }).join('')}
+                                            </select>
+                                        </div>
+                                    `;
+                                })() : ''}
                             </div>
 
                         ${state.resultsView !== 'byVoter' ? `
@@ -10280,26 +10338,38 @@
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <!-- First row: View tabs -->
-                                <div class="flex items-center justify-center gap-3">
-                                    <button
-                                        onclick="setResultsView('average')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Total
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('userVotes')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        By User
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('byVoter')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Average
-                                    </button>
-                                </div>
+                                ${(() => {
+                                    // For hidden results (non-admin/creator), disable tab switching
+                                    const canSwitchTabs = !isPrivate || isAdmin || isCreator;
+                                    const disabledClass = canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed';
+                                    const onclick = canSwitchTabs ? 'onclick' : 'data-disabled';
+
+                                    return `
+                                        <div class="flex items-center justify-center gap-3">
+                                            <button
+                                                ${onclick}="setResultsView('average')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Total
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('userVotes')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                By User
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('byVoter')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Average
+                                            </button>
+                                        </div>
+                                    `;
+                                })()}
                                 <!-- Revote button row -->
                                 <div class="flex items-center justify-center gap-3">
                                     <button
