@@ -340,6 +340,8 @@
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             showAppSettingsModal: false, // Show app settings modal (admin only)
+            showActivityLogsModal: false, // Show activity logs modal (admin only)
+            activityLogs: [], // Recent vote submission activity
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             filters: {
                 createdBy: null,           // Username or null
@@ -2513,6 +2515,7 @@
         }
 
         async function showContestInfoModal(item, itemType) {
+            setLoading('Loading information...');
             try {
                 // Fetch voters for this contest/merger/extract
                 let voters = [];
@@ -2645,9 +2648,11 @@
                     voters
                 };
 
+                clearLoading();
                 render();
             } catch (error) {
                 console.error('Error loading contest info:', error);
+                clearLoading();
                 showAlert('Failed to load contest info: ' + error.message, '❌');
             }
         }
@@ -3612,6 +3617,73 @@
             }
         }
 
+        async function loadActivityLogs() {
+            try {
+                // Get the start of current week (Monday)
+                const now = new Date();
+                const currentDay = now.getDay();
+                const diff = currentDay === 0 ? -6 : 1 - currentDay; // If Sunday (0), go back 6 days, else go back to Monday
+                const monday = new Date(now);
+                monday.setDate(now.getDate() + diff);
+                monday.setHours(0, 0, 0, 0);
+                const weekStart = monday.toISOString();
+
+                // Query votes from the current week, grouped by user and contest
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStart}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar),contest:contests(title)&order=created_at.desc`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch activity logs');
+                }
+
+                const votes = await response.json();
+
+                // Group by user-contest combination and get the most recent vote for each
+                const activityMap = new Map();
+                votes.forEach(vote => {
+                    const key = `${vote.user_id}-${vote.contest_id}`;
+                    if (!activityMap.has(key) || new Date(vote.created_at) > new Date(activityMap.get(key).created_at)) {
+                        activityMap.set(key, {
+                            userId: vote.user_id,
+                            username: vote.voter?.username || 'Unknown User',
+                            avatar: vote.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${vote.user_id}`,
+                            contestId: vote.contest_id,
+                            contestTitle: vote.contest?.title || 'Unknown Contest',
+                            timestamp: vote.created_at
+                        });
+                    }
+                });
+
+                // Convert to array and sort by timestamp (most recent first)
+                state.activityLogs = Array.from(activityMap.values()).sort((a, b) =>
+                    new Date(b.timestamp) - new Date(a.timestamp)
+                );
+
+                render();
+            } catch (error) {
+                console.error('Error loading activity logs:', error);
+                showToast('Failed to load activity logs', 'error');
+            }
+        }
+
+        function showActivityLogs() {
+            state.showActivityLogsModal = true;
+            loadActivityLogs();
+        }
+
+        function closeActivityLogs() {
+            state.showActivityLogsModal = false;
+            render();
+        }
+
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
         function ensureLocalUser(user) {
             // returns a Promise that resolves when the user exists (or after insertion)
@@ -3719,9 +3791,11 @@
                     const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
                     const isCreator = state.user && state.user.id === contestData.created_by;
                     const resultsPublic = contestData.results_public !== false;
+                    const hasVoted = !!state.userVotedContests[contest.id];
 
-                    if (!resultsPublic && !isAdmin && !isCreator) {
-                        showAlert('Results are private. Only the creator or admin can view them.', '🔒');
+                    // For hidden results, allow viewing with restrictions if user has voted
+                    if (!resultsPublic && !isAdmin && !isCreator && !hasVoted) {
+                        showAlert('Results are private. Only voters, the creator, or admin can view them.', '🔒');
                         return;
                     }
                 } catch (error) {
@@ -3736,6 +3810,18 @@
             state.votes = userVotes;
             await loadResults();
             state.showMyVotes = false;
+
+            // For hidden results, default to userVotes tab (showing own votes only)
+            const isPrivate = contest.resultsPublic === false;
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const isCreator = state.user && state.user.id === contest.createdBy;
+            if (isPrivate && !isAdmin && !isCreator) {
+                state.resultsView = 'userVotes';
+                state.selectedVoterUserId = state.user.id;
+            } else {
+                state.resultsView = 'average'; // Default to average for public results
+            }
+
             state.view = 'results';
 
             // Update URL hash for shareable link (only for real contests, not extracts)
@@ -3763,6 +3849,70 @@
             state.showMyVotes = false;
             state.view = 'results';
             render();
+        }
+
+        // Admin bypass functions - allow viewing results without voting requirement
+        async function adminViewResults(contest) {
+            setLoading('Loading results...');
+            try {
+                state.currentContest = contest;
+                state.votes = {};
+                await loadResults();
+                state.showMyVotes = false;
+                state.view = 'results';
+                window.location.hash = `contest=${contest.id}`;
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error loading results:', error);
+                clearLoading();
+                showAlert('Error loading results: ' + error.message, '❌');
+            }
+        }
+
+        async function adminViewMergerResults(mergerId) {
+            setLoading('Loading merger results...');
+            try {
+                const merger = state.mergers.find(m => m.id === mergerId);
+                if (!merger) {
+                    showAlert('Merger not found', '❌');
+                    clearLoading();
+                    return;
+                }
+
+                state.currentMergerId = mergerId;
+                state.mergerContestIds = merger.contestIds;
+                state.votes = {};
+                await loadMergedResults(mergerId);
+                state.view = 'mergedResults';
+                window.location.hash = `merger=${mergerId}`;
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error loading merger results:', error);
+                clearLoading();
+                showAlert('Error loading merger results: ' + error.message, '❌');
+            }
+        }
+
+        async function adminViewExtractResults(extractId) {
+            setLoading('Loading extract results...');
+            try {
+                const extract = state.extracts.find(e => e.id === extractId);
+                if (!extract) {
+                    showAlert('Extract not found', '❌');
+                    clearLoading();
+                    return;
+                }
+
+                // Navigate to the extract's results view
+                await viewExtractResults(extractId);
+                clearLoading();
+            } catch (error) {
+                console.error('Error loading extract results:', error);
+                clearLoading();
+                showAlert('Error loading extract results: ' + error.message, '❌');
+            }
         }
 
         function startRevote() {
@@ -5396,7 +5546,17 @@
                 setLoading('Updating vote...');
 
                 // Find the contest ID for this image
-                const contestId = state.currentContest.id;
+                // For extracts, need to find the actual source contest ID where the vote is stored
+                let contestId = state.currentContest.id;
+                if (state.currentContest.isExtract) {
+                    // Find which source contest this image belongs to
+                    const image = state.currentContest.images.find(img => img.id === imageId);
+                    if (image && image.contestId) {
+                        contestId = image.contestId;
+                    } else if (state.currentContest.extractSourceType === 'contest') {
+                        contestId = state.currentContest.extractSourceContestId;
+                    }
+                }
 
                 // Update vote in database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
@@ -5458,7 +5618,17 @@
                 setLoading(shouldBlock ? 'Blocking vote...' : 'Unblocking vote...');
 
                 // Find the contest ID for this image
-                const contestId = state.currentContest.id;
+                // For extracts, need to find the actual source contest ID where the vote is stored
+                let contestId = state.currentContest.id;
+                if (state.currentContest.isExtract) {
+                    // Find which source contest this image belongs to
+                    const image = state.currentContest.images.find(img => img.id === imageId);
+                    if (image && image.contestId) {
+                        contestId = image.contestId;
+                    } else if (state.currentContest.extractSourceType === 'contest') {
+                        contestId = state.currentContest.extractSourceContestId;
+                    }
+                }
 
                 // Update vote in database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
@@ -5549,6 +5719,9 @@
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
             state.contestVoters = [];
+
+            // Clear URL hash
+            window.location.hash = '';
 
             state.modalProcessing = false;
             render();
@@ -7708,6 +7881,12 @@
                                         <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
                                             + Create Contest
                                         </button>
+                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
+                                            + Create Merge
+                                        </button>
+                                        <button onclick="showContestCreationDisabledModal()" class="bg-gray-400 text-gray-200 px-2 sm:px-4 py-2 rounded-lg font-semibold cursor-not-allowed opacity-50 text-xs sm:text-sm whitespace-nowrap">
+                                            + Create Extract
+                                        </button>
                                     `;
                                 }
 
@@ -7715,14 +7894,14 @@
                                     <button onclick="startCreateContest()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
                                         + Create Contest
                                     </button>
+                                    <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                                        + Create Merge
+                                    </button>
+                                    <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
+                                        + Create Extract
+                                    </button>
                                 `;
                             })()}
-                            <button onclick="openCreateMergerModal()" class="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
-                                + Create Merge
-                            </button>
-                            <button onclick="openCreateExtractModal()" class="bg-gradient-to-r from-yellow-500 to-yellow-700 text-white px-2 sm:px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-800 transition shadow-lg text-xs sm:text-sm whitespace-nowrap">
-                                + Create Extract
-                            </button>
                         </div>
                     </div>
 
@@ -8168,6 +8347,16 @@
                                                 ${item.resultsPublic !== false ? '👁️ Public' : '🔒 Private'}
                                             </button>
                                         </div>
+                                        <!-- View Results Button (Bypass Voting) -->
+                                        <button
+                                            onclick="${itemType === 'merger' ? `adminViewMergerResults('${item.id}')` : itemType === 'extract' ? `adminViewExtractResults('${item.id}')` : `adminViewResults(${safeStringify(item)})`}; closeContestInfoModal();"
+                                            class="w-full px-4 py-2 bg-gradient-to-r from-mauve-500 to-mauve-600 text-white rounded-lg font-semibold hover:from-mauve-600 hover:to-mauve-700 transition text-sm flex items-center justify-center gap-2"
+                                        >
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                            </svg>
+                                            View Results (Bypass Voting)
+                                        </button>
                                         <!-- Edit Extract Button (Extract Only) -->
                                         ${itemType === 'extract' ? `
                                             <button
@@ -8478,9 +8667,16 @@
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                        <div class="absolute top-3 ${contest.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                                            </svg>
+                                        </div>
+                                    ` : ''}
+                                    ${contest.resultsPublic === false ? `
+                                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
@@ -8583,16 +8779,16 @@
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${merger.isLocked ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                        <div class="absolute top-3 ${merger.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
-                    ` : merger.resultsPublic === false ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Results are private">
+                    ` : ''}
+                    ${merger.resultsPublic === false ? `
+                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
@@ -8715,16 +8911,16 @@
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${extract.isLocked ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                        <div class="absolute top-3 ${extract.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
-                    ` : extract.resultsPublic === false ? `
-                        <div class="absolute top-3 right-3 bg-black text-white p-1.5 rounded-full shadow-lg" title="Results are private">
+                    ` : ''}
+                    ${extract.resultsPublic === false ? `
+                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
@@ -9192,26 +9388,38 @@
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <!-- First row: View tabs -->
-                                <div class="flex items-center justify-center gap-3">
-                                    <button
-                                        onclick="setResultsView('average')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Total
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('userVotes')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        By User
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('byVoter')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Average
-                                    </button>
-                                </div>
+                                ${(() => {
+                                    // For hidden results (non-admin/creator), disable tab switching
+                                    const canSwitchTabs = !isPrivate || isAdmin || isCreator;
+                                    const disabledClass = canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed';
+                                    const onclick = canSwitchTabs ? 'onclick' : 'data-disabled';
+
+                                    return `
+                                        <div class="flex items-center justify-center gap-3">
+                                            <button
+                                                ${onclick}="setResultsView('average')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Total
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('userVotes')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                By User
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('byVoter')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Average
+                                            </button>
+                                        </div>
+                                    `;
+                                })()}
                                 <!-- Second row: Action buttons (only show if user has voted and contest is not locked) -->
                                 ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
                                     <div class="flex items-center justify-center gap-3">
@@ -9242,25 +9450,37 @@
                                 ` : ''}
                             </div>
                                 <!-- User selector dropdown for User Votes view -->
-                                ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? `
-                                    <div class="flex justify-center items-center gap-2">
-                                        <label class="text-xs font-medium text-gray-700">Select User:</label>
-                                        <select
-                                            onchange="setResultsView('userVotes', this.value)"
-                                            class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
-                                        >
-                                            ${state.contestVoters.map(voter => {
-                                                const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
-                                                const isCurrent = voter.userId === state.user?.id;
-                                                return `
-                                                    <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
-                                                        ${voter.username}${isCurrent ? ' (You)' : ''}
-                                                    </option>
-                                                `;
-                                            }).join('')}
-                                        </select>
-                                    </div>
-                                ` : ''}
+                                ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? (() => {
+                                    // For hidden results (non-admin/creator), disable user selection
+                                    const canSelectUser = !isPrivate || isAdmin || isCreator;
+                                    if (!canSelectUser) {
+                                        return `
+                                            <div class="flex justify-center items-center gap-2">
+                                                <label class="text-xs font-medium text-gray-700">Viewing: Your Votes Only</label>
+                                                <span class="text-xs text-gray-500">(Results are hidden)</span>
+                                            </div>
+                                        `;
+                                    }
+                                    return `
+                                        <div class="flex justify-center items-center gap-2">
+                                            <label class="text-xs font-medium text-gray-700">Select User:</label>
+                                            <select
+                                                onchange="setResultsView('userVotes', this.value)"
+                                                class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
+                                            >
+                                                ${state.contestVoters.map(voter => {
+                                                    const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
+                                                    const isCurrent = voter.userId === state.user?.id;
+                                                    return `
+                                                        <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
+                                                            ${voter.username}${isCurrent ? ' (You)' : ''}
+                                                        </option>
+                                                    `;
+                                                }).join('')}
+                                            </select>
+                                        </div>
+                                    `;
+                                })() : ''}
                             </div>
 
                         ${state.resultsView !== 'byVoter' ? `
@@ -9585,7 +9805,12 @@
 
                             <div class="space-y-4">
                                 <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
-                                    <h4 class="font-bold text-gray-800 mb-3">Statistics</h4>
+                                    <div class="flex justify-between items-center mb-3">
+                                        <h4 class="font-bold text-gray-800">Statistics</h4>
+                                        <button onclick="showActivityLogs()" class="bg-mauve-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-mauve-600 transition shadow-lg">
+                                            📊 Recent Activity
+                                        </button>
+                                    </div>
                                     <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
@@ -9710,6 +9935,93 @@
                                     </p>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderActivityLogsModal() {
+            if (!state.showActivityLogsModal) return '';
+
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin) return '';
+
+            // Helper function to format timestamp
+            const formatTimestamp = (timestamp) => {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMs / 3600000);
+                const diffDays = Math.floor(diffMs / 86400000);
+
+                if (diffMins < 1) return 'Just now';
+                if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+                if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+                if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+
+                // Full date if older than a week
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+            };
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
+                        <div class="p-6 border-b border-gray-200">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-2xl font-bold text-gray-800">📊 Recent Activity</h3>
+                                <button onclick="closeActivityLogs()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <p class="text-sm text-gray-600 mt-2">Vote submissions from the current week</p>
+                        </div>
+
+                        <div class="p-6 overflow-y-auto flex-1">
+                            ${state.activityLogs.length > 0 ? `
+                                <div class="space-y-3">
+                                    ${state.activityLogs.map(log => `
+                                        <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                                            <img
+                                                src="${log.avatar}"
+                                                alt="${log.username}"
+                                                class="w-12 h-12 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition flex-shrink-0"
+                                                onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
+                                            />
+                                            <div class="flex-1 min-w-0">
+                                                <div
+                                                    class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition truncate"
+                                                    onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
+                                                >
+                                                    ${log.username}
+                                                </div>
+                                                <div class="text-sm text-gray-600 truncate">
+                                                    Voted on: <span class="font-medium">${log.contestTitle}</span>
+                                                </div>
+                                                <div class="text-xs text-gray-500 mt-1">
+                                                    ${formatTimestamp(log.timestamp)}
+                                                </div>
+                                            </div>
+                                            <button
+                                                onclick="window.location.hash='contest=${log.contestId}'; closeActivityLogs();"
+                                                class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition flex-shrink-0"
+                                            >
+                                                View Contest
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Recent Activity</h3>
+                                    <p class="text-gray-600">No votes have been submitted this week yet.</p>
+                                </div>
+                            `}
                         </div>
                     </div>
                 </div>
@@ -10026,26 +10338,38 @@
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <!-- First row: View tabs -->
-                                <div class="flex items-center justify-center gap-3">
-                                    <button
-                                        onclick="setResultsView('average')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Total
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('userVotes')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        By User
-                                    </button>
-                                    <button
-                                        onclick="setResultsView('byVoter')"
-                                        class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'}"
-                                    >
-                                        Average
-                                    </button>
-                                </div>
+                                ${(() => {
+                                    // For hidden results (non-admin/creator), disable tab switching
+                                    const canSwitchTabs = !isPrivate || isAdmin || isCreator;
+                                    const disabledClass = canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed';
+                                    const onclick = canSwitchTabs ? 'onclick' : 'data-disabled';
+
+                                    return `
+                                        <div class="flex items-center justify-center gap-3">
+                                            <button
+                                                ${onclick}="setResultsView('average')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'average' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Total
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('userVotes')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                By User
+                                            </button>
+                                            <button
+                                                ${onclick}="setResultsView('byVoter')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'byVoter' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Average
+                                            </button>
+                                        </div>
+                                    `;
+                                })()}
                                 <!-- Revote button row -->
                                 <div class="flex items-center justify-center gap-3">
                                     <button
@@ -10277,7 +10601,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
@@ -10308,6 +10632,9 @@
         window.startVoting = startVoting;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
+        window.adminViewResults = adminViewResults;
+        window.adminViewMergerResults = adminViewMergerResults;
+        window.adminViewExtractResults = adminViewExtractResults;
         window.startRevote = startRevote;
         window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
@@ -10356,6 +10683,8 @@
         window.showAppSettings = showAppSettings;
         window.closeAppSettings = closeAppSettings;
         window.toggleAppSetting = toggleAppSetting;
+        window.showActivityLogs = showActivityLogs;
+        window.closeActivityLogs = closeActivityLogs;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
