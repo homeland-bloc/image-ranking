@@ -3837,6 +3837,70 @@
             render();
         }
 
+        // Admin bypass functions - allow viewing results without voting requirement
+        async function adminViewResults(contest) {
+            setLoading('Loading results...');
+            try {
+                state.currentContest = contest;
+                state.votes = {};
+                await loadResults();
+                state.showMyVotes = false;
+                state.view = 'results';
+                window.location.hash = `contest=${contest.id}`;
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error loading results:', error);
+                clearLoading();
+                showAlert('Error loading results: ' + error.message, '❌');
+            }
+        }
+
+        async function adminViewMergerResults(mergerId) {
+            setLoading('Loading merger results...');
+            try {
+                const merger = state.mergers.find(m => m.id === mergerId);
+                if (!merger) {
+                    showAlert('Merger not found', '❌');
+                    clearLoading();
+                    return;
+                }
+
+                state.currentMergerId = mergerId;
+                state.mergerContestIds = merger.contestIds;
+                state.votes = {};
+                await loadMergedResults(mergerId);
+                state.view = 'mergedResults';
+                window.location.hash = `merger=${mergerId}`;
+                clearLoading();
+                render();
+            } catch (error) {
+                console.error('Error loading merger results:', error);
+                clearLoading();
+                showAlert('Error loading merger results: ' + error.message, '❌');
+            }
+        }
+
+        async function adminViewExtractResults(extractId) {
+            setLoading('Loading extract results...');
+            try {
+                const extract = state.extracts.find(e => e.id === extractId);
+                if (!extract) {
+                    showAlert('Extract not found', '❌');
+                    clearLoading();
+                    return;
+                }
+
+                // Navigate to the extract's results view
+                await viewExtractResults(extractId);
+                clearLoading();
+            } catch (error) {
+                console.error('Error loading extract results:', error);
+                clearLoading();
+                showAlert('Error loading extract results: ' + error.message, '❌');
+            }
+        }
+
         function startRevote() {
             // Show confirmation modal
             state.modal = {
@@ -8249,6 +8313,16 @@
                                                 ${item.resultsPublic !== false ? '👁️ Public' : '🔒 Private'}
                                             </button>
                                         </div>
+                                        <!-- View Results Button (Bypass Voting) -->
+                                        <button
+                                            onclick="${itemType === 'merger' ? `adminViewMergerResults('${item.id}')` : itemType === 'extract' ? `adminViewExtractResults('${item.id}')` : `adminViewResults(${safeStringify(item)})`}; closeContestInfoModal();"
+                                            class="w-full px-4 py-2 bg-gradient-to-r from-mauve-500 to-mauve-600 text-white rounded-lg font-semibold hover:from-mauve-600 hover:to-mauve-700 transition text-sm flex items-center justify-center gap-2"
+                                        >
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                            </svg>
+                                            View Results (Bypass Voting)
+                                        </button>
                                         <!-- Edit Extract Button (Extract Only) -->
                                         ${itemType === 'extract' ? `
                                             <button
@@ -10488,6 +10562,9 @@
         window.startVoting = startVoting;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
+        window.adminViewResults = adminViewResults;
+        window.adminViewMergerResults = adminViewMergerResults;
+        window.adminViewExtractResults = adminViewExtractResults;
         window.startRevote = startRevote;
         window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
