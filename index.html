@@ -3689,19 +3689,17 @@
 
         async function loadActivityLogs() {
             try {
-                // Get the start of current week (Monday)
+                // Get the last 7 days (today minus 7 days)
                 const now = new Date();
-                const currentDay = now.getDay();
-                const diff = currentDay === 0 ? -6 : 1 - currentDay; // If Sunday (0), go back 6 days, else go back to Monday
-                const monday = new Date(now);
-                monday.setDate(now.getDate() + diff);
-                monday.setHours(0, 0, 0, 0);
-                const weekStart = monday.toISOString();
-                console.log('Recent Activity - Week Start:', weekStart, '| Current Date:', now.toISOString());
+                const weekStart = new Date(now);
+                weekStart.setDate(now.getDate() - 7);
+                weekStart.setHours(0, 0, 0, 0);
+                const weekStartISO = weekStart.toISOString();
+                console.log('Recent Activity - Week Start:', weekStartISO, '| Current Date:', now.toISOString());
 
-                // Query votes from the current week
+                // Query votes from the last 7 days
                 const votesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStart}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3711,9 +3709,9 @@
                     }
                 );
 
-                // Query contest creations from the current week
+                // Query contest creations from the last 7 days
                 const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStart}&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3723,9 +3721,9 @@
                     }
                 );
 
-                // Query merger creations from the current week
+                // Query merger creations from the last 7 days
                 const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStart}&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3735,9 +3733,9 @@
                     }
                 );
 
-                // Query extract creations from the current week
+                // Query extract creations from the last 7 days
                 const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStart}&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -10379,19 +10377,16 @@
                 }
             };
 
-            // Calculate current week range (Monday to today, not future days)
+            // Calculate last 7 days range (7 days ago to today)
             const now = new Date();
-            const currentDay = now.getDay();
-            const diff = currentDay === 0 ? -6 : 1 - currentDay;
-            const monday = new Date(now);
-            monday.setDate(now.getDate() + diff);
-            monday.setHours(0, 0, 0, 0);
+            const weekStart = new Date(now);
+            weekStart.setDate(now.getDate() - 7);
 
             const formatDate = (date) => {
                 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                 return `${months[date.getMonth()]} ${date.getDate()}`;
             };
-            const weekRange = `${formatDate(monday)} - ${formatDate(now)}, ${now.getFullYear()}`;
+            const weekRange = `${formatDate(weekStart)} - ${formatDate(now)}, ${now.getFullYear()}`;
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
