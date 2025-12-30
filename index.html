@@ -343,6 +343,7 @@
             showActivityLogsModal: false, // Show activity logs modal (admin only)
             activityLogs: [], // Recent vote submission activity
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
+            showFilters: false, // Toggle for search/sort/filter section
             filters: {
                 createdBy: null,           // Username or null
                 sortBy: 'newest',          // 'newest', 'oldest', 'mostVoted', 'leastVoted', etc.
@@ -524,38 +525,27 @@
                 const isExtract = state.currentContest.isExtract === true;
 
                 if (isExtract) {
-                    // For extracts, query votes from source contest(s)
+                    // For extracts, query votes from source contest(s) with pagination
                     const extractImageIds = state.currentContest.extractImageIds || [];
 
                     if (state.currentContest.extractSourceType === 'contest') {
-                        // Query votes from source contest, filtering by extract image IDs
+                        // Query votes from source contest with pagination, filtering by extract image IDs
                         const contestId = state.currentContest.extractSourceContestId;
-                        const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                                'Pragma': 'no-cache',
-                                'Expires': '0'
-                            }
-                        });
-                        const votes = await response.json();
+                        const votes = await fetchAllVotesPaginated(
+                            `contest_id=eq.${contestId}`,
+                            '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
+                        );
                         allVotes = Array.isArray(votes) ? votes.filter(v => extractImageIds.includes(v.image_id)) : [];
                     } else if (state.currentContest.extractSourceType === 'merger') {
-                        // Query votes from all merged contests, filtering by extract image IDs
+                        // Query votes from all merged contests with pagination, filtering by extract image IDs
                         const mergerId = state.currentContest.extractSourceMergerId;
                         const merger = state.mergers.find(m => m.id === mergerId);
                         if (merger && merger.contestIds) {
                             const votesPromises = merger.contestIds.map(contestId =>
-                                fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                                    headers: {
-                                        'apikey': SUPABASE_ANON_KEY,
-                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                                        'Pragma': 'no-cache',
-                                        'Expires': '0'
-                                    }
-                                }).then(r => r.json())
+                                fetchAllVotesPaginated(
+                                    `contest_id=eq.${contestId}`,
+                                    '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
+                                )
                             );
                             const votesArrays = await Promise.all(votesPromises);
                             const combinedVotes = votesArrays.flat();
@@ -563,17 +553,11 @@
                         }
                     }
                 } else {
-                    // Regular contest - query votes normally
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                            'Pragma': 'no-cache',
-                            'Expires': '0'
-                        }
-                    });
-                    allVotes = await response.json();
+                    // Regular contest - query votes with pagination
+                    allVotes = await fetchAllVotesPaginated(
+                        `contest_id=eq.${state.currentContest.id}`,
+                        '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
+                    );
                 }
 
                 console.log('🔍 DEBUG: Fetched votes:', allVotes);
@@ -3637,6 +3621,15 @@
             }
         }
 
+        function togglePin(event, itemType, itemId, isPinned) {
+            event.stopPropagation();
+            if (isPinned) {
+                unpinItem(itemType, itemId);
+            } else {
+                pinItem(itemType, itemId);
+            }
+        }
+
         async function loadAppSettings() {
             try {
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=*`, {
@@ -3697,21 +3690,39 @@
                 const weekStartISO = weekStart.toISOString();
                 console.log('Recent Activity - Week Start:', weekStartISO, '| Current Date:', now.toISOString());
 
-                // Query votes from the last 7 days
-                const votesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                // Query votes from the last 7 days with pagination (2000 row limit per query)
+                let votes = [];
+                let offset = 0;
+                const limit = 2000;
+                while (true) {
+                    const votesResponse = await fetch(
+                        `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&limit=${limit}&offset=${offset}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
+                    );
+
+                    if (!votesResponse.ok) {
+                        console.error('Votes fetch failed:', votesResponse.status, votesResponse.statusText);
+                        throw new Error('Failed to fetch vote activity logs');
                     }
-                );
+
+                    const batch = await votesResponse.json();
+                    votes.push(...batch);
+
+                    // If we got less than the limit, we've fetched all data
+                    if (batch.length < limit) break;
+
+                    offset += limit;
+                }
 
                 // Query contest creations from the last 7 days
                 const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3723,7 +3734,7 @@
 
                 // Query merger creations from the last 7 days
                 const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3735,7 +3746,7 @@
 
                 // Query extract creations from the last 7 days
                 const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3745,12 +3756,6 @@
                     }
                 );
 
-                if (!votesResponse.ok) {
-                    console.error('Votes fetch failed:', votesResponse.status, votesResponse.statusText);
-                    throw new Error('Failed to fetch vote activity logs');
-                }
-
-                const votes = await votesResponse.json();
                 const contests = contestsResponse.ok ? await contestsResponse.json() : [];
                 const mergers = mergersResponse.ok ? await mergersResponse.json() : [];
                 const extracts = extractsResponse.ok ? await extractsResponse.json() : [];
@@ -8159,55 +8164,68 @@
                         </div>
                     </div>
 
-                    <div class="bg-white rounded-lg shadow-md p-3 mb-4">
-                        <div class="mb-3">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
-                            <div class="flex gap-2">
-                                <input
-                                    id="search-input"
-                                    type="text"
-                                    value="${state.filters.searchQuery || ''}"
-                                    onkeypress="if(event.key==='Enter') applySearch()"
-                                    placeholder="Search by contest title or creator name..."
-                                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
-                                />
-                                <button
-                                    onclick="applySearch()"
-                                    class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition"
-                                >
-                                    Search
-                                </button>
-                            </div>
-                        </div>
-                        <div class="flex gap-3 flex-wrap">
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
-                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
-                                <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
-                                <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
-                                <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
-                                <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
-                                <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
-                            </select>
-                        </div>
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
-                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
-                                ${uniqueCreators.map(creator => `
-                                    <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
-                                `).join('')}
-                            </select>
-                        </div>
-                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
-                            <div class="flex items-end">
-                                <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
-                                    Clear All Filters
-                                </button>
+                    <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
+                        <button
+                            onclick="state.showFilters = !state.showFilters; render();"
+                            class="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-sm"
+                        >
+                            <span class="font-medium text-gray-700">🔍 Search & Filter</span>
+                            <svg class="w-4 h-4 text-gray-500 transition-transform ${state.showFilters ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                        ${state.showFilters ? `
+                            <div class="p-3 border-t border-gray-200">
+                                <div class="mb-3">
+                                    <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
+                                    <div class="flex gap-2">
+                                        <input
+                                            id="search-input"
+                                            type="text"
+                                            value="${state.filters.searchQuery || ''}"
+                                            onkeypress="if(event.key==='Enter') applySearch()"
+                                            placeholder="Search by contest title or creator name..."
+                                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
+                                        />
+                                        <button
+                                            onclick="applySearch()"
+                                            class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition"
+                                        >
+                                            Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="flex gap-3 flex-wrap">
+                                <div class="flex-1 min-w-[200px]">
+                                    <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
+                                    <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                        <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
+                                        <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
+                                        <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
+                                        <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
+                                        <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
+                                        <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[200px]">
+                                    <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
+                                    <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                        <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
+                                        ${uniqueCreators.map(creator => `
+                                            <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
+                                        `).join('')}
+                                    </select>
+                                </div>
+                                ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
+                                    <div class="flex items-end">
+                                        <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                            Clear All Filters
+                                        </button>
+                                    </div>
+                                ` : ''}
+                                </div>
                             </div>
                         ` : ''}
-                        </div>
                     </div>
 
                     ${state.filters.createdBy || state.filters.searchQuery ? `
@@ -8955,8 +8973,8 @@
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${isAdmin ? `
                                         <button
-                                            onclick="event.stopPropagation(); ${isPinned ? 'unpinItem' : 'pinItem'}('contest', ${contest.id})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
+                                            onclick="togglePin(event, 'contest', ${contest.id}, ${isPinned})"
+                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
@@ -9074,11 +9092,11 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
-                            onclick="event.stopPropagation(); ${isPinned ? 'unpinItem' : 'pinItem'}('merger', '${merger.id}')"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
@@ -9216,11 +9234,11 @@
             }
 
             return `
-                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
-                            onclick="event.stopPropagation(); ${isPinned ? 'unpinItem' : 'pinItem'}('extract', '${extract.id}')"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
@@ -10344,23 +10362,15 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             if (!isAdmin) return '';
 
-            // Helper function to format timestamp
+            // Helper function to format timestamp with exact date and time
             const formatTimestamp = (timestamp) => {
                 const date = new Date(timestamp);
-                const now = new Date();
-                const diffMs = now - date;
-                const diffMins = Math.floor(diffMs / 60000);
-                const diffHours = Math.floor(diffMs / 3600000);
-                const diffDays = Math.floor(diffMs / 86400000);
-
-                if (diffMins < 1) return 'Just now';
-                if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-                if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-                if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-
-                // Full date if older than a week
                 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+                const month = months[date.getMonth()];
+                const day = date.getDate();
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${month} ${day}, ${hours}:${minutes}`;
             };
 
             // Get event type styling
@@ -10405,45 +10415,39 @@
 
                         <div class="p-6 overflow-y-auto flex-1">
                             ${state.activityLogs.length > 0 ? `
-                                <div class="space-y-3">
+                                <div class="space-y-1">
                                     ${state.activityLogs.map(log => {
                                         const style = getEventStyle(log.type);
                                         const isCreation = log.type !== 'vote';
                                         const itemName = isCreation ? log.itemName : log.contestTitle;
 
                                         return `
-                                            <div class="flex items-center gap-4 p-4 ${style.bg} rounded-lg ${style.hover} transition">
-                                                <div class="text-2xl flex-shrink-0">
+                                            <div class="flex items-center gap-2 p-2 ${style.bg} rounded-lg ${style.hover} transition">
+                                                <div class="text-lg flex-shrink-0">
                                                     ${style.icon}
                                                 </div>
                                                 <img
                                                     src="${log.avatar}"
                                                     alt="${log.username}"
-                                                    class="w-12 h-12 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition flex-shrink-0"
+                                                    class="w-6 h-6 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition flex-shrink-0"
                                                     onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
                                                 />
                                                 <div class="flex-1 min-w-0">
-                                                    <div
-                                                        class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition truncate"
-                                                        onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
-                                                    >
-                                                        ${log.username}
-                                                    </div>
-                                                    <div class="text-sm text-gray-600 truncate">
-                                                        ${style.text}: <span class="font-medium">${itemName}</span>
-                                                    </div>
-                                                    <div class="text-xs text-gray-500 mt-1">
-                                                        ${formatTimestamp(log.timestamp)}
+                                                    <div class="text-sm">
+                                                        <span
+                                                            class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition"
+                                                            onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
+                                                        >
+                                                            ${log.username}
+                                                        </span>
+                                                        <span class="text-gray-600">
+                                                            ${style.text.toLowerCase()}: <span class="font-medium">${itemName}</span>
+                                                        </span>
                                                     </div>
                                                 </div>
-                                                ${log.type === 'vote' || log.type === 'contest' ? `
-                                                    <button
-                                                        onclick="window.location.hash='contest=${log.type === 'vote' ? log.contestId : log.itemId}'; closeActivityLogs();"
-                                                        class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition flex-shrink-0"
-                                                    >
-                                                        View ${log.type === 'vote' ? 'Contest' : 'Contest'}
-                                                    </button>
-                                                ` : ''}
+                                                <div class="text-xs text-gray-500 flex-shrink-0">
+                                                    ${formatTimestamp(log.timestamp)}
+                                                </div>
                                             </div>
                                         `;
                                     }).join('')}
@@ -11179,6 +11183,7 @@
         window.saveEditedExtract = saveEditedExtract;
         window.pinItem = pinItem;
         window.unpinItem = unpinItem;
+        window.togglePin = togglePin;
         window.openManageFoldersModal = openManageFoldersModal;
         window.closeManageFoldersModal = closeManageFoldersModal;
         window.showCreateFolderModal = showCreateFolderModal;
