@@ -3697,21 +3697,39 @@
                 const weekStartISO = weekStart.toISOString();
                 console.log('Recent Activity - Week Start:', weekStartISO, '| Current Date:', now.toISOString());
 
-                // Query votes from the last 7 days
-                const votesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&limit=10000&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                // Query votes from the last 7 days with pagination (2000 row limit per query)
+                let votes = [];
+                let offset = 0;
+                const limit = 2000;
+                while (true) {
+                    const votesResponse = await fetch(
+                        `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&limit=${limit}&offset=${offset}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
+                    );
+
+                    if (!votesResponse.ok) {
+                        console.error('Votes fetch failed:', votesResponse.status, votesResponse.statusText);
+                        throw new Error('Failed to fetch vote activity logs');
                     }
-                );
+
+                    const batch = await votesResponse.json();
+                    votes.push(...batch);
+
+                    // If we got less than the limit, we've fetched all data
+                    if (batch.length < limit) break;
+
+                    offset += limit;
+                }
 
                 // Query contest creations from the last 7 days
                 const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&limit=1000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3723,7 +3741,7 @@
 
                 // Query merger creations from the last 7 days
                 const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&limit=1000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3735,7 +3753,7 @@
 
                 // Query extract creations from the last 7 days
                 const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&limit=1000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3745,12 +3763,6 @@
                     }
                 );
 
-                if (!votesResponse.ok) {
-                    console.error('Votes fetch failed:', votesResponse.status, votesResponse.statusText);
-                    throw new Error('Failed to fetch vote activity logs');
-                }
-
-                const votes = await votesResponse.json();
                 const contests = contestsResponse.ok ? await contestsResponse.json() : [];
                 const mergers = mergersResponse.ok ? await mergersResponse.json() : [];
                 const extracts = extractsResponse.ok ? await extractsResponse.json() : [];
