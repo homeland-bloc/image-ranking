@@ -10379,6 +10379,23 @@
                 }
             };
 
+            // Calculate current week range (Monday to Sunday)
+            const now = new Date();
+            const currentDay = now.getDay();
+            const diff = currentDay === 0 ? -6 : 1 - currentDay;
+            const monday = new Date(now);
+            monday.setDate(now.getDate() + diff);
+            monday.setHours(0, 0, 0, 0);
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+            sunday.setHours(23, 59, 59, 999);
+
+            const formatDate = (date) => {
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${months[date.getMonth()]} ${date.getDate()}`;
+            };
+            const weekRange = `${formatDate(monday)} - ${formatDate(sunday)}, ${now.getFullYear()}`;
+
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
@@ -10391,7 +10408,7 @@
                                     </svg>
                                 </button>
                             </div>
-                            <p class="text-sm text-gray-600 mt-2">Vote submissions and item creations from the current week</p>
+                            <p class="text-sm text-gray-600 mt-2">Vote submissions and item creations from the current week (${weekRange})</p>
                         </div>
 
                         <div class="p-6 overflow-y-auto flex-1">
