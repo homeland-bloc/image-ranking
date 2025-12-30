@@ -5626,12 +5626,13 @@
 
         function handleVote(score) {
             if (state.isAnimating) return;
-            
+
             state.isAnimating = true;
             const currentImage = state.shuffledImages[state.currentImageIndex];
             state.votes[currentImage.id] = score;
+            state.lastClickedImageId = currentImage.id;
             state.showTickAnimation = true;
-            
+
             render();
 
             setTimeout(() => {
@@ -8379,7 +8380,7 @@
                                 </button>
                                 <div class="flex-1">
                                     <h2 class="text-xl font-bold text-white">All Contests</h2>
-                                    <p class="text-xs text-white/90">All votings appear here, from the most recent to the oldest</p>
+                                    <p class="text-xs text-white/90">All votings appear here, from the newest to the oldest</p>
                                 </div>
                             </div>
                             ${!isBanned ? `
@@ -9011,7 +9012,7 @@
 
             if (!userInfo) {
                 return `
-                    <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeUserProfileModal()">
+                    <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeUserProfileModal()">
                         <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 modal-content flex flex-col" onclick="event.stopPropagation()">
                             <div class="text-center">
                                 <p class="text-xl font-bold text-gray-800 mb-4">User Not Found</p>
@@ -9074,7 +9075,7 @@
             const isCurrentUser = state.user && state.user.id === userId;
 
             return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeUserProfileModal()">
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeUserProfileModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
                         <!-- Header -->
                         <div class="p-6 border-b border-gray-200 flex-shrink-0">
