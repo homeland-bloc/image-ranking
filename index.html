@@ -389,6 +389,7 @@
             isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
             showPinIcons: true,  // Whether to show pin icons (admin only, default: true)
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
+            lastClickedImageId: null,  // Last clicked image ID in multi-mode voting
             isLoadingMultiModeImages: false,  // Whether images are loading in multi mode
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0  // Total images to load in multi mode
@@ -4044,9 +4045,22 @@
         }
 
         // Admin bypass functions - allow viewing results without voting requirement
-        async function adminViewResults(contest) {
+        async function adminViewResults(contestOrId) {
             setLoading('Loading results...');
             try {
+                // Handle both contest object and contest ID
+                let contest;
+                if (typeof contestOrId === 'string') {
+                    // It's an ID, look up the contest
+                    contest = state.contests.find(c => c.id === contestOrId);
+                    if (!contest) {
+                        throw new Error('Contest not found');
+                    }
+                } else {
+                    // It's already a contest object
+                    contest = contestOrId;
+                }
+
                 state.currentContest = contest;
                 state.votes = {};
                 await loadResults();
@@ -5663,6 +5677,9 @@
                 return;
             }
 
+            // Track the last clicked image
+            state.lastClickedImageId = imageId;
+
             // Assign the selected score to this image
             state.votes[imageId] = state.selectedScore;
             render();
@@ -5993,8 +6010,18 @@
                     render();
                 }, 500); // Short delay to show loading modal briefly
             } else {
+                // Switching from multi to single mode
                 state.votingMode = newMode;
                 state.selectedScore = null;
+
+                // If there was a last clicked image, navigate to it
+                if (state.lastClickedImageId) {
+                    const imageIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
+                    if (imageIndex !== -1) {
+                        state.currentImageIndex = imageIndex;
+                    }
+                }
+
                 render();
             }
         }
@@ -8836,7 +8863,7 @@
                                         </div>
                                         <!-- View Results Button (Bypass Voting) -->
                                         <button
-                                            onclick="${itemType === 'merger' ? `adminViewMergerResults('${item.id}')` : itemType === 'extract' ? `adminViewExtractResults('${item.id}')` : `adminViewResults(${safeStringify(item)})`}; closeContestInfoModal();"
+                                            onclick="${itemType === 'merger' ? `adminViewMergerResults('${item.id}')` : itemType === 'extract' ? `adminViewExtractResults('${item.id}')` : `adminViewResults('${item.id}')`}; closeContestInfoModal();"
                                             class="w-full px-4 py-2 bg-gradient-to-r from-mauve-500 to-mauve-600 text-white rounded-lg font-semibold hover:from-mauve-600 hover:to-mauve-700 transition text-sm flex items-center justify-center gap-2"
                                         >
                                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
