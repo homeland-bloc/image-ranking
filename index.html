@@ -380,12 +380,17 @@
             currentMergerId: null,  // ID of current merger being voted on
             mergerContestIds: [],  // Array of contest IDs in current merger voting session
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
-            votingMode: 'single',  // 'single' or 'multi' - voting view mode
+            votingMode: 'single',  // 'single' or 'multi' - voting view mode (default: single)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (40-200%)
             showUnifiedCreateModal: false,  // Show unified creation modal
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
-            pinnedItems: []  // Array of pinned items from database
+            pinnedItems: [],  // Array of pinned items from database
+            isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
+            showPinIcons: true,  // Whether to show pin icons (admin only, default: true)
+            isLoadingMultiModeImages: false,  // Whether images are loading in multi mode
+            multiModeLoadedImages: 0,  // Number of images loaded in multi mode
+            multiModeTotalImages: 0  // Total images to load in multi mode
         };
 
         function shuffleArray(array) {
@@ -5971,16 +5976,40 @@
         }
 
         function toggleVotingMode() {
-            state.votingMode = state.votingMode === 'single' ? 'multi' : 'single';
-            // Reset selected score when switching to single mode
-            if (state.votingMode === 'single') {
+            const newMode = state.votingMode === 'single' ? 'multi' : 'single';
+
+            // Show loading modal when switching to multi mode
+            if (newMode === 'multi') {
+                state.isLoadingMultiModeImages = true;
+                state.multiModeLoadedImages = 0;
+                state.multiModeTotalImages = state.shuffledImages.length;
+                state.votingMode = newMode;
+                render();
+
+                // Simulate image loading tracking - hide modal after a short delay
+                setTimeout(() => {
+                    state.isLoadingMultiModeImages = false;
+                    render();
+                }, 500); // Short delay to show loading modal briefly
+            } else {
+                state.votingMode = newMode;
                 state.selectedScore = null;
+                render();
             }
-            render();
         }
 
         function toggleFilters() {
             state.showFilters = !state.showFilters;
+            render();
+        }
+
+        function togglePinnedSection() {
+            state.isPinnedSectionExpanded = !state.isPinnedSectionExpanded;
+            render();
+        }
+
+        function togglePinIconsVisibility() {
+            state.showPinIcons = !state.showPinIcons;
             render();
         }
 
@@ -7992,6 +8021,17 @@
             </div>`;
         }
 
+        function renderMultiModeLoadingModal() {
+            if (!state.isLoadingMultiModeImages) return '';
+            return `<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+                <div class="bg-white rounded-lg p-8 flex flex-col items-center max-w-md">
+                    <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-green-600 mb-4"></div>
+                    <h3 class="text-xl font-bold text-gray-800 mb-2">Loading Multi-Mode View</h3>
+                    <p class="text-gray-600 text-center">Preparing ${state.multiModeTotalImages} images...</p>
+                </div>
+            </div>`;
+        }
+
         function renderHeader() {
             const showBackButton = state.view === 'results' || state.view === 'vote' || state.view === 'mergedResults' || state.view === 'createExtract' || state.view === 'editExtract';
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -8016,8 +8056,8 @@
                         </div>
 
                         ${isVoting ? `
-                            <!-- Voting Mode Toggle Switch (centered) -->
-                            <div class="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5">
+                            <!-- Voting Mode Toggle Switch (centered on desktop, right-aligned on mobile) -->
+                            <div class="sm:absolute sm:left-1/2 sm:transform sm:-translate-x-1/2 ml-auto flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5">
                                 <button
                                     onclick="toggleVotingMode()"
                                     class="flex items-center gap-2 focus:outline-none"
@@ -8211,20 +8251,82 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="flex justify-between items-center mb-4 gap-2 flex-wrap">
-                        <h2 class="text-2xl font-bold text-gray-800">All Contests</h2>
-                        <div class="flex gap-2 flex-wrap">
-                            ${isBanned ? `
-                                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
-                                    🚫 Your account has been restricted. Contact admin.
+                    ${(() => {
+                        // PINNED ITEMS SECTION
+                        const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+
+                        // Create array of pinned items with their data and timestamp, sorted by timestamp
+                        const allPinnedItems = state.pinnedItems
+                            .map(p => {
+                                let item = null;
+                                if (p.item_type === 'contest') {
+                                    item = state.contests.find(c => c.id === p.item_id);
+                                } else if (p.item_type === 'merger') {
+                                    item = state.mergers.find(m => m.id === p.item_id);
+                                } else if (p.item_type === 'extract') {
+                                    item = state.extracts.find(e => e.id === p.item_id);
+                                }
+                                return item ? { item, type: p.item_type, pinnedAt: p.pinned_at } : null;
+                            })
+                            .filter(Boolean)
+                            // Sort by pinned timestamp (most recent first)
+                            .sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
+
+                        if (allPinnedItems.length > 0) {
+                            const displayItems = state.isPinnedSectionExpanded ? allPinnedItems : allPinnedItems.slice(0, 3);
+
+                            return `
+                                <div class="mb-4">
+                                    <div class="bg-gradient-to-r from-red-600 to-red-700 px-4 py-3 rounded-lg shadow-lg mb-3">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-3 flex-1">
+                                                <button
+                                                    onclick="togglePinnedSection()"
+                                                    class="text-white hover:bg-white/20 rounded-lg p-1 transition"
+                                                >
+                                                    <svg class="w-5 h-5 transition-transform ${state.isPinnedSectionExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                    </svg>
+                                                </button>
+                                                <div class="flex-1">
+                                                    <h3 class="text-lg font-bold text-white">📌 Pinned</h3>
+                                                    <p class="text-xs text-white/90">Featured votings appear here</p>
+                                                </div>
+                                            </div>
+                                            ${isAdmin ? `
+                                                <div class="flex items-center gap-2 ml-2">
+                                                    <span class="text-xs text-white/90 whitespace-nowrap">Show Pin Icons</span>
+                                                    <button
+                                                        onclick="togglePinIconsVisibility()"
+                                                        class="relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${state.showPinIcons ? 'bg-white' : 'bg-white/30'}"
+                                                    >
+                                                        <span class="inline-block w-4 h-4 transform transition-transform ${state.showPinIcons ? 'translate-x-6 bg-red-600' : 'translate-x-1 bg-white'} rounded-full shadow-md"></span>
+                                                    </button>
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                                        ${displayItems.map(({ item, type }) => {
+                                            if (type === 'contest') return renderContestCard(item, true);
+                                            if (type === 'merger') return renderMergerCard(item, true);
+                                            if (type === 'extract') return renderExtractCard(item, true);
+                                            return '';
+                                        }).join('')}
+                                    </div>
+                                    ${allPinnedItems.length > 3 && !state.isPinnedSectionExpanded ? `
+                                        <button
+                                            onclick="togglePinnedSection()"
+                                            class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 hover:bg-red-50 rounded-lg transition"
+                                        >
+                                            Show ${allPinnedItems.length - 3} more pinned items
+                                        </button>
+                                    ` : ''}
                                 </div>
-                            ` : `
-                                <button onclick="openUnifiedCreateModal()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition shadow-lg text-sm whitespace-nowrap">
-                                    + Create
-                                </button>
-                            `}
-                        </div>
-                    </div>
+                            `;
+                        }
+                        return '';
+                    })()}
 
                     <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
                         <button
@@ -8308,47 +8410,25 @@
                         </div>
                     ` : ''}
 
-                    ${(() => {
-                        // PINNED ITEMS SECTION
-                        const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-
-                        // Create array of pinned items with their data and timestamp, sorted by timestamp
-                        const allPinnedItems = state.pinnedItems
-                            .map(p => {
-                                let item = null;
-                                if (p.item_type === 'contest') {
-                                    item = state.contests.find(c => c.id === p.item_id);
-                                } else if (p.item_type === 'merger') {
-                                    item = state.mergers.find(m => m.id === p.item_id);
-                                } else if (p.item_type === 'extract') {
-                                    item = state.extracts.find(e => e.id === p.item_id);
-                                }
-                                return item ? { item, type: p.item_type, pinnedAt: p.pinned_at } : null;
-                            })
-                            .filter(Boolean)
-                            // Sort by pinned timestamp (most recent first)
-                            .sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
-
-                        if (allPinnedItems.length > 0) {
-                            return `
-                                <div class="bg-mauve-200 rounded-lg p-4 mb-4 border border-mauve-400">
-                                    <div class="bg-mauve-300 px-3 py-2 rounded-t-lg mb-3">
-                                        <h3 class="text-lg font-bold text-gray-800">📌 Pinned</h3>
-                                        <p class="text-xs text-gray-600">Featured items appear here</p>
+                    <div class="bg-gradient-to-r from-green-600 to-green-700 px-4 py-3 rounded-lg shadow-lg mb-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1">
+                                <h2 class="text-xl font-bold text-white">All Contests</h2>
+                                <p class="text-xs text-white/90">All votings appear here</p>
+                            </div>
+                            <div class="flex gap-2 flex-wrap">
+                                ${isBanned ? `
+                                    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
+                                        🚫 Your account has been restricted. Contact admin.
                                     </div>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        ${allPinnedItems.map(({ item, type }) => {
-                                            if (type === 'contest') return renderContestCard(item, true);
-                                            if (type === 'merger') return renderMergerCard(item, true);
-                                            if (type === 'extract') return renderExtractCard(item, true);
-                                            return '';
-                                        }).join('')}
-                                    </div>
-                                </div>
-                            `;
-                        }
-                        return '';
-                    })()}
+                                ` : `
+                                    <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
+                                        + Create
+                                    </button>
+                                `}
+                            </div>
+                        </div>
+                    </div>
 
                     ${(() => {
                         // Combine filtered contests, mergers, and extracts into a unified list
@@ -9042,11 +9122,11 @@
                             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
                             return `
-                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                                    ${isAdmin ? `
+                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative border-2 ${isPinned ? 'border-gray-400' : 'border-gray-300'}">
+                                    ${isAdmin && state.showPinIcons ? `
                                         <button
                                             onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
@@ -9165,10 +9245,10 @@
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    ${isAdmin ? `
+                    ${isAdmin && state.showPinIcons ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
@@ -9307,10 +9387,10 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    ${isAdmin ? `
+                    ${isAdmin && state.showPinIcons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
@@ -9543,9 +9623,9 @@
                                 <label class="text-sm font-medium text-gray-700 mb-2 block">Image Scale</label>
                                 <div class="flex items-center gap-2">
                                     <button
-                                        onclick="adjustMultiVotingImageScale(-10)"
+                                        onclick="adjustMultiVotingImageScale(-1)"
                                         class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                        title="Decrease scale"
+                                        title="Decrease scale by 1%"
                                     >−</button>
                                     <input
                                         type="range"
@@ -9556,9 +9636,9 @@
                                         class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
                                     />
                                     <button
-                                        onclick="adjustMultiVotingImageScale(10)"
+                                        onclick="adjustMultiVotingImageScale(1)"
                                         class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
-                                        title="Increase scale"
+                                        title="Increase scale by 1%"
                                     >+</button>
                                     <span class="text-sm font-medium text-gray-700 w-12">${imageScale}%</span>
                                 </div>
@@ -9571,12 +9651,13 @@
                                 ${state.shuffledImages.map((image, idx) => {
                                     const currentVote = state.votes[image.id];
                                     const isHoverable = state.selectedScore !== null;
+                                    const borderColor = currentVote ? getScoreColor(currentVote) : 'transparent';
                                     return `
                                         <div class="relative" style="height: ${imageHeight}px;">
                                             <div
-                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''} ${currentVote ? 'border-green-400' : 'border-transparent'}"
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
                                                 onclick="voteImageMulti('${image.id}')"
-                                                style="height: ${imageHeight}px;"
+                                                style="height: ${imageHeight}px; border-color: ${borderColor};"
                                             >
                                                 <img src="${image.url}" alt="Image ${idx + 1}" class="h-full w-auto object-cover" />
 
@@ -9599,7 +9680,19 @@
                 <!-- Fixed bottom voting panel -->
                 <div class="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-300 shadow-2xl z-50">
                     <div class="max-w-4xl mx-auto px-4 py-4">
-                        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <!-- Mobile layout: stacked -->
+                        <div class="flex flex-col sm:hidden items-center justify-center gap-4">
+                            <!-- Info label -->
+                            ${state.selectedScore !== null ? `
+                                <span class="text-sm text-gray-600 font-medium">
+                                    Click images to vote <span class="font-bold" style="color: ${getScoreColor(state.selectedScore)}">${state.selectedScore}</span>
+                                </span>
+                            ` : `
+                                <span class="text-sm text-gray-500">
+                                    Select a score below
+                                </span>
+                            `}
+
                             <!-- Score buttons -->
                             <div class="flex gap-2">
                                 ${[1, 2, 3, 4, 5].map(score => {
@@ -9622,18 +9715,56 @@
                                 }).join('')}
                             </div>
 
-                            <!-- Info and Submit -->
-                            <div class="flex items-center gap-4">
+                            <!-- Submit button -->
+                            ${allVoted ? `
+                                <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg whitespace-nowrap">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    Submit Votes
+                                </button>
+                            ` : ''}
+                        </div>
+
+                        <!-- Desktop layout: label left, buttons center, submit right -->
+                        <div class="hidden sm:flex items-center justify-between gap-4">
+                            <!-- Info label (left) -->
+                            <div class="flex-shrink-0">
                                 ${state.selectedScore !== null ? `
                                     <span class="text-sm text-gray-600 font-medium">
                                         Click images to vote <span class="font-bold" style="color: ${getScoreColor(state.selectedScore)}">${state.selectedScore}</span>
                                     </span>
                                 ` : `
                                     <span class="text-sm text-gray-500">
-                                        Select a score above
+                                        Select a score
                                     </span>
                                 `}
+                            </div>
 
+                            <!-- Score buttons (center) -->
+                            <div class="flex gap-2 flex-shrink-0">
+                                ${[1, 2, 3, 4, 5].map(score => {
+                                    const isSelected = state.selectedScore === score;
+                                    return `
+                                        <button
+                                            onclick="toggleScoreSelection(${score})"
+                                            class="w-14 h-14 rounded-full font-bold text-white text-lg shadow-lg hover:scale-110 transition-transform relative ${isSelected ? 'ring-4 ring-offset-2 scale-110' : ''}"
+                                            style="background-color: ${getScoreColor(score)}; ring-color: ${getScoreColor(score)};"
+                                            title="Score ${score}${isSelected ? ' (selected - click images to vote)' : ''}"
+                                        >
+                                            ${score}
+                                            ${isSelected ? `
+                                                <svg class="absolute -top-1 -right-1 w-6 h-6 text-white bg-blue-600 rounded-full p-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                </svg>
+                                            ` : ''}
+                                        </button>
+                                    `;
+                                }).join('')}
+                            </div>
+
+                            <!-- Submit button (right) -->
+                            <div class="flex-shrink-0">
                                 ${allVoted ? `
                                     <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg whitespace-nowrap">
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -11175,7 +11306,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal();
         }
 
         window.login = login;
