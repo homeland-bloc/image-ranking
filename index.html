@@ -3689,18 +3689,17 @@
 
         async function loadActivityLogs() {
             try {
-                // Get the start of current week (Monday)
+                // Get the last 7 days (today minus 7 days)
                 const now = new Date();
-                const currentDay = now.getDay();
-                const diff = currentDay === 0 ? -6 : 1 - currentDay; // If Sunday (0), go back 6 days, else go back to Monday
-                const monday = new Date(now);
-                monday.setDate(now.getDate() + diff);
-                monday.setHours(0, 0, 0, 0);
-                const weekStart = monday.toISOString();
+                const weekStart = new Date(now);
+                weekStart.setDate(now.getDate() - 7);
+                weekStart.setHours(0, 0, 0, 0);
+                const weekStartISO = weekStart.toISOString();
+                console.log('Recent Activity - Week Start:', weekStartISO, '| Current Date:', now.toISOString());
 
-                // Query votes from the current week
+                // Query votes from the last 7 days
                 const votesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStart}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar),contest:contests(title)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3710,9 +3709,9 @@
                     }
                 );
 
-                // Query contest creations from the current week
+                // Query contest creations from the last 7 days
                 const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStart}&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3722,9 +3721,9 @@
                     }
                 );
 
-                // Query merger creations from the current week
+                // Query merger creations from the last 7 days
                 const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStart}&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3734,9 +3733,9 @@
                     }
                 );
 
-                // Query extract creations from the current week
+                // Query extract creations from the last 7 days
                 const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStart}&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -3747,6 +3746,7 @@
                 );
 
                 if (!votesResponse.ok) {
+                    console.error('Votes fetch failed:', votesResponse.status, votesResponse.statusText);
                     throw new Error('Failed to fetch vote activity logs');
                 }
 
@@ -3755,18 +3755,29 @@
                 const mergers = mergersResponse.ok ? await mergersResponse.json() : [];
                 const extracts = extractsResponse.ok ? await extractsResponse.json() : [];
 
+                console.log('Recent Activity Data:', {
+                    votes: votes.length,
+                    contests: contests.length,
+                    mergers: mergers.length,
+                    extracts: extracts.length,
+                    voteSample: votes[0],
+                    contestSample: contests[0]
+                });
+
                 // Group votes by user-contest combination
                 const activityMap = new Map();
                 votes.forEach(vote => {
                     const key = `vote-${vote.user_id}-${vote.contest_id}`;
                     if (!activityMap.has(key) || new Date(vote.created_at) > new Date(activityMap.get(key).timestamp)) {
+                        // Get contest title from state.contests
+                        const contest = state.contests.find(c => c.id === vote.contest_id);
                         activityMap.set(key, {
                             type: 'vote',
                             userId: vote.user_id,
                             username: vote.voter?.username || 'Unknown User',
                             avatar: vote.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${vote.user_id}`,
                             contestId: vote.contest_id,
-                            contestTitle: vote.contest?.title || 'Unknown Contest',
+                            contestTitle: contest?.title || 'Unknown Contest',
                             timestamp: vote.created_at
                         });
                     }
@@ -3815,6 +3826,11 @@
                 state.activityLogs = Array.from(activityMap.values()).sort((a, b) =>
                     new Date(b.timestamp) - new Date(a.timestamp)
                 );
+
+                console.log('Recent Activity - Final count:', state.activityLogs.length, 'activities');
+                if (state.activityLogs.length > 0) {
+                    console.log('Sample activities:', state.activityLogs.slice(0, 3));
+                }
 
                 render();
             } catch (error) {
@@ -7300,8 +7316,8 @@
                                 <label class="text-sm font-medium text-gray-700 mb-2 block">Image Size: ${imageScale}%</label>
                                 <input
                                     type="range"
-                                    min="100"
-                                    max="400"
+                                    min="40"
+                                    max="200"
                                     value="${imageScale}"
                                     oninput="updateExtractImageScale(this.value)"
                                     class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
@@ -7311,17 +7327,19 @@
 
                         <!-- Image Grid -->
                         <div class="p-4">
-                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                            <div class="flex flex-wrap gap-1">
                                 ${sourceImages.map(image => {
                                     const isSelected = (state.extractSelectedImages || []).includes(image.id);
+                                    const baseSize = 150;
+                                    const imageHeight = Math.max(30, Math.min(500, Math.floor(baseSize * (imageScale / 100))));
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleExtractImage(${image.id})"
-                                                style="height: ${imageScale * 1.5}px;"
+                                                style="height: ${imageHeight}px;"
                                             >
-                                                <img src="${image.url}" alt="" class="w-full h-full object-contain" />
+                                                <img src="${image.url}" alt="" class="h-full w-auto object-cover" />
                                                 <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
                                                 ${isSelected ? `
                                                     <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -7412,8 +7430,8 @@
                                 <label class="text-sm font-medium text-gray-700 mb-2 block">Image Size: ${imageScale}%</label>
                                 <input
                                     type="range"
-                                    min="100"
-                                    max="400"
+                                    min="40"
+                                    max="200"
                                     value="${imageScale}"
                                     oninput="updateExtractImageScale(this.value)"
                                     class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
@@ -7423,17 +7441,19 @@
 
                         <!-- Image Grid -->
                         <div class="p-4">
-                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                            <div class="flex flex-wrap gap-1">
                                 ${sourceImages.map(image => {
                                     const isSelected = (state.editExtractSelectedImages || []).includes(image.id);
+                                    const baseSize = 150;
+                                    const imageHeight = Math.max(30, Math.min(500, Math.floor(baseSize * (imageScale / 100))));
                                     return `
                                         <div data-image-id="${image.id}">
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-300'}"
                                                 onclick="toggleEditExtractImage(${image.id})"
-                                                style="height: ${imageScale * 1.5}px;"
+                                                style="height: ${imageHeight}px;"
                                             >
-                                                <img src="${image.url}" alt="" class="w-full h-full object-contain" />
+                                                <img src="${image.url}" alt="" class="h-full w-auto object-cover" />
                                                 <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 ${isSelected ? 'border-blue-500' : 'border-gray-300'}">
                                                 ${isSelected ? `
                                                     <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -8935,22 +8955,22 @@
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${isAdmin ? `
                                         <button
-                                            onclick="event.stopPropagation(); ${isPinned ? `unpinItem('contest', ${contest.id})` : `pinItem('contest', ${contest.id})`}"
-                                            class="absolute top-3 left-3 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition z-10"
+                                            onclick="event.stopPropagation(); ${isPinned ? 'unpinItem' : 'pinItem'}('contest', ${contest.id})"
+                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
                                         </button>
                                     ` : ''}
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-3 ${contest.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                        <div class="absolute top-3 ${isAdmin ? (contest.resultsPublic === false ? 'right-20' : 'right-11') : (contest.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
                                     ${contest.resultsPublic === false ? `
-                                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
@@ -9057,22 +9077,22 @@
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
-                            onclick="event.stopPropagation(); ${isPinned ? `unpinItem('merger', '${merger.id}')` : `pinItem('merger', '${merger.id}')`}"
-                            class="absolute top-3 left-3 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition z-10"
+                            onclick="event.stopPropagation(); ${isPinned ? 'unpinItem' : 'pinItem'}('merger', '${merger.id}')"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${merger.isLocked ? `
-                        <div class="absolute top-3 ${merger.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                        <div class="absolute top-3 ${isAdmin ? (merger.resultsPublic === false ? 'right-20' : 'right-11') : (merger.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${merger.resultsPublic === false ? `
-                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
@@ -9199,22 +9219,22 @@
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
-                            onclick="event.stopPropagation(); ${isPinned ? `unpinItem('extract', '${extract.id}')` : `pinItem('extract', '${extract.id}')`}"
-                            class="absolute top-3 left-3 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition z-10"
+                            onclick="event.stopPropagation(); ${isPinned ? 'unpinItem' : 'pinItem'}('extract', '${extract.id}')"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${extract.isLocked ? `
-                        <div class="absolute top-3 ${extract.resultsPublic === false ? 'right-12' : 'right-3'} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                        <div class="absolute top-3 ${isAdmin ? (extract.resultsPublic === false ? 'right-20' : 'right-11') : (extract.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${extract.resultsPublic === false ? `
-                        <div class="absolute top-3 right-3 bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
@@ -10357,6 +10377,17 @@
                 }
             };
 
+            // Calculate last 7 days range (7 days ago to today)
+            const now = new Date();
+            const weekStart = new Date(now);
+            weekStart.setDate(now.getDate() - 7);
+
+            const formatDate = (date) => {
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return `${months[date.getMonth()]} ${date.getDate()}`;
+            };
+            const weekRange = `${formatDate(weekStart)} - ${formatDate(now)}, ${now.getFullYear()}`;
+
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
@@ -10369,7 +10400,7 @@
                                     </svg>
                                 </button>
                             </div>
-                            <p class="text-sm text-gray-600 mt-2">Vote submissions and item creations from the current week</p>
+                            <p class="text-sm text-gray-600 mt-2">Vote submissions and item creations from the current week (${weekRange})</p>
                         </div>
 
                         <div class="p-6 overflow-y-auto flex-1">
