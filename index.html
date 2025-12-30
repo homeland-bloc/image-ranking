@@ -525,38 +525,27 @@
                 const isExtract = state.currentContest.isExtract === true;
 
                 if (isExtract) {
-                    // For extracts, query votes from source contest(s)
+                    // For extracts, query votes from source contest(s) with pagination
                     const extractImageIds = state.currentContest.extractImageIds || [];
 
                     if (state.currentContest.extractSourceType === 'contest') {
-                        // Query votes from source contest, filtering by extract image IDs
+                        // Query votes from source contest with pagination, filtering by extract image IDs
                         const contestId = state.currentContest.extractSourceContestId;
-                        const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                                'Pragma': 'no-cache',
-                                'Expires': '0'
-                            }
-                        });
-                        const votes = await response.json();
+                        const votes = await fetchAllVotesPaginated(
+                            `contest_id=eq.${contestId}`,
+                            '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
+                        );
                         allVotes = Array.isArray(votes) ? votes.filter(v => extractImageIds.includes(v.image_id)) : [];
                     } else if (state.currentContest.extractSourceType === 'merger') {
-                        // Query votes from all merged contests, filtering by extract image IDs
+                        // Query votes from all merged contests with pagination, filtering by extract image IDs
                         const mergerId = state.currentContest.extractSourceMergerId;
                         const merger = state.mergers.find(m => m.id === mergerId);
                         if (merger && merger.contestIds) {
                             const votesPromises = merger.contestIds.map(contestId =>
-                                fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${contestId}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                                    headers: {
-                                        'apikey': SUPABASE_ANON_KEY,
-                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                                        'Pragma': 'no-cache',
-                                        'Expires': '0'
-                                    }
-                                }).then(r => r.json())
+                                fetchAllVotesPaginated(
+                                    `contest_id=eq.${contestId}`,
+                                    '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
+                                )
                             );
                             const votesArrays = await Promise.all(votesPromises);
                             const combinedVotes = votesArrays.flat();
@@ -564,17 +553,11 @@
                         }
                     }
                 } else {
-                    // Regular contest - query votes normally
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=eq.${state.currentContest.id}&limit=2000&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                            'Pragma': 'no-cache',
-                            'Expires': '0'
-                        }
-                    });
-                    allVotes = await response.json();
+                    // Regular contest - query votes with pagination
+                    allVotes = await fetchAllVotesPaginated(
+                        `contest_id=eq.${state.currentContest.id}`,
+                        '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
+                    );
                 }
 
                 console.log('🔍 DEBUG: Fetched votes:', allVotes);
