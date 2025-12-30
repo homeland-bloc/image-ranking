@@ -377,6 +377,8 @@
             mergerContestIds: [],  // Array of contest IDs in current merger voting session
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
             votingMode: 'single',  // 'single' or 'multi' - voting view mode
+            selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
+            multiVotingImageScale: 100,  // Image scale for multi-mode voting (40-200%)
             showUnifiedCreateModal: false,  // Show unified creation modal
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: []  // Array of pinned items from database
@@ -3562,6 +3564,16 @@
                 return;
             }
 
+            // Check if item is already pinned
+            const alreadyPinned = state.pinnedItems.some(
+                item => item.item_type === itemType && item.item_id === itemId
+            );
+
+            if (alreadyPinned) {
+                showToast('Item is already pinned', 'info');
+                return;
+            }
+
             try {
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items`, {
                     method: 'POST',
@@ -5620,6 +5632,32 @@
             render();
         }
 
+        function toggleScoreSelection(score) {
+            // Toggle score selection: if already selected, unselect it
+            if (state.selectedScore === score) {
+                state.selectedScore = null;
+            } else {
+                state.selectedScore = score;
+            }
+            render();
+        }
+
+        function voteImageMulti(imageId) {
+            // If no score is selected, do nothing
+            if (state.selectedScore === null) {
+                return;
+            }
+
+            // Assign the selected score to this image
+            state.votes[imageId] = state.selectedScore;
+            render();
+        }
+
+        function updateMultiVotingImageScale(value) {
+            state.multiVotingImageScale = parseInt(value, 10);
+            render();
+        }
+
         function cancelVoting() {
             showConfirm(
                 'Your progress will be lost if you proceed. Are you sure?',
@@ -5919,6 +5957,15 @@
 
         function toggleVotingMode() {
             state.votingMode = state.votingMode === 'single' ? 'multi' : 'single';
+            // Reset selected score when switching to single mode
+            if (state.votingMode === 'single') {
+                state.selectedScore = null;
+            }
+            render();
+        }
+
+        function toggleFilters() {
+            state.showFilters = !state.showFilters;
             render();
         }
 
@@ -8166,7 +8213,7 @@
 
                     <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
                         <button
-                            onclick="state.showFilters = !state.showFilters; render();"
+                            onclick="toggleFilters()"
                             class="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-sm"
                         >
                             <span class="font-medium text-gray-700">🔍 Search & Filter</span>
@@ -8262,8 +8309,8 @@
 
                         if (allPinnedItems.length > 0) {
                             return `
-                                <div class="bg-red-50 rounded-lg p-4 mb-4 border border-red-200">
-                                    <div class="bg-red-100 px-3 py-2 rounded-t-lg mb-3">
+                                <div class="bg-red-100 rounded-lg p-4 mb-4 border border-red-300">
+                                    <div class="bg-red-200 px-3 py-2 rounded-t-lg mb-3">
                                         <h3 class="text-lg font-bold text-gray-800">📌 Pinned</h3>
                                         <p class="text-xs text-gray-600">Featured items appear here</p>
                                     </div>
@@ -8974,7 +9021,7 @@
                                     ${isAdmin ? `
                                         <button
                                             onclick="togglePin(event, 'contest', ${contest.id}, ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
@@ -9092,11 +9139,11 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-100/50 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
@@ -9234,11 +9281,11 @@
             }
 
             return `
-                <div class="bg-yellow-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-100/50 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
@@ -9441,8 +9488,13 @@
             const votedCount = state.shuffledImages.filter(img => state.votes[img.id]).length;
             const totalCount = state.shuffledImages.length;
 
+            // Get image scale (use state.imageScale if available, default to 100)
+            const imageScale = state.multiVotingImageScale || 100;
+            const baseSize = 150;
+            const imageHeight = Math.max(30, Math.min(500, Math.floor(baseSize * (imageScale / 100))));
+
             return `
-                <div class="max-w-7xl mx-auto px-3 py-4">
+                <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header with progress -->
                         <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
@@ -9454,72 +9506,99 @@
                             <div class="w-full bg-gray-200 rounded-full h-2">
                                 <div class="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-300" style="width: ${(votedCount / totalCount * 100).toFixed(1)}%"></div>
                             </div>
+
+                            <!-- Image Scale Slider -->
+                            <div class="mt-3">
+                                <label class="text-sm font-medium text-gray-700 mb-2 block">Image Size: ${imageScale}%</label>
+                                <input
+                                    type="range"
+                                    min="40"
+                                    max="200"
+                                    value="${imageScale}"
+                                    oninput="updateMultiVotingImageScale(this.value)"
+                                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                />
+                            </div>
                         </div>
 
-                        <!-- Image grid -->
+                        <!-- Image grid with flex-wrap layout -->
                         <div class="p-4">
-                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                            <div class="flex flex-wrap gap-1">
                                 ${state.shuffledImages.map((image, idx) => {
                                     const currentVote = state.votes[image.id];
+                                    const isHoverable = state.selectedScore !== null;
                                     return `
-                                        <div class="relative group cursor-pointer" onclick="event.stopPropagation(); state.currentImageIndex = ${idx}; toggleVotingMode();">
-                                            <!-- Image container -->
-                                            <div class="relative bg-gray-100 rounded-lg overflow-hidden aspect-square ${currentVote ? 'ring-2 ring-green-500' : 'ring-1 ring-gray-200'}">
-                                                <img
-                                                    src="${image.url}"
-                                                    alt="Image ${idx + 1}"
-                                                    class="w-full h-full object-cover"
-                                                />
-                                                ${currentVote ? `
-                                                    <div class="absolute top-2 left-2 bg-white rounded-full px-2 py-0.5 shadow-md flex items-center gap-1 text-xs">
-                                                        <svg class="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                                        </svg>
-                                                        <span class="font-semibold">${currentVote}</span>
-                                                    </div>
-                                                ` : ''}
+                                        <div class="relative" style="height: ${imageHeight}px;">
+                                            <div
+                                                class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''} ${currentVote ? 'border-green-400' : 'border-transparent'}"
+                                                onclick="voteImageMulti('${image.id}')"
+                                                style="height: ${imageHeight}px;"
+                                            >
+                                                <img src="${image.url}" alt="Image ${idx + 1}" class="h-full w-auto object-cover" />
 
-                                                <!-- Score controls - bottom right -->
-                                                <div class="absolute bottom-1 right-1 flex items-center gap-0.5 bg-white/95 backdrop-blur-sm rounded-lg px-1.5 py-1 shadow-lg" onclick="event.stopPropagation();">
-                                                    <button
-                                                        onclick="event.stopPropagation(); if(state.votes[${image.id}] > 1) { state.votes[${image.id}]--; render(); } else if(state.votes[${image.id}] === 1) { delete state.votes[${image.id}]; render(); }"
-                                                        class="w-6 h-6 rounded flex items-center justify-center hover:bg-gray-100 transition text-gray-700"
-                                                        title="Decrease score"
-                                                    >
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                                                        </svg>
-                                                    </button>
-                                                    <div class="w-8 text-center font-bold text-sm" style="color: ${currentVote ? getScoreColor(currentVote) : '#9CA3AF'}">
-                                                        ${currentVote || '-'}
+                                                <!-- Score indicator circle (top-left) -->
+                                                <div class="absolute top-2 left-2">
+                                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shadow-lg ${currentVote ? '' : 'bg-white text-gray-400'}"
+                                                         style="${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : ''}">
+                                                        ${currentVote || '?'}
                                                     </div>
-                                                    <button
-                                                        onclick="event.stopPropagation(); if(!state.votes[${image.id}]) { state.votes[${image.id}] = 1; render(); } else if(state.votes[${image.id}] < 5) { state.votes[${image.id}]++; render(); }"
-                                                        class="w-6 h-6 rounded flex items-center justify-center hover:bg-gray-100 transition text-gray-700"
-                                                        title="Increase score"
-                                                    >
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-                                                        </svg>
-                                                    </button>
                                                 </div>
                                             </div>
                                         </div>
                                     `;
                                 }).join('')}
                             </div>
+                        </div>
+                    </div>
+                </div>
 
-                            <!-- Submit button -->
-                            ${allVoted ? `
-                                <div class="mt-4 flex justify-center">
-                                    <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg">
+                <!-- Fixed bottom voting panel -->
+                <div class="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-300 shadow-2xl z-50">
+                    <div class="max-w-4xl mx-auto px-4 py-4">
+                        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <!-- Score buttons -->
+                            <div class="flex gap-2">
+                                ${[1, 2, 3, 4, 5].map(score => {
+                                    const isSelected = state.selectedScore === score;
+                                    return `
+                                        <button
+                                            onclick="toggleScoreSelection(${score})"
+                                            class="w-14 h-14 rounded-full font-bold text-white text-lg shadow-lg hover:scale-110 transition-transform relative ${isSelected ? 'ring-4 ring-offset-2 scale-110' : ''}"
+                                            style="background-color: ${getScoreColor(score)}; ring-color: ${getScoreColor(score)};"
+                                            title="Score ${score}${isSelected ? ' (selected - click images to vote)' : ''}"
+                                        >
+                                            ${score}
+                                            ${isSelected ? `
+                                                <svg class="absolute -top-1 -right-1 w-6 h-6 text-white bg-blue-600 rounded-full p-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                </svg>
+                                            ` : ''}
+                                        </button>
+                                    `;
+                                }).join('')}
+                            </div>
+
+                            <!-- Info and Submit -->
+                            <div class="flex items-center gap-4">
+                                ${state.selectedScore !== null ? `
+                                    <span class="text-sm text-gray-600 font-medium">
+                                        Click images to vote <span class="font-bold" style="color: ${getScoreColor(state.selectedScore)}">${state.selectedScore}</span>
+                                    </span>
+                                ` : `
+                                    <span class="text-sm text-gray-500">
+                                        Select a score above
+                                    </span>
+                                `}
+
+                                ${allVoted ? `
+                                    <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg whitespace-nowrap">
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                         </svg>
                                         Submit Votes
                                     </button>
-                                </div>
-                            ` : ''}
+                                ` : ''}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -10377,11 +10456,11 @@
             const getEventStyle = (type) => {
                 switch(type) {
                     case 'contest':
-                        return { bg: 'bg-purple-50', hover: 'hover:bg-purple-100', icon: '🏆', text: 'Created contest' };
+                        return { bg: 'bg-green-100', hover: 'hover:bg-green-200', icon: '🏆', text: 'Created contest' };
                     case 'merger':
-                        return { bg: 'bg-blue-50', hover: 'hover:bg-blue-100', icon: '🔀', text: 'Created merger' };
+                        return { bg: 'bg-blue-100', hover: 'hover:bg-blue-200', icon: '🔀', text: 'Created merger' };
                     case 'extract':
-                        return { bg: 'bg-green-50', hover: 'hover:bg-green-100', icon: '✂️', text: 'Created extract' };
+                        return { bg: 'bg-yellow-100', hover: 'hover:bg-yellow-200', icon: '✂️', text: 'Created extract' };
                     default: // vote
                         return { bg: 'bg-gray-50', hover: 'hover:bg-gray-100', icon: '🗳️', text: 'Voted on' };
                 }
@@ -11110,6 +11189,10 @@
         window.confirmCancelVoting = confirmCancelVoting;
         window.toggleVoteView = toggleVoteView;
         window.toggleVotingMode = toggleVotingMode;
+        window.toggleFilters = toggleFilters;
+        window.toggleScoreSelection = toggleScoreSelection;
+        window.voteImageMulti = voteImageMulti;
+        window.updateMultiVotingImageScale = updateMultiVotingImageScale;
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
