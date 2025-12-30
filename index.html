@@ -128,34 +128,38 @@
             background: transparent;
         }
         input[type="range"]::-webkit-slider-track {
-            height: 6px;
-            border-radius: 3px;
-            background: linear-gradient(to right, rgb(199, 123, 166) 0%, rgb(34, 197, 94) 100%);
+            height: 8px;
+            border-radius: 4px;
+            background: linear-gradient(to right, rgb(180, 90, 145) 0%, rgb(34, 197, 94) 100%);
+            border: 2px solid rgba(0, 0, 0, 0.25);
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
         }
         input[type="range"]::-moz-range-track {
-            height: 6px;
-            border-radius: 3px;
-            background: linear-gradient(to right, rgb(199, 123, 166) 0%, rgb(34, 197, 94) 100%);
+            height: 8px;
+            border-radius: 4px;
+            background: linear-gradient(to right, rgb(180, 90, 145) 0%, rgb(34, 197, 94) 100%);
+            border: 2px solid rgba(0, 0, 0, 0.25);
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
         }
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
             background: white;
-            border: 2px solid rgb(199, 123, 166);
+            border: 3px solid rgb(180, 90, 145);
             cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         input[type="range"]::-moz-range-thumb {
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
             background: white;
-            border: 2px solid rgb(199, 123, 166);
+            border: 3px solid rgb(180, 90, 145);
             cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         .upload-area {
             border: 3px dashed #C77BA6;
@@ -5554,16 +5558,20 @@
 
             // Get source contest or merger
             let sourceImages = [];
+            let resultsPublic = true; // Default to public
             if (extract.sourceType === 'contest') {
                 const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
                 if (sourceContest) {
                     sourceImages = sourceContest.images;
+                    resultsPublic = sourceContest.resultsPublic !== false;
                 }
             } else if (extract.sourceType === 'merger') {
                 const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
                 if (merger) {
                     const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
                     sourceImages = mergedContests.flatMap(c => c.images);
+                    // If any merged contest has private results, the extract is also private
+                    resultsPublic = !mergedContests.some(c => c.resultsPublic === false);
                 }
             }
 
@@ -5583,6 +5591,7 @@
                 createdBy: extract.createdBy,
                 creatorName: extract.creatorName,
                 creatorAvatar: extract.creatorAvatar,
+                resultsPublic: resultsPublic,
                 isExtract: true,
                 extractSourceType: extract.sourceType,
                 extractSourceContestId: extract.sourceContestId,
@@ -5655,6 +5664,12 @@
 
         function updateMultiVotingImageScale(value) {
             state.multiVotingImageScale = parseInt(value, 10);
+            render();
+        }
+
+        function adjustMultiVotingImageScale(delta) {
+            const newScale = Math.max(40, Math.min(200, state.multiVotingImageScale + delta));
+            state.multiVotingImageScale = newScale;
             render();
         }
 
@@ -8296,28 +8311,38 @@
                     ${(() => {
                         // PINNED ITEMS SECTION
                         const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                        const pinnedContests = state.pinnedItems.filter(p => p.item_type === 'contest')
-                            .map(p => state.contests.find(c => c.id === p.item_id))
-                            .filter(Boolean);
-                        const pinnedMergers = state.pinnedItems.filter(p => p.item_type === 'merger')
-                            .map(p => state.mergers.find(m => m.id === p.item_id))
-                            .filter(Boolean);
-                        const pinnedExtracts = state.pinnedItems.filter(p => p.item_type === 'extract')
-                            .map(p => state.extracts.find(e => e.id === p.item_id))
-                            .filter(Boolean);
-                        const allPinnedItems = [...pinnedContests, ...pinnedMergers, ...pinnedExtracts];
+
+                        // Create array of pinned items with their data and timestamp, sorted by timestamp
+                        const allPinnedItems = state.pinnedItems
+                            .map(p => {
+                                let item = null;
+                                if (p.item_type === 'contest') {
+                                    item = state.contests.find(c => c.id === p.item_id);
+                                } else if (p.item_type === 'merger') {
+                                    item = state.mergers.find(m => m.id === p.item_id);
+                                } else if (p.item_type === 'extract') {
+                                    item = state.extracts.find(e => e.id === p.item_id);
+                                }
+                                return item ? { item, type: p.item_type, pinnedAt: p.pinned_at } : null;
+                            })
+                            .filter(Boolean)
+                            // Sort by pinned timestamp (most recent first)
+                            .sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
 
                         if (allPinnedItems.length > 0) {
                             return `
-                                <div class="bg-red-100 rounded-lg p-4 mb-4 border border-red-300">
-                                    <div class="bg-red-200 px-3 py-2 rounded-t-lg mb-3">
+                                <div class="bg-mauve-200 rounded-lg p-4 mb-4 border border-mauve-400">
+                                    <div class="bg-mauve-300 px-3 py-2 rounded-t-lg mb-3">
                                         <h3 class="text-lg font-bold text-gray-800">📌 Pinned</h3>
                                         <p class="text-xs text-gray-600">Featured items appear here</p>
                                     </div>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        ${pinnedContests.map(contest => renderContestCard(contest, true)).join('')}
-                                        ${pinnedMergers.map(merger => renderMergerCard(merger, true)).join('')}
-                                        ${pinnedExtracts.map(extract => renderExtractCard(extract, true)).join('')}
+                                        ${allPinnedItems.map(({ item, type }) => {
+                                            if (type === 'contest') return renderContestCard(item, true);
+                                            if (type === 'merger') return renderMergerCard(item, true);
+                                            if (type === 'extract') return renderExtractCard(item, true);
+                                            return '';
+                                        }).join('')}
                                     </div>
                                 </div>
                             `;
@@ -9020,7 +9045,7 @@
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                                     ${isAdmin ? `
                                         <button
-                                            onclick="togglePin(event, 'contest', ${contest.id}, ${isPinned})"
+                                            onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
                                             class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
@@ -9139,7 +9164,7 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-100/50 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
@@ -9281,7 +9306,7 @@
             }
 
             return `
-                <div class="bg-yellow-100/50 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
@@ -9493,6 +9518,12 @@
             const baseSize = 150;
             const imageHeight = Math.max(30, Math.min(500, Math.floor(baseSize * (imageScale / 100))));
 
+            // Calculate score circle size based on image scale
+            const baseCircleSize = 28; // Base size in pixels (smaller than before)
+            const circleSize = Math.max(16, Math.min(56, Math.floor(baseCircleSize * (imageScale / 100))));
+            const baseFontSize = 14;
+            const fontSize = Math.max(10, Math.min(20, Math.floor(baseFontSize * (imageScale / 100))));
+
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
@@ -9509,15 +9540,28 @@
 
                             <!-- Image Scale Slider -->
                             <div class="mt-3">
-                                <label class="text-sm font-medium text-gray-700 mb-2 block">Image Size: ${imageScale}%</label>
-                                <input
-                                    type="range"
-                                    min="40"
-                                    max="200"
-                                    value="${imageScale}"
-                                    oninput="updateMultiVotingImageScale(this.value)"
-                                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                                />
+                                <label class="text-sm font-medium text-gray-700 mb-2 block">Image Scale</label>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        onclick="adjustMultiVotingImageScale(-10)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Decrease scale"
+                                    >−</button>
+                                    <input
+                                        type="range"
+                                        min="40"
+                                        max="200"
+                                        value="${imageScale}"
+                                        oninput="updateMultiVotingImageScale(this.value)"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                    />
+                                    <button
+                                        onclick="adjustMultiVotingImageScale(10)"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        title="Increase scale"
+                                    >+</button>
+                                    <span class="text-sm font-medium text-gray-700 w-12">${imageScale}%</span>
+                                </div>
                             </div>
                         </div>
 
@@ -9538,8 +9582,8 @@
 
                                                 <!-- Score indicator circle (top-left) -->
                                                 <div class="absolute top-2 left-2">
-                                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shadow-lg ${currentVote ? '' : 'bg-white text-gray-400'}"
-                                                         style="${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : ''}">
+                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg ${currentVote ? '' : 'bg-white text-gray-400'}"
+                                                         style="width: ${circleSize}px; height: ${circleSize}px; font-size: ${fontSize}px; ${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : ''}">
                                                         ${currentVote || '?'}
                                                     </div>
                                                 </div>
@@ -10713,6 +10757,14 @@
             }
 
             const { contestIds, contestTitles, images } = state.mergedResults;
+
+            // Define admin, creator, and privacy status for merged contests
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            const mergedContests = state.contests.filter(c => contestIds.includes(c.id));
+            const merger = state.mergers.find(m => m.id === state.currentMergerId);
+            const isCreator = merger && state.user && state.user.id === merger.createdBy;
+            // Check if any of the merged contests have private results
+            const isPrivate = mergedContests.some(c => c.resultsPublic === false);
 
             // Create results structure similar to single contest
             const mergedResultsData = images.map(img => ({
