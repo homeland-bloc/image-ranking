@@ -3564,6 +3564,16 @@
                 return;
             }
 
+            // Check if item is already pinned
+            const alreadyPinned = state.pinnedItems.some(
+                item => item.item_type === itemType && item.item_id === itemId
+            );
+
+            if (alreadyPinned) {
+                showToast('Item is already pinned', 'info');
+                return;
+            }
+
             try {
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items`, {
                     method: 'POST',
@@ -5954,6 +5964,11 @@
             render();
         }
 
+        function toggleFilters() {
+            state.showFilters = !state.showFilters;
+            render();
+        }
+
         function setResultsView(view, userId = null) {
             state.resultsView = view;
             state.showMyVotes = view === 'userVotes';  // Backwards compatibility
@@ -8198,7 +8213,7 @@
 
                     <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
                         <button
-                            onclick="state.showFilters = !state.showFilters; render();"
+                            onclick="toggleFilters()"
                             class="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-sm"
                         >
                             <span class="font-medium text-gray-700">🔍 Search & Filter</span>
@@ -8294,8 +8309,8 @@
 
                         if (allPinnedItems.length > 0) {
                             return `
-                                <div class="bg-red-50 rounded-lg p-4 mb-4 border border-red-200">
-                                    <div class="bg-red-100 px-3 py-2 rounded-t-lg mb-3">
+                                <div class="bg-red-100 rounded-lg p-4 mb-4 border border-red-300">
+                                    <div class="bg-red-200 px-3 py-2 rounded-t-lg mb-3">
                                         <h3 class="text-lg font-bold text-gray-800">📌 Pinned</h3>
                                         <p class="text-xs text-gray-600">Featured items appear here</p>
                                     </div>
@@ -9006,7 +9021,7 @@
                                     ${isAdmin ? `
                                         <button
                                             onclick="togglePin(event, 'contest', ${contest.id}, ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
@@ -9124,11 +9139,11 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-100/50 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
@@ -9266,11 +9281,11 @@
             }
 
             return `
-                <div class="bg-yellow-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-100/50 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-600 hover:bg-red-700' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
@@ -10441,11 +10456,11 @@
             const getEventStyle = (type) => {
                 switch(type) {
                     case 'contest':
-                        return { bg: 'bg-purple-50', hover: 'hover:bg-purple-100', icon: '🏆', text: 'Created contest' };
+                        return { bg: 'bg-green-100', hover: 'hover:bg-green-200', icon: '🏆', text: 'Created contest' };
                     case 'merger':
-                        return { bg: 'bg-blue-50', hover: 'hover:bg-blue-100', icon: '🔀', text: 'Created merger' };
+                        return { bg: 'bg-blue-100', hover: 'hover:bg-blue-200', icon: '🔀', text: 'Created merger' };
                     case 'extract':
-                        return { bg: 'bg-green-50', hover: 'hover:bg-green-100', icon: '✂️', text: 'Created extract' };
+                        return { bg: 'bg-yellow-100', hover: 'hover:bg-yellow-200', icon: '✂️', text: 'Created extract' };
                     default: // vote
                         return { bg: 'bg-gray-50', hover: 'hover:bg-gray-100', icon: '🗳️', text: 'Voted on' };
                 }
@@ -11174,6 +11189,7 @@
         window.confirmCancelVoting = confirmCancelVoting;
         window.toggleVoteView = toggleVoteView;
         window.toggleVotingMode = toggleVotingMode;
+        window.toggleFilters = toggleFilters;
         window.toggleScoreSelection = toggleScoreSelection;
         window.voteImageMulti = voteImageMulti;
         window.updateMultiVotingImageScale = updateMultiVotingImageScale;
