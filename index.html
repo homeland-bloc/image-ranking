@@ -10379,22 +10379,19 @@
                 }
             };
 
-            // Calculate current week range (Monday to Sunday)
+            // Calculate current week range (Monday to today, not future days)
             const now = new Date();
             const currentDay = now.getDay();
             const diff = currentDay === 0 ? -6 : 1 - currentDay;
             const monday = new Date(now);
             monday.setDate(now.getDate() + diff);
             monday.setHours(0, 0, 0, 0);
-            const sunday = new Date(monday);
-            sunday.setDate(monday.getDate() + 6);
-            sunday.setHours(23, 59, 59, 999);
 
             const formatDate = (date) => {
                 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                 return `${months[date.getMonth()]} ${date.getDate()}`;
             };
-            const weekRange = `${formatDate(monday)} - ${formatDate(sunday)}, ${now.getFullYear()}`;
+            const weekRange = `${formatDate(monday)} - ${formatDate(now)}, ${now.getFullYear()}`;
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
