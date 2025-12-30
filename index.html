@@ -343,6 +343,7 @@
             showActivityLogsModal: false, // Show activity logs modal (admin only)
             activityLogs: [], // Recent vote submission activity
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
+            showFilters: false, // Toggle for search/sort/filter section
             filters: {
                 createdBy: null,           // Username or null
                 sortBy: 'newest',          // 'newest', 'oldest', 'mostVoted', 'leastVoted', etc.
@@ -8180,55 +8181,68 @@
                         </div>
                     </div>
 
-                    <div class="bg-white rounded-lg shadow-md p-3 mb-4">
-                        <div class="mb-3">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
-                            <div class="flex gap-2">
-                                <input
-                                    id="search-input"
-                                    type="text"
-                                    value="${state.filters.searchQuery || ''}"
-                                    onkeypress="if(event.key==='Enter') applySearch()"
-                                    placeholder="Search by contest title or creator name..."
-                                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
-                                />
-                                <button
-                                    onclick="applySearch()"
-                                    class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition"
-                                >
-                                    Search
-                                </button>
-                            </div>
-                        </div>
-                        <div class="flex gap-3 flex-wrap">
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
-                            <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
-                                <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
-                                <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
-                                <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
-                                <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
-                                <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
-                            </select>
-                        </div>
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
-                            <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
-                                <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
-                                ${uniqueCreators.map(creator => `
-                                    <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
-                                `).join('')}
-                            </select>
-                        </div>
-                        ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
-                            <div class="flex items-end">
-                                <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
-                                    Clear All Filters
-                                </button>
+                    <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
+                        <button
+                            onclick="state.showFilters = !state.showFilters; render();"
+                            class="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-sm"
+                        >
+                            <span class="font-medium text-gray-700">🔍 Search & Filter</span>
+                            <svg class="w-4 h-4 text-gray-500 transition-transform ${state.showFilters ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                        ${state.showFilters ? `
+                            <div class="p-3 border-t border-gray-200">
+                                <div class="mb-3">
+                                    <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
+                                    <div class="flex gap-2">
+                                        <input
+                                            id="search-input"
+                                            type="text"
+                                            value="${state.filters.searchQuery || ''}"
+                                            onkeypress="if(event.key==='Enter') applySearch()"
+                                            placeholder="Search by contest title or creator name..."
+                                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none"
+                                        />
+                                        <button
+                                            onclick="applySearch()"
+                                            class="px-4 py-2 bg-mauve-500 text-white rounded-lg text-sm font-semibold hover:bg-mauve-600 transition"
+                                        >
+                                            Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="flex gap-3 flex-wrap">
+                                <div class="flex-1 min-w-[200px]">
+                                    <label class="text-xs font-medium text-gray-700 mb-1 block">Sort By</label>
+                                    <select onchange="setSortBy(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                        <option value="newest" ${state.filters.sortBy === 'newest' || state.filters.sortBy === 'dateDesc' ? 'selected' : ''}>Newest First</option>
+                                        <option value="oldest" ${state.filters.sortBy === 'oldest' || state.filters.sortBy === 'dateAsc' ? 'selected' : ''}>Oldest First</option>
+                                        <option value="titleAsc" ${state.filters.sortBy === 'titleAsc' ? 'selected' : ''}>A-Z</option>
+                                        <option value="titleDesc" ${state.filters.sortBy === 'titleDesc' ? 'selected' : ''}>Z-A</option>
+                                        <option value="imagesDesc" ${state.filters.sortBy === 'imagesDesc' ? 'selected' : ''}>Most Images</option>
+                                        <option value="imagesAsc" ${state.filters.sortBy === 'imagesAsc' ? 'selected' : ''}>Fewest Images</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[200px]">
+                                    <label class="text-xs font-medium text-gray-700 mb-1 block">Filter by Creator</label>
+                                    <select onchange="setFilterCreator(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-mauve-400 focus:outline-none">
+                                        <option value="all" ${state.filters.createdBy === null ? 'selected' : ''}>All Creators</option>
+                                        ${uniqueCreators.map(creator => `
+                                            <option value="${creator.id}" ${state.filters.createdBy === creator.id ? 'selected' : ''}>${creator.name}</option>
+                                        `).join('')}
+                                    </select>
+                                </div>
+                                ${state.filters.createdBy || state.filters.sortBy !== 'newest' || state.filters.searchQuery ? `
+                                    <div class="flex items-end">
+                                        <button onclick="clearAllFilters()" class="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600 transition text-sm">
+                                            Clear All Filters
+                                        </button>
+                                    </div>
+                                ` : ''}
+                                </div>
                             </div>
                         ` : ''}
-                        </div>
                     </div>
 
                     ${state.filters.createdBy || state.filters.searchQuery ? `
@@ -8977,7 +8991,7 @@
                                     ${isAdmin ? `
                                         <button
                                             onclick="togglePin(event, 'contest', ${contest.id}, ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
@@ -9095,11 +9109,11 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
@@ -9237,11 +9251,11 @@
             }
 
             return `
-                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-50/30 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
                     ${isAdmin ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-200 hover:bg-red-300'} text-white p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-700 hover:bg-red-800' : 'bg-red-50 hover:bg-red-100'} text-white p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
