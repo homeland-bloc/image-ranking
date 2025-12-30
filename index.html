@@ -11009,7 +11009,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderCreateExtractModal() + renderEditExtractModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay();
         }
 
         window.login = login;
