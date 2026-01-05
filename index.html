@@ -387,12 +387,13 @@
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
             isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
-            showPinIcons: true,  // Whether to show pin icons (admin only, default: true)
+            showPinIcons: false,  // Whether to show pin icons (admin only, default: false)
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
             lastClickedImageId: null,  // Last clicked image ID in multi-mode voting
             isLoadingMultiModeImages: false,  // Whether images are loading in multi mode
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
-            multiModeTotalImages: 0  // Total images to load in multi mode
+            multiModeTotalImages: 0,  // Total images to load in multi mode
+            sessionExpired: false  // Whether session expired (vs never logged in)
         };
 
         function shuffleArray(array) {
@@ -1496,8 +1497,8 @@
                 showAlert('Contest title cannot be empty.', '❌');
                 return;
             }
-            if (title.length > 100) {
-                showAlert('Contest title is too long (max 100 characters).', '❌');
+            if (title.length > 50) {
+                showAlert('Contest title is too long (max 50 characters).', '❌');
                 return;
             }
 
@@ -3358,12 +3359,32 @@
             window.location.href = authUrl;
         }
 
-        function logout() {
+        function showLogoutConfirmation() {
+            state.modal = {
+                icon: '🚪',
+                message: 'Are you sure you want to logout?',
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Logout', action: 'confirmLogout', primary: true }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function confirmLogout() {
+            state.modal = null;
+            document.body.classList.remove('modal-open');
             localStorage.removeItem('peony_user');
             state.isLoggedIn = false;
             state.user = null;
             state.view = 'home';
+            state.sessionExpired = false; // Manual logout, not session expiration
             render();
+        }
+
+        function logout() {
+            showLogoutConfirmation();
         }
 
         async function loadVoterCounts() {
@@ -8155,25 +8176,39 @@
         function renderLoginScreen() {
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
+                    ${state.sessionExpired ? `
+                        <div class="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 mb-6">
+                            <div class="flex items-start gap-3">
+                                <div class="text-2xl flex-shrink-0">⏰</div>
+                                <div class="flex-1">
+                                    <h3 class="font-bold text-amber-900 mb-1">Session Expired</h3>
+                                    <p class="text-sm text-amber-800">
+                                        Your session has expired or was cleared by your browser. Please log in again to continue using Peony.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+
                     <div class="text-center mb-6">
                         <div class="w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌺</span>
                         </div>
-                        <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-2">${state.sessionExpired ? 'Welcome Back to Peony' : 'Welcome to Peony'}</h2>
                         <p class="text-gray-600 text-sm">Create and vote on image contests</p>
                     </div>
-                    
+
                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                         <p class="text-xs text-blue-800">
                             <strong>Privacy Notice:</strong> This app only accesses your Discord username and avatar. Contact me if you have any questions.
                         </p>
                     </div>
-                    
+
                     <button onclick="login()" class="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-indigo-800 transition flex items-center justify-center gap-2 text-sm">
                         <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
                         </svg>
-                        Login with Discord
+                        ${state.sessionExpired ? 'Login Again with Discord' : 'Login with Discord'}
                     </button>
                 </div>
             `;
@@ -8289,7 +8324,7 @@
             const isBanned = state.bannedUsers.includes(state.user.id);
 
             return `
-                <div class="max-w-7xl mx-auto px-3 py-4">
+                <div class="max-w-7xl mx-auto px-3 py-2">
                     ${(() => {
                         // PINNED ITEMS SECTION
                         const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -8315,8 +8350,8 @@
                             const displayItems = state.isPinnedSectionExpanded ? allPinnedItems : allPinnedItems.slice(0, 3);
 
                             return `
-                                <div class="mb-4">
-                                    <div class="bg-gradient-to-r from-red-500 to-red-600 px-4 py-3 rounded-lg shadow-lg mb-3">
+                                <div class="mb-2">
+                                    <div class="bg-gradient-to-r from-red-500 to-red-600 px-3 py-2 rounded-lg shadow-lg mb-2">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-3 flex-1">
                                                 <button
@@ -8329,7 +8364,6 @@
                                                 </button>
                                                 <div class="flex-1">
                                                     <h3 class="text-lg font-bold text-white">📌 Pinned</h3>
-                                                    <p class="text-xs text-white/90">Featured votings appear here</p>
                                                 </div>
                                             </div>
                                             ${isAdmin ? `
@@ -8345,7 +8379,7 @@
                                             ` : ''}
                                         </div>
                                     </div>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-2">
                                         ${displayItems.map(({ item, type }) => {
                                             if (type === 'contest') return renderContestCard(item, true);
                                             if (type === 'merger') return renderMergerCard(item, true);
@@ -8356,7 +8390,7 @@
                                     ${allPinnedItems.length > 3 && !state.isPinnedSectionExpanded ? `
                                         <button
                                             onclick="togglePinnedSection()"
-                                            class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 hover:bg-red-50 rounded-lg transition"
+                                            class="w-full text-center text-sm text-red-700 hover:text-red-800 font-semibold py-1.5 bg-red-50 hover:bg-red-100 rounded-lg transition shadow-sm"
                                         >
                                             Show ${allPinnedItems.length - 3} more pinned items
                                         </button>
@@ -8367,7 +8401,7 @@
                         return '';
                     })()}
 
-                    <div class="bg-gradient-to-r from-green-500 to-green-600 px-4 py-3 rounded-lg shadow-lg mb-3">
+                    <div class="bg-gradient-to-r from-green-500 to-green-600 px-3 py-2 rounded-lg shadow-lg mb-2">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-3 flex-1">
                                 <button
@@ -8379,14 +8413,24 @@
                                     </svg>
                                 </button>
                                 <div class="flex-1">
-                                    <h2 class="text-xl font-bold text-white">All Contests</h2>
-                                    <p class="text-xs text-white/90">All votings appear here, from the newest to the oldest</p>
+                                    <h2 class="text-lg font-bold text-white">All Votings</h2>
                                 </div>
                             </div>
                             ${!isBanned ? `
-                                <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
-                                    + Create
-                                </button>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        onclick="toggleFilters()"
+                                        class="bg-white text-green-700 p-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg"
+                                        title="Search & Filter"
+                                    >
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                                        </svg>
+                                    </button>
+                                    <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
+                                        + Create
+                                    </button>
+                                </div>
                             ` : `
                                 <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
                                     🚫 Your account has been restricted. Contact admin.
@@ -8395,19 +8439,9 @@
                         </div>
                     </div>
 
-                    ${state.isAllContestsSectionExpanded ? `
+                    ${state.isAllContestsSectionExpanded && state.showFilters ? `
                         <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
-                            <button
-                                onclick="toggleFilters()"
-                                class="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-sm"
-                            >
-                                <span class="font-medium text-gray-700">🔍 Search & Filter</span>
-                                <svg class="w-4 h-4 text-gray-500 transition-transform ${state.showFilters ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                                </svg>
-                            </button>
-                            ${state.showFilters ? `
-                                <div class="p-3 border-t border-gray-200">
+                            <div class="p-3">
                                     <div class="mb-3">
                                         <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
                                         <div class="flex gap-2">
@@ -8457,7 +8491,6 @@
                                     ` : ''}
                                     </div>
                                 </div>
-                            ` : ''}
                         </div>
 
                         ${state.filters.createdBy || state.filters.searchQuery ? `
@@ -8583,8 +8616,8 @@
                                 const contentGradient = 'bg-gradient-to-b from-pink-50 to-pink-100';
 
                                 return `
-                                    <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
-                                        <div class="${headerGradient} p-4 cursor-pointer transition" onclick="toggleFolderExpanded('${group.id}')">
+                                    <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-2 fade-in">
+                                        <div class="${headerGradient} p-3 cursor-pointer transition" onclick="toggleFolderExpanded('${group.id}')">
                                             <div class="flex items-center gap-3 text-white">
                                                 <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -8599,8 +8632,8 @@
                                             </div>
                                         </div>
                                         ${isExpanded ? `
-                                            <div class="p-4 ${contentGradient}">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            <div class="p-2 ${contentGradient}">
+                                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                                                     ${folderItems.map(item => {
                                                         if (item.itemType === 'merger') {
                                                             return renderMergerCard(item);
@@ -8621,7 +8654,7 @@
                             const renderUnfolderedItems = () => {
                                 if (ungroupedItems.length === 0) return '';
                                 return `
-                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 mb-2">
                                         ${ungroupedItems.map(item => {
                                             if (item.itemType === 'merger') {
                                                 return renderMergerCard(item);
@@ -8658,7 +8691,7 @@
                             const displayItems = state.isAllContestsSectionExpanded ? allItems : allItems.slice(0, 6);
 
                             return `
-                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 mb-2">
                                     ${displayItems.map(item => {
                                         if (item.itemType === 'merger') {
                                             return renderMergerCard(item);
@@ -8672,7 +8705,7 @@
                                 ${allItems.length > 6 && !state.isAllContestsSectionExpanded ? `
                                     <button
                                         onclick="toggleAllContestsSection()"
-                                        class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 hover:bg-green-50 rounded-lg transition"
+                                        class="w-full text-center text-sm text-green-700 hover:text-green-800 font-semibold py-1.5 bg-green-50 hover:bg-green-100 rounded-lg transition shadow-sm"
                                     >
                                         Show ${allItems.length - 6} more items
                                     </button>
@@ -9181,91 +9214,84 @@
                             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
                             return `
-                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
+                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-2 relative border-2 border-gray-300">
                                     ${isAdmin && state.showPinIcons ? `
                                         <button
                                             onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-2 right-2 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-0.5 rounded-full shadow-md transition z-10 text-xs"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
                                         </button>
                                     ` : ''}
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-3 ${isAdmin ? (contest.resultsPublic === false ? 'right-20' : 'right-11') : (contest.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                        <div class="absolute top-2 right-2 bg-black/80 text-white p-1 rounded-full shadow-md" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
                                     ${contest.resultsPublic === false ? `
-                                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                                        <div class="absolute top-2 ${contest.isLocked ? 'right-11' : 'right-2'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
-                                    <div class="flex items-start gap-2 mb-2">
-                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="flex items-center gap-2">
-                                                <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
-                                            </div>
-                                            <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
-                                                <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
-                                            </div>
-                                        </div>
+                                    <h3 class="text-base font-bold text-gray-800 truncate mb-1.5 ${contest.isLocked || contest.resultsPublic === false ? 'pr-10' : ''}">${contest.title}</h3>
+                                    <div class="flex items-center gap-1.5 text-xs text-gray-600 mb-2">
+                                        <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
+                                        <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
+                                        <span class="whitespace-nowrap ml-auto">${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
                                     </div>
-
-                                    <div class="flex gap-2">
+                                    <div class="flex gap-1">
                                         ${isBanned ? `
-                                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
-                                                🚫 Account restricted
+                                            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
+                                                🚫 Restricted
                                             </div>
                                         ` : contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                                class="bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white px-4 py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                                             >
                                                 View Results
                                             </button>
                                         ` : hasVotedAll ? `
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                                class="bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white px-4 py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                                             >
                                                 View Results
                                             </button>
                                         ` : hasVotedSome ? `
                                             <button
                                                 onclick='showContestVoteModal("${contest.id}")'
-                                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                                                class="bg-gradient-to-r from-yellow-500 to-yellow-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                                             >
-                                                Complete Voting
+                                                Complete
                                             </button>
                                         ` : hasVotedNone ? `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                                class="bg-gradient-to-r from-mauve-400 to-mauve-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                                             >
                                                 Start Voting
                                             </button>
                                         ` : `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                                class="bg-gradient-to-r from-mauve-400 to-mauve-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                                             >
                                                 Start Voting
                                             </button>
                                         `}
-                                        <button
-                                            onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
-                                            class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
-                                            title="Contest Info"
-                                        >
-                                            ℹ️
-                                        </button>
+                                            <button
+                                                onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
+                                                class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg shadow-md transition flex-shrink-0"
+                                                title="Contest Info"
+                                            >
+                                                ℹ️
+                                            </button>
                                     </div>
                                 </div>
                             `;
@@ -9303,77 +9329,70 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-2 relative">
                     ${isAdmin && state.showPinIcons ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-2 right-2 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-0.5 rounded-full shadow-md transition z-10 text-xs"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${merger.isLocked ? `
-                        <div class="absolute top-3 ${isAdmin ? (merger.resultsPublic === false ? 'right-20' : 'right-11') : (merger.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                        <div class="absolute top-2 right-2 bg-black/80 text-white p-1 rounded-full shadow-md" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${merger.resultsPublic === false ? `
-                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-2 ${merger.isLocked ? 'right-11' : 'right-2'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
-                    <div class="flex items-start gap-2 mb-2">
-                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2">
-                                <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
-                            </div>
-                            <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
-                            </div>
-                        </div>
+                    <h3 class="text-base font-bold text-blue-900 truncate mb-1.5 ${merger.isLocked || merger.resultsPublic === false ? 'pr-10' : ''}">${merger.name}</h3>
+                    <div class="flex items-center gap-1.5 text-xs text-blue-700 mb-2">
+                        <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
+                        <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
+                        <span class="whitespace-nowrap ml-auto">${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
                     </div>
-
-                    <div class="flex gap-2">
+                    <div class="flex gap-1">
                         ${isBanned ? `
-                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
-                                🚫 Account restricted
+                            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
+                                🚫 Restricted
                             </div>
                         ` : hasVotedAll ? `
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                class="bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white px-4 py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                             >
                                 View Results
                             </button>
                         ` : hasVotedNone ? `
                             <button
                                 onclick='startMergerVoting("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                class="bg-gradient-to-r from-mauve-400 to-mauve-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                             >
                                 Start Voting
                             </button>
                         ` : `
                             <button
                                 onclick='showMergerVoteModal("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
+                                class="bg-gradient-to-r from-yellow-500 to-yellow-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                             >
-                                Complete Voting
+                                Complete
                             </button>
                         `}
-                        <button
-                            onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
-                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
-                            title="Merger Info"
-                        >
-                            ℹ️
-                        </button>
+                            <button
+                                onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
+                                class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg shadow-md transition flex-shrink-0"
+                                title="Merger Info"
+                            >
+                                ℹ️
+                            </button>
                     </div>
                 </div>
             `;
@@ -9445,70 +9464,63 @@
             }
 
             return `
-                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-2 relative">
                     ${isAdmin && state.showPinIcons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-2 right-2 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-0.5 rounded-full shadow-md transition z-10 text-xs"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${extract.isLocked ? `
-                        <div class="absolute top-3 ${isAdmin ? (extract.resultsPublic === false ? 'right-20' : 'right-11') : (extract.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                        <div class="absolute top-2 right-2 bg-black/80 text-white p-1 rounded-full shadow-md" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${extract.resultsPublic === false ? `
-                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-2 ${extract.isLocked ? 'right-11' : 'right-2'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
-                    <div class="flex items-start gap-2 mb-2">
-                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2">
-                                <h3 class="text-base font-bold text-yellow-900 truncate">${extract.name}</h3>
-                            </div>
-                            <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
-                                <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
-                            </div>
-                        </div>
+                    <h3 class="text-base font-bold text-yellow-900 truncate mb-1.5 ${extract.isLocked || extract.resultsPublic === false ? 'pr-10' : ''}">${extract.name}</h3>
+                    <div class="flex items-center gap-1.5 text-xs text-yellow-700 mb-2">
+                        <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
+                        <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
+                        <span class="whitespace-nowrap ml-auto">${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
                     </div>
-
-                    <div class="flex gap-2">
+                    <div class="flex gap-1">
                         ${isBanned ? `
-                            <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
-                                🚫 Account restricted
+                            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
+                                🚫 Restricted
                             </div>
                         ` : hasVotedAll ? `
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                class="bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white px-4 py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                             >
                                 View Results
                             </button>
                         ` : `
                             <button
                                 onclick='showExtractVotingRedirectModal("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
+                                class="bg-gradient-to-r from-mauve-400 to-mauve-600 text-white px-4 py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm whitespace-nowrap flex-shrink-0"
                             >
                                 Start Voting
                             </button>
                         `}
-                        <button
-                            onclick='showContestInfoModal(${safeStringify(extract)}, "extract")'
-                            class="bg-gradient-to-r from-blue-400 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-500 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
-                            title="Extract Info"
-                        >
-                            ℹ️
-                        </button>
+                            <button
+                                onclick='showContestInfoModal(${safeStringify(extract)}, "extract")'
+                                class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-lg shadow-md transition flex-shrink-0"
+                                title="Extract Info"
+                            >
+                                ℹ️
+                            </button>
                     </div>
                 </div>
             `;
@@ -10758,8 +10770,14 @@
                                                         </span>
                                                     </div>
                                                 </div>
-                                                <div class="text-xs text-gray-500 flex-shrink-0">
-                                                    ${formatTimestamp(log.timestamp)}
+                                                <div class="text-xs text-gray-500 flex-shrink-0 text-right">
+                                                    <div class="sm:hidden flex flex-col">
+                                                        <div>${formatTimestamp(log.timestamp).split(',')[0]}</div>
+                                                        <div>${formatTimestamp(log.timestamp).split(',')[1]}</div>
+                                                    </div>
+                                                    <div class="hidden sm:block">
+                                                        ${formatTimestamp(log.timestamp)}
+                                                    </div>
                                                 </div>
                                             </div>
                                         `;
@@ -11597,8 +11615,10 @@
                                 render();
                             });
                     } else {
-                        // Token expired, clear it
+                        // Token expired, clear it and set flag
                         localStorage.removeItem('peony_user');
+                        state.sessionExpired = true;
+                        console.log('🔐 Session expired - user will see session expired message');
                     }
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
