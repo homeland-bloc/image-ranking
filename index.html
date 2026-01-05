@@ -9224,36 +9224,35 @@
                                             📌
                                         </button>
                                     ` : ''}
+                                    <button
+                                        onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
+                                        class="absolute top-2 right-2 bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded-full shadow-md transition z-10"
+                                        title="Contest Info"
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
+                                    </button>
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-2 right-2 bg-black/80 text-white p-1 rounded-full shadow-md" title="Contest is locked">
+                                        <div class="absolute top-2 right-11 bg-black/80 text-white p-1 rounded-full shadow-md" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
                                     ${contest.resultsPublic === false ? `
-                                        <div class="absolute top-2 ${contest.isLocked ? 'right-11' : 'right-2'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
+                                        <div class="absolute top-2 ${contest.isLocked ? 'right-[5rem]' : 'right-11'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
-                                    <h3 class="text-base font-bold text-gray-800 truncate mb-1 ${contest.isLocked || contest.resultsPublic === false ? 'pr-12' : ''}">${contest.title}</h3>
-                                    <div class="flex items-stretch gap-2">
-                                        <div class="flex gap-1.5 flex-1 min-w-0">
-                                            <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-6 h-6 rounded-full self-start flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
-                                            <div class="flex flex-col justify-center min-w-0 text-xs text-gray-600">
-                                                <div class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></div>
-                                                <div class="truncate text-gray-500">${contest.voterCount || 0}👥 ${contest.images.length}🖼️</div>
-                                            </div>
+                                    <h3 class="text-base font-bold text-gray-800 truncate mb-1 pr-10">${contest.title}</h3>
+                                    <div class="flex items-center gap-2">
+                                        <div class="flex-1 flex items-center gap-1.5 text-xs text-gray-600 min-w-0">
+                                            <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-5 h-5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
+                                            <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span> | ${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
                                         </div>
-                                        <button
-                                            onclick='showContestInfoModal(${safeStringify(contest)}, "contest")'
-                                            class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg font-semibold transition shadow-md text-sm flex-shrink-0"
-                                            title="Contest Info"
-                                        >
-                                            ℹ️
-                                        </button>
                                         ${isBanned ? `
                                             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
                                                 🚫 Restricted
@@ -9341,36 +9340,35 @@
                             📌
                         </button>
                     ` : ''}
+                    <button
+                        onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
+                        class="absolute top-2 right-2 bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded-full shadow-md transition z-10"
+                        title="Merger Info"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </button>
                     ${merger.isLocked ? `
-                        <div class="absolute top-2 right-2 bg-black/80 text-white p-1 rounded-full shadow-md" title="Merger is locked">
+                        <div class="absolute top-2 right-11 bg-black/80 text-white p-1 rounded-full shadow-md" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${merger.resultsPublic === false ? `
-                        <div class="absolute top-2 ${merger.isLocked ? 'right-11' : 'right-2'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
+                        <div class="absolute top-2 ${merger.isLocked ? 'right-[5rem]' : 'right-11'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
-                    <h3 class="text-base font-bold text-blue-900 truncate mb-1 ${merger.isLocked || merger.resultsPublic === false ? 'pr-12' : ''}">${merger.name}</h3>
-                    <div class="flex items-stretch gap-2">
-                        <div class="flex gap-1.5 flex-1 min-w-0">
-                            <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-6 h-6 rounded-full self-start flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
-                            <div class="flex flex-col justify-center min-w-0 text-xs text-blue-700">
-                                <div class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></div>
-                                <div class="truncate text-blue-600">${merger.voterCount || 0}👥 ${totalImages}🖼️</div>
-                            </div>
+                    <h3 class="text-base font-bold text-blue-900 truncate mb-1 pr-10">${merger.name}</h3>
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 flex items-center gap-1.5 text-xs text-blue-700 min-w-0">
+                            <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-5 h-5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
+                            <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span> | ${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
                         </div>
-                        <button
-                            onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
-                            class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg font-semibold transition shadow-md text-sm flex-shrink-0"
-                            title="Merger Info"
-                        >
-                            ℹ️
-                        </button>
                         ${isBanned ? `
                             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
                                 🚫 Restricted
@@ -9478,36 +9476,35 @@
                             📌
                         </button>
                     ` : ''}
+                    <button
+                        onclick='showContestInfoModal(${safeStringify(extract)}, "extract")'
+                        class="absolute top-2 right-2 bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded-full shadow-md transition z-10"
+                        title="Extract Info"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </button>
                     ${extract.isLocked ? `
-                        <div class="absolute top-2 right-2 bg-black/80 text-white p-1 rounded-full shadow-md" title="Extract is locked">
+                        <div class="absolute top-2 right-11 bg-black/80 text-white p-1 rounded-full shadow-md" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${extract.resultsPublic === false ? `
-                        <div class="absolute top-2 ${extract.isLocked ? 'right-11' : 'right-2'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
+                        <div class="absolute top-2 ${extract.isLocked ? 'right-[5rem]' : 'right-11'} bg-gray-800/80 text-white p-1 rounded-full shadow-md" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
                         </div>
                     ` : ''}
-                    <h3 class="text-base font-bold text-yellow-900 truncate mb-1 ${extract.isLocked || extract.resultsPublic === false ? 'pr-12' : ''}">${extract.name}</h3>
-                    <div class="flex items-stretch gap-2">
-                        <div class="flex gap-1.5 flex-1 min-w-0">
-                            <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-6 h-6 rounded-full self-start flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
-                            <div class="flex flex-col justify-center min-w-0 text-xs text-yellow-700">
-                                <div class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></div>
-                                <div class="truncate text-yellow-600">${extract.voterCount || 0}👥 ${imageCount}🖼️</div>
-                            </div>
+                    <h3 class="text-base font-bold text-yellow-900 truncate mb-1 pr-10">${extract.name}</h3>
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 flex items-center gap-1.5 text-xs text-yellow-700 min-w-0">
+                            <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-5 h-5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
+                            <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span> | ${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
                         </div>
-                        <button
-                            onclick='showContestInfoModal(${safeStringify(extract)}, "extract")'
-                            class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg font-semibold transition shadow-md text-sm flex-shrink-0"
-                            title="Extract Info"
-                        >
-                            ℹ️
-                        </button>
                         ${isBanned ? `
                             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
                                 🚫 Restricted
