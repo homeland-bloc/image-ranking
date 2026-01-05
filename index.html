@@ -387,12 +387,14 @@
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
             isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
-            showPinIcons: true,  // Whether to show pin icons (admin only, default: true)
+            showPinIcons: false,  // Whether to show pin icons (admin only, default: false)
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
             lastClickedImageId: null,  // Last clicked image ID in multi-mode voting
             isLoadingMultiModeImages: false,  // Whether images are loading in multi mode
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
-            multiModeTotalImages: 0  // Total images to load in multi mode
+            multiModeTotalImages: 0,  // Total images to load in multi mode
+            showLogoutConfirmModal: false,  // Show logout confirmation modal
+            sessionExpired: false  // Whether session has expired (show banner on login screen)
         };
 
         function shuffleArray(array) {
@@ -1496,8 +1498,8 @@
                 showAlert('Contest title cannot be empty.', '❌');
                 return;
             }
-            if (title.length > 100) {
-                showAlert('Contest title is too long (max 100 characters).', '❌');
+            if (title.length > 50) {
+                showAlert('Contest title is too long (max 50 characters).', '❌');
                 return;
             }
 
@@ -3354,16 +3356,32 @@
         }
 
         function login() {
+            state.sessionExpired = false;  // Clear session expired flag
             const authUrl = `https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=token&scope=identify`;
             window.location.href = authUrl;
         }
 
-        function logout() {
+        function showLogoutConfirmation() {
+            state.showLogoutConfirmModal = true;
+            render();
+        }
+
+        function cancelLogout() {
+            state.showLogoutConfirmModal = false;
+            render();
+        }
+
+        function confirmLogout() {
             localStorage.removeItem('peony_user');
             state.isLoggedIn = false;
             state.user = null;
             state.view = 'home';
+            state.showLogoutConfirmModal = false;
             render();
+        }
+
+        function logout() {
+            showLogoutConfirmation();
         }
 
         async function loadVoterCounts() {
@@ -8155,6 +8173,14 @@
         function renderLoginScreen() {
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
+                    ${state.sessionExpired ? `
+                        <div class="bg-amber-50 border border-amber-300 rounded-lg p-3 mb-4">
+                            <p class="text-sm text-amber-800 flex items-center gap-2">
+                                <span class="text-lg">⏰</span>
+                                <span><strong>Session Expired:</strong> Your session has expired. Please login again to continue.</span>
+                            </p>
+                        </div>
+                    ` : ''}
                     <div class="text-center mb-6">
                         <div class="w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌺</span>
@@ -8162,13 +8188,13 @@
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
                         <p class="text-gray-600 text-sm">Create and vote on image contests</p>
                     </div>
-                    
+
                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                         <p class="text-xs text-blue-800">
                             <strong>Privacy Notice:</strong> This app only accesses your Discord username and avatar. Contact me if you have any questions.
                         </p>
                     </div>
-                    
+
                     <button onclick="login()" class="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-indigo-800 transition flex items-center justify-center gap-2 text-sm">
                         <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
@@ -8329,7 +8355,6 @@
                                                 </button>
                                                 <div class="flex-1">
                                                     <h3 class="text-lg font-bold text-white">📌 Pinned</h3>
-                                                    <p class="text-xs text-white/90">Featured votings appear here</p>
                                                 </div>
                                             </div>
                                             ${isAdmin ? `
@@ -8356,7 +8381,7 @@
                                     ${allPinnedItems.length > 3 && !state.isPinnedSectionExpanded ? `
                                         <button
                                             onclick="togglePinnedSection()"
-                                            class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 hover:bg-red-50 rounded-lg transition"
+                                            class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
                                             Show ${allPinnedItems.length - 3} more pinned items
                                         </button>
@@ -8379,14 +8404,18 @@
                                     </svg>
                                 </button>
                                 <div class="flex-1">
-                                    <h2 class="text-xl font-bold text-white">All Contests</h2>
-                                    <p class="text-xs text-white/90">All votings appear here, from the newest to the oldest</p>
+                                    <h2 class="text-xl font-bold text-white">All Votings</h2>
                                 </div>
                             </div>
                             ${!isBanned ? `
-                                <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
-                                    + Create
-                                </button>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="toggleFilters()" class="bg-white text-green-700 p-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg" title="Search & Filter">
+                                        🔍
+                                    </button>
+                                    <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
+                                        + Create
+                                    </button>
+                                </div>
                             ` : `
                                 <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-sm">
                                     🚫 Your account has been restricted. Contact admin.
@@ -8395,19 +8424,9 @@
                         </div>
                     </div>
 
-                    ${state.isAllContestsSectionExpanded ? `
+                    ${state.isAllContestsSectionExpanded && state.showFilters ? `
                         <div class="bg-white rounded-lg shadow-md mb-4 overflow-hidden">
-                            <button
-                                onclick="toggleFilters()"
-                                class="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition text-sm"
-                            >
-                                <span class="font-medium text-gray-700">🔍 Search & Filter</span>
-                                <svg class="w-4 h-4 text-gray-500 transition-transform ${state.showFilters ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                                </svg>
-                            </button>
-                            ${state.showFilters ? `
-                                <div class="p-3 border-t border-gray-200">
+                                <div class="p-3">
                                     <div class="mb-3">
                                         <label class="text-xs font-medium text-gray-700 mb-1 block">Search Contests</label>
                                         <div class="flex gap-2">
@@ -8457,9 +8476,10 @@
                                     ` : ''}
                                     </div>
                                 </div>
-                            ` : ''}
                         </div>
+                    ` : ''}
 
+                    ${state.isAllContestsSectionExpanded ? `
                         ${state.filters.createdBy || state.filters.searchQuery ? `
                             <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex gap-2 items-center flex-wrap">
                                 <span class="text-sm font-medium text-blue-800">Active Filters:</span>
@@ -8672,7 +8692,7 @@
                                 ${allItems.length > 6 && !state.isAllContestsSectionExpanded ? `
                                     <button
                                         onclick="toggleAllContestsSection()"
-                                        class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 hover:bg-green-50 rounded-lg transition"
+                                        class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
                                     >
                                         Show ${allItems.length - 6} more items
                                     </button>
@@ -10758,8 +10778,9 @@
                                                         </span>
                                                     </div>
                                                 </div>
-                                                <div class="text-xs text-gray-500 flex-shrink-0">
-                                                    ${formatTimestamp(log.timestamp)}
+                                                                <div class="text-xs text-gray-500 flex-shrink-0 sm:text-right">
+                                                    <div class="sm:inline">${formatTimestamp(log.timestamp).split(', ')[0]},</div>
+                                                    <div class="sm:inline sm:ml-1">${formatTimestamp(log.timestamp).split(', ')[1]}</div>
                                                 </div>
                                             </div>
                                         `;
@@ -11330,11 +11351,41 @@
             `;
         }
 
+        function renderLogoutConfirmModal() {
+            if (!state.showLogoutConfirmModal) return '';
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && cancelLogout()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
+                        <div class="text-center mb-4">
+                            <div class="text-5xl mb-3">🚪</div>
+                            <h3 class="text-xl font-bold text-gray-800 mb-2">Confirm Logout</h3>
+                            <p class="text-gray-600">Are you sure you want to logout?</p>
+                        </div>
+                        <div class="flex gap-3 justify-center">
+                            <button
+                                onclick="cancelLogout()"
+                                class="px-6 py-2 rounded-lg font-semibold transition text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onclick="confirmLogout()"
+                                class="px-6 py-2 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700"
+                            >
+                                Logout
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function render() {
             const app = document.getElementById('app');
-            
+
             if (!state.isLoggedIn) {
-                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderCompressionModal() + renderUploadProgressModal() + renderToast() + renderLoadingOverlay();
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderCompressionModal() + renderUploadProgressModal() + renderToast() + renderLoadingOverlay() + renderLogoutConfirmModal();
                 return;
             }
 
@@ -11365,11 +11416,13 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderLogoutConfirmModal();
         }
 
         window.login = login;
         window.logout = logout;
+        window.cancelLogout = cancelLogout;
+        window.confirmLogout = confirmLogout;
         window.startCreateContest = startCreateContest;
         window.showContestCreationDisabledModal = showContestCreationDisabledModal;
         window.showRevotingDisabledModal = showRevotingDisabledModal;
@@ -11599,6 +11652,7 @@
                     } else {
                         // Token expired, clear it
                         localStorage.removeItem('peony_user');
+                        state.sessionExpired = true;
                     }
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
