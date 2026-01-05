@@ -9247,12 +9247,14 @@
                                             </svg>
                                         </div>
                                     ` : ''}
-                                    <h3 class="text-base font-bold text-gray-800 truncate mb-1 pr-10">${contest.title}</h3>
-                                    <div class="flex items-center gap-2">
+                                    <h3 class="text-base font-bold text-gray-800 truncate mb-1.5 pr-10">${contest.title}</h3>
+                                    <div class="flex items-start gap-2">
                                         <div class="flex-1 flex items-center gap-1.5 text-xs text-gray-600 min-w-0">
-                                            <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-5 h-5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
-                                            <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span> | ${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
+                                            <img src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
+                                            <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
+                                            <span class="whitespace-nowrap ml-auto">${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
                                         </div>
+                                        <div class="flex flex-col gap-1 flex-shrink-0">
                                         ${isBanned ? `
                                             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
                                                 🚫 Restricted
@@ -9293,6 +9295,7 @@
                                                 Start Voting
                                             </button>
                                         `}
+                                        </div>
                                     </div>
                                 </div>
                             `;
@@ -9363,12 +9366,14 @@
                             </svg>
                         </div>
                     ` : ''}
-                    <h3 class="text-base font-bold text-blue-900 truncate mb-1 pr-10">${merger.name}</h3>
-                    <div class="flex items-center gap-2">
+                    <h3 class="text-base font-bold text-blue-900 truncate mb-1.5 pr-10">${merger.name}</h3>
+                    <div class="flex items-start gap-2">
                         <div class="flex-1 flex items-center gap-1.5 text-xs text-blue-700 min-w-0">
-                            <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-5 h-5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
-                            <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span> | ${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
+                            <img src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
+                            <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
+                            <span class="whitespace-nowrap ml-auto">${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
                         </div>
+                        <div class="flex flex-col gap-1 flex-shrink-0">
                         ${isBanned ? `
                             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
                                 🚫 Restricted
@@ -9395,6 +9400,7 @@
                                 Complete
                             </button>
                         `}
+                        </div>
                     </div>
                 </div>
             `;
@@ -9499,12 +9505,14 @@
                             </svg>
                         </div>
                     ` : ''}
-                    <h3 class="text-base font-bold text-yellow-900 truncate mb-1 pr-10">${extract.name}</h3>
-                    <div class="flex items-center gap-2">
+                    <h3 class="text-base font-bold text-yellow-900 truncate mb-1.5 pr-10">${extract.name}</h3>
+                    <div class="flex items-start gap-2">
                         <div class="flex-1 flex items-center gap-1.5 text-xs text-yellow-700 min-w-0">
-                            <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-5 h-5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
-                            <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span> | ${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
+                            <img src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
+                            <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition font-medium" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
+                            <span class="whitespace-nowrap ml-auto">${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
                         </div>
+                        <div class="flex flex-col gap-1 flex-shrink-0">
                         ${isBanned ? `
                             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded-lg text-center text-sm whitespace-nowrap flex items-center">
                                 🚫 Restricted
@@ -9524,6 +9532,7 @@
                                 Start Voting
                             </button>
                         `}
+                        </div>
                     </div>
                 </div>
             `;
