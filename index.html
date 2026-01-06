@@ -1829,7 +1829,7 @@
                 return;
             }
             if (max > images.length) {
-                showAlert(`Max (${max}) cannot exceed total images (${images.length}).', '❌');
+                showAlert(`Max (${max}) cannot exceed total images (${images.length}).`, '❌');
                 return;
             }
 
@@ -6793,7 +6793,22 @@
                 const contentRange = votesCountResponse.headers.get('Content-Range');
                 const totalVotes = contentRange ? parseInt(contentRange.split('/')[1]) : 0;
 
-                state.adminStats = { totalVotes, totalUniqueVoters };
+                // Count total images shortlisted from shortcake_votes
+                const shortcakeVotesResponse = await fetch(`${SUPABASE_URL}/rest/v1/shortcake_votes?select=shortlisted_image_ids`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
+                });
+                const shortcakeVotes = await shortcakeVotesResponse.json();
+                const totalImagesShortlisted = Array.isArray(shortcakeVotes)
+                    ? shortcakeVotes.reduce((sum, vote) => sum + (vote.shortlisted_image_ids?.length || 0), 0)
+                    : 0;
+
+                state.adminStats = { totalVotes, totalUniqueVoters, totalImagesShortlisted };
 
                 state.showAdminDashboard = true;
                 document.body.classList.add('modal-open');
@@ -7983,31 +7998,12 @@
                             <div class="p-6 border-b border-gray-200">
                                 <h3 class="text-2xl font-bold text-gray-800">Create Extract - Select Source</h3>
                                 <p class="text-sm text-gray-600 mt-1">
-                                    Choose a shortcake, contest, or merger to extract images from
+                                    Choose a contest or merger to extract images from
                                 </p>
                             </div>
 
                             <!-- Source Selection -->
                             <div class="p-6">
-                                ${state.shortcakes.length > 0 ? `
-                                    <div class="mb-4">
-                                        <h4 class="font-semibold text-gray-700 mb-2">Shortcakes</h4>
-                                        <div class="space-y-2">
-                                            ${state.shortcakes.map(shortcake => `
-                                                <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-amber-400 hover:bg-amber-50"
-                                                     onclick="selectExtractSource('shortcake', '${shortcake.id}')">
-                                                    <img src="${shortcake.creatorAvatar}" alt="${shortcake.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
-                                                    <div class="flex-1 min-w-0">
-                                                        <h5 class="font-semibold text-gray-800 truncate">${shortcake.title}</h5>
-                                                        <p class="text-xs text-gray-500">
-                                                            ${shortcake.creatorName} • ${shortcake.images.length} images
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            `).join('')}
-                                        </div>
-                                    </div>
-                                ` : ''}
 
                                 ${state.mergers.length > 0 ? `
                                     <div class="mb-4">
@@ -12006,6 +12002,7 @@
             const totalContests = state.contests.length;
             const totalVotes = state.adminStats.totalVotes;
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
+            const totalImagesShortlisted = state.adminStats.totalImagesShortlisted || 0;
             const totalBannedUsers = state.bannedUsers.length;
             const totalImages = state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
@@ -12030,7 +12027,7 @@
                                             📊 Recent Activity
                                         </button>
                                     </div>
-                                    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
                                             <div class="text-xs text-gray-600">Total Contests</div>
@@ -12038,6 +12035,10 @@
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-blue-600">${totalVotes}</div>
                                             <div class="text-xs text-gray-600">Total Votes</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-amber-600">${totalImagesShortlisted}</div>
+                                            <div class="text-xs text-gray-600">Total Images Shortlisted</div>
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
