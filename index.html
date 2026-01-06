@@ -383,6 +383,8 @@
             votingMode: 'single',  // 'single' or 'multi' - voting view mode (default: single)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (40-200%)
+            multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
+            multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
             showUnifiedCreateModal: false,  // Show unified creation modal
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
@@ -3961,6 +3963,7 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
+            state.votingMode = 'single';  // Always start in single mode
 
             // Clear merger context (we're voting on a single contest)
             state.currentMergerId = null;
@@ -4746,6 +4749,7 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
+            state.votingMode = 'single';  // Always start in single mode
 
             // Set currentContest to null to indicate merger voting mode
             state.currentContest = null;
@@ -5715,6 +5719,21 @@
             render();
         }
 
+        function setMultiModeFilter(filter) {
+            // Toggle filter: if same filter is selected, clear it
+            if (state.multiModeFilter === filter) {
+                state.multiModeFilter = null;
+            } else {
+                state.multiModeFilter = filter;
+            }
+            render();
+        }
+
+        function setMultiModeSort(sort) {
+            state.multiModeSort = sort;
+            render();
+        }
+
         function cancelVoting() {
             showConfirm(
                 'Your progress will be lost if you proceed. Are you sure?',
@@ -6052,11 +6071,6 @@
 
         function togglePinnedSection() {
             state.isPinnedSectionExpanded = !state.isPinnedSectionExpanded;
-            render();
-        }
-
-        function togglePinIconsVisibility() {
-            state.showPinIcons = !state.showPinIcons;
             render();
         }
 
@@ -8357,20 +8371,9 @@
                                                     <h3 class="text-lg font-bold text-white">📌 Pinned</h3>
                                                 </div>
                                             </div>
-                                            ${isAdmin ? `
-                                                <div class="flex items-center gap-2 ml-2">
-                                                    <span class="text-xs text-white/90 whitespace-nowrap">Show Pin Icons</span>
-                                                    <button
-                                                        onclick="togglePinIconsVisibility()"
-                                                        class="relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${state.showPinIcons ? 'bg-white' : 'bg-white/30'}"
-                                                    >
-                                                        <span class="inline-block w-4 h-4 transform transition-transform ${state.showPinIcons ? 'translate-x-6 bg-red-600' : 'translate-x-1 bg-white'} rounded-full shadow-md"></span>
-                                                    </button>
-                                                </div>
-                                            ` : ''}
                                         </div>
                                     </div>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
                                         ${displayItems.map(({ item, type }) => {
                                             if (type === 'contest') return renderContestCard(item, true);
                                             if (type === 'merger') return renderMergerCard(item, true);
@@ -8392,7 +8395,7 @@
                         return '';
                     })()}
 
-                    <div class="bg-gradient-to-r from-green-500 to-green-600 px-4 py-3 rounded-lg shadow-lg mb-3">
+                    <div class="bg-gradient-to-r from-green-500 to-green-600 px-3 md:px-4 py-2 md:py-2.5 rounded-lg shadow-lg mb-2">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-3 flex-1">
                                 <button
@@ -8603,9 +8606,9 @@
                                 const contentGradient = 'bg-gradient-to-b from-pink-50 to-pink-100';
 
                                 return `
-                                    <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-4 fade-in">
-                                        <div class="${headerGradient} p-4 cursor-pointer transition" onclick="toggleFolderExpanded('${group.id}')">
-                                            <div class="flex items-center gap-3 text-white">
+                                    <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-2 md:mb-3 fade-in">
+                                        <div class="${headerGradient} p-2.5 md:p-3 cursor-pointer transition" onclick="toggleFolderExpanded('${group.id}')">
+                                            <div class="flex items-center gap-2 text-white">
                                                 <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                                 </svg>
@@ -8619,8 +8622,8 @@
                                             </div>
                                         </div>
                                         ${isExpanded ? `
-                                            <div class="p-4 ${contentGradient}">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            <div class="p-2.5 md:p-3 ${contentGradient}">
+                                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2">
                                                     ${folderItems.map(item => {
                                                         if (item.itemType === 'merger') {
                                                             return renderMergerCard(item);
@@ -8641,7 +8644,7 @@
                             const renderUnfolderedItems = () => {
                                 if (ungroupedItems.length === 0) return '';
                                 return `
-                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2 md:mb-3">
                                         ${ungroupedItems.map(item => {
                                             if (item.itemType === 'merger') {
                                                 return renderMergerCard(item);
@@ -8678,7 +8681,7 @@
                             const displayItems = state.isAllContestsSectionExpanded ? allItems : allItems.slice(0, 6);
 
                             return `
-                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
                                     ${displayItems.map(item => {
                                         if (item.itemType === 'merger') {
                                             return renderMergerCard(item);
@@ -9202,7 +9205,7 @@
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
-                                    ${isAdmin && state.showPinIcons ? `
+                                    ${isAdmin && state.appSettings.show_pin_icons ? `
                                         <button
                                             onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
                                             class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
@@ -9324,7 +9327,7 @@
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    ${isAdmin && state.showPinIcons ? `
+                    ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
                             class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
@@ -9466,7 +9469,7 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
-                    ${isAdmin && state.showPinIcons ? `
+                    ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
                             class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
@@ -9722,16 +9725,81 @@
                                     <span class="text-sm font-medium text-gray-700 w-12">${imageScale}%</span>
                                 </div>
                             </div>
+
+                            <!-- Filter and Sort Controls -->
+                            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <!-- Filter by Score -->
+                                <div>
+                                    <label class="text-sm font-medium text-gray-700 mb-2 block">Filter by Score</label>
+                                    <div class="flex gap-1.5 flex-wrap">
+                                        ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
+                                            const isSelected = state.multiModeFilter === filter;
+                                            const label = filter === 'non-voted' ? '?' : filter;
+                                            const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
+                                            return `
+                                                <button
+                                                    onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
+                                                    class="px-3 py-1.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                                    style="background-color: ${bgColor};"
+                                                    title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
+                                                >
+                                                    ${label}
+                                                </button>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                </div>
+
+                                <!-- Sort -->
+                                <div>
+                                    <label class="text-sm font-medium text-gray-700 mb-2 block">Sort</label>
+                                    <select
+                                        onchange="setMultiModeSort(this.value)"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                                    >
+                                        <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default Order</option>
+                                        <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>Highest to Lowest</option>
+                                        <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Lowest to Highest</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Image grid with flex-wrap layout -->
                         <div class="p-4">
                             <div class="flex flex-wrap gap-1">
-                                ${state.shuffledImages.map((image, idx) => {
-                                    const currentVote = state.votes[image.id];
-                                    const isHoverable = state.selectedScore !== null;
-                                    const borderColor = currentVote ? getScoreColor(currentVote) : 'transparent';
-                                    return `
+                                ${(() => {
+                                    // Apply filtering
+                                    let filteredImages = state.shuffledImages;
+                                    if (state.multiModeFilter !== null) {
+                                        if (state.multiModeFilter === 'non-voted') {
+                                            filteredImages = filteredImages.filter(img => !state.votes[img.id]);
+                                        } else {
+                                            filteredImages = filteredImages.filter(img => state.votes[img.id] === state.multiModeFilter);
+                                        }
+                                    }
+
+                                    // Apply sorting
+                                    if (state.multiModeSort === 'highest') {
+                                        filteredImages = [...filteredImages].sort((a, b) => {
+                                            const voteA = state.votes[a.id] || 0;
+                                            const voteB = state.votes[b.id] || 0;
+                                            return voteB - voteA;
+                                        });
+                                    } else if (state.multiModeSort === 'lowest') {
+                                        filteredImages = [...filteredImages].sort((a, b) => {
+                                            const voteA = state.votes[a.id] || 0;
+                                            const voteB = state.votes[b.id] || 0;
+                                            return voteA - voteB;
+                                        });
+                                    }
+                                    // 'default' keeps the original order
+
+                                    return filteredImages.map((image, idx) => {
+                                        const currentVote = state.votes[image.id];
+                                        const isHoverable = state.selectedScore !== null;
+                                        const borderColor = currentVote ? getScoreColor(currentVote) : 'transparent';
+                                        return `
                                         <div class="relative" style="height: ${imageHeight}px;">
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
@@ -9750,7 +9818,8 @@
                                             </div>
                                         </div>
                                     `;
-                                }).join('')}
+                                    }).join('');
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -10630,6 +10699,7 @@
             // Get current settings values (default to true if not set)
             const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
             const revotingEnabled = state.appSettings.revoting_enabled !== false;
+            const showPinIcons = state.appSettings.show_pin_icons === true;  // Default to false
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeAppSettings()">
@@ -10672,6 +10742,22 @@
                                     <div
                                         class="toggle-switch ${revotingEnabled ? 'active' : ''}"
                                         onclick="toggleAppSetting('revoting_enabled')"
+                                    >
+                                        <div class="toggle-slider"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Show Pin Icons Toggle -->
+                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-gray-800">Show Pin Icons</h4>
+                                        <p class="text-sm text-gray-600 mt-1">
+                                            Display pin/unpin buttons on cards (admin only)
+                                        </p>
+                                    </div>
+                                    <div
+                                        class="toggle-switch ${showPinIcons ? 'active' : ''}"
+                                        onclick="toggleAppSetting('show_pin_icons')"
                                     >
                                         <div class="toggle-slider"></div>
                                     </div>
