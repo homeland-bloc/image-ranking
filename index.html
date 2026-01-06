@@ -4586,9 +4586,9 @@
         async function viewShortcakeResults(shortcake) {
             setLoading('Loading shortcake results...');
             try {
-                // Fetch all shortcake votes for this shortcake
+                // Fetch all shortcake votes with voter details
                 const response = await fetch(
-                    `${SUPABASE_URL}/rest/v1/shortcake_votes?shortcake_id=eq.${shortcake.id}&select=*`,
+                    `${SUPABASE_URL}/rest/v1/shortcake_votes?shortcake_id=eq.${shortcake.id}&select=*,voter:users!shortcake_votes_user_id_fkey(username,avatar,is_banned)`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -4608,6 +4608,7 @@
                 state.shortcakeResults = votes;
                 state.currentShortcake = shortcake;
                 state.view = 'shortcakeResults';
+                state.shortcakeResultsView = 'average'; // Reset to average view
 
                 // Update URL hash
                 window.location.hash = `shortcake=${shortcake.id}`;
@@ -11768,6 +11769,11 @@
         }
 
         function renderBreakdownModal() {
+            // Check if this is a shortcake breakdown modal
+            if (state.showBreakdownModal && typeof state.showBreakdownModal === 'object' && state.showBreakdownModal.type === 'shortcake') {
+                return renderShortcakeBreakdownModal();
+            }
+
             const item = state.results.find(r => r.id === state.showBreakdownModal);
             if (!item) return '';
 
@@ -11862,6 +11868,109 @@
                                 `).join('')}
                             </div>
                         </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Shortcake breakdown modal with two-column layout
+        function renderShortcakeBreakdownModal() {
+            const modalData = state.showBreakdownModal;
+            if (!modalData) return '';
+
+            const { imageUrl, shortlisted, notShortlisted } = modalData;
+
+            // Sort voters alphabetically
+            shortlisted.sort((a, b) => a.username.localeCompare(b.username));
+            notShortlisted.sort((a, b) => a.username.localeCompare(b.username));
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-xl font-bold text-amber-900">Shortlist Breakdown</h3>
+                                <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-y-auto flex-1 p-4">
+                            <div class="mb-3 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100" style="max-height: 400px;">
+                                <img
+                                    src="${imageUrl}"
+                                    alt="Image"
+                                    class="max-w-full max-h-[400px] object-contain"
+                                    onload="this.parentElement.classList.remove('image-loading')"
+                                />
+                            </div>
+
+                            <div class="bg-amber-50 rounded-lg p-3 mb-3">
+                                <div class="text-center">
+                                    <div class="text-2xl font-bold text-amber-900">${shortlisted.length} shortlisted</div>
+                                    <div class="text-xs text-amber-700">out of ${shortlisted.length + notShortlisted.length} total voters</div>
+                                </div>
+                            </div>
+
+                            <!-- Two-column layout: Shortlisted vs Not Shortlisted -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- Shortlisted Column -->
+                                <div>
+                                    <h4 class="text-sm font-bold mb-2 px-3 py-2 rounded-lg bg-blue-500 text-white text-center">
+                                        ✓ Shortlisted (${shortlisted.length})
+                                    </h4>
+                                    ${shortlisted.length > 0 ? `
+                                        <div class="space-y-2 mt-2 max-h-96 overflow-y-auto">
+                                            ${shortlisted.map(voter => `
+                                                <div class="flex items-center gap-2 p-2 rounded-lg bg-blue-50 border border-blue-200">
+                                                    ${voter.avatar ? `
+                                                        <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                                                    ` : `
+                                                        <div class="w-8 h-8 rounded-full bg-blue-300 flex items-center justify-center text-blue-700 font-bold text-sm flex-shrink-0">
+                                                            ${voter.username.charAt(0).toUpperCase()}
+                                                        </div>
+                                                    `}
+                                                    <span class="text-sm flex-1 truncate cursor-pointer text-gray-700 hover:text-blue-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">
+                                                        ${voter.username}${voter.userId === state.user?.id ? ' (You)' : ''}
+                                                    </span>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    ` : `
+                                        <div class="text-gray-400 italic text-sm mt-2 text-center py-4">No voters shortlisted this image</div>
+                                    `}
+                                </div>
+
+                                <!-- Not Shortlisted Column -->
+                                <div>
+                                    <h4 class="text-sm font-bold mb-2 px-3 py-2 rounded-lg bg-red-500 text-white text-center">
+                                        ✗ Not Shortlisted (${notShortlisted.length})
+                                    </h4>
+                                    ${notShortlisted.length > 0 ? `
+                                        <div class="space-y-2 mt-2 max-h-96 overflow-y-auto">
+                                            ${notShortlisted.map(voter => `
+                                                <div class="flex items-center gap-2 p-2 rounded-lg bg-red-50 border border-red-200">
+                                                    ${voter.avatar ? `
+                                                        <img src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-red-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                                                    ` : `
+                                                        <div class="w-8 h-8 rounded-full bg-red-300 flex items-center justify-center text-red-700 font-bold text-sm flex-shrink-0">
+                                                            ${voter.username.charAt(0).toUpperCase()}
+                                                        </div>
+                                                    `}
+                                                    <span class="text-sm flex-1 truncate cursor-pointer text-gray-700 hover:text-red-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">
+                                                        ${voter.username}${voter.userId === state.user?.id ? ' (You)' : ''}
+                                                    </span>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    ` : `
+                                        <div class="text-gray-400 italic text-sm mt-2 text-center py-4">All voters shortlisted this image</div>
+                                    `}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -12372,19 +12481,36 @@
             const baseSize = 150;
             const imageHeight = Math.max(30, Math.min(500, Math.floor(baseSize * (imageScale / 100))));
 
-            // Fetch shortcake votes data from state (should be loaded)
+            // Fetch shortcake votes data from state (should be loaded with voter details)
             const shortcakeVotes = state.shortcakeResults || [];
 
-            // Count how many times each image was shortlisted
+            // Count how many times each image was shortlisted and track voters
             const shortlistCounts = {};
+            const imageVoters = {}; // Track which users shortlisted each image
+
             shortcake.images.forEach(img => {
                 shortlistCounts[img.id] = 0;
+                imageVoters[img.id] = { shortlisted: [], notShortlisted: [] };
             });
 
             shortcakeVotes.forEach(vote => {
-                (vote.shortlisted_image_ids || []).forEach(imageId => {
-                    if (shortlistCounts[imageId] !== undefined) {
-                        shortlistCounts[imageId]++;
+                const shortlistedIds = vote.shortlisted_image_ids || [];
+                const shortlistedSet = new Set(shortlistedIds);
+
+                shortcake.images.forEach(img => {
+                    if (shortlistedSet.has(img.id)) {
+                        shortlistCounts[img.id]++;
+                        imageVoters[img.id].shortlisted.push({
+                            userId: vote.user_id,
+                            username: vote.voter?.username || 'Unknown',
+                            avatar: vote.voter?.avatar || null
+                        });
+                    } else {
+                        imageVoters[img.id].notShortlisted.push({
+                            userId: vote.user_id,
+                            username: vote.voter?.username || 'Unknown',
+                            avatar: vote.voter?.avatar || null
+                        });
                     }
                 });
             });
@@ -12392,24 +12518,86 @@
             // Build results with shortlist counts
             const results = shortcake.images.map(img => ({
                 ...img,
-                shortlistCount: shortlistCounts[img.id] || 0
+                shortlistCount: shortlistCounts[img.id] || 0,
+                voters: imageVoters[img.id]
             }));
+
+            // Initialize resultsView for shortcakes if not set
+            if (!state.shortcakeResultsView) {
+                state.shortcakeResultsView = 'average';
+            }
+
+            // Group based on current view
+            let grouped = {};
+            let sortedCounts = [];
+            let displayResults = results;
+
+            // === BY VOTER VIEW ===
+            if (state.shortcakeResultsView === 'byVoter') {
+                // Show stats per voter (similar to contest byVoter)
+                const voterStats = shortcakeVotes.map(vote => {
+                    const shortlistedCount = (vote.shortlisted_image_ids || []).length;
+                    const percentage = (shortlistedCount / shortcake.images.length) * 100;
+
+                    return {
+                        userId: vote.user_id,
+                        username: vote.voter?.username || 'Unknown',
+                        avatar: vote.voter?.avatar || null,
+                        shortlistedCount: shortlistedCount,
+                        percentage: percentage.toFixed(1)
+                    };
+                });
+
+                // Sort by shortlistedCount
+                voterStats.sort((a, b) => b.shortlistedCount - a.shortlistedCount);
+
+                return renderShortcakeByVoterView(shortcake, voterStats, imageScale);
+            }
+            // === USER VOTES VIEW ===
+            else if (state.shortcakeResultsView === 'userVotes') {
+                const selectedUserId = state.selectedVoterUserId || state.user?.id;
+                const selectedVote = shortcakeVotes.find(v => v.user_id === selectedUserId);
+
+                if (selectedVote) {
+                    const shortlistedIds = new Set(selectedVote.shortlisted_image_ids || []);
+                    displayResults = results.map(img => ({
+                        ...img,
+                        isShortlistedByUser: shortlistedIds.has(img.id)
+                    }));
+
+                    // Group into shortlisted and not shortlisted
+                    grouped = {
+                        'Shortlisted': displayResults.filter(img => img.isShortlistedByUser),
+                        'Not Shortlisted': displayResults.filter(img => !img.isShortlistedByUser)
+                    };
+                    sortedCounts = ['Shortlisted', 'Not Shortlisted'];
+                } else {
+                    // No votes from selected user
+                    displayResults = [];
+                }
+            }
+            // === AVERAGE VIEW (DEFAULT) ===
+            else {
+                // Group images by shortlist count
+                results.forEach(img => {
+                    const count = img.shortlistCount;
+                    if (!grouped[count]) {
+                        grouped[count] = [];
+                    }
+                    grouped[count].push(img);
+                });
+
+                // Sort groups by count (highest first)
+                sortedCounts = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+            }
 
             // Find max count for color scaling
             const maxCount = Math.max(...results.map(r => r.shortlistCount), 1);
 
-            // Group images by shortlist count
-            const grouped = {};
-            results.forEach(img => {
-                const count = img.shortlistCount;
-                if (!grouped[count]) {
-                    grouped[count] = [];
-                }
-                grouped[count].push(img);
-            });
-
-            // Sort groups by count (highest first)
-            const sortedCounts = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+            // Render the results with vertical panels
+            const resultsHTML = state.shortcakeResultsView === 'userVotes'
+                ? renderShortcakeUserVotesView(sortedCounts, grouped, imageHeight, maxCount, shortcakeVotes)
+                : renderShortcakeAverageView(sortedCounts, grouped, imageHeight, maxCount);
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
@@ -12421,92 +12609,92 @@
                                 <h2 class="text-2xl font-bold text-amber-900">${shortcake.title} - Results</h2>
                             </div>
                             <p class="text-amber-800 text-sm mb-1">
-                                Shortlist results from all participants
+                                ${state.shortcakeResultsView === 'byVoter' ? 'Shortlist stats per voter' :
+                                  state.shortcakeResultsView === 'userVotes' ? 'Individual user shortlists' :
+                                  'Shortlist results from all participants'}
                             </p>
                             <p class="text-xs text-gray-500">
-                                ${shortcakeVotes.length} voter${shortcakeVotes.length !== 1 ? 's' : ''}
+                                ${shortcakeVotes.length} voter${shortcakeVotes.length !== 1 ? 's' : ''}${state.shortcakeResultsView !== 'byVoter' ? ' • Click on any image to see who shortlisted it' : ''}
                             </p>
-                        </div>
 
-                        <!-- Image Scale Slider -->
-                        <div class="mb-4 max-w-md mx-auto">
-                            <label class="text-sm font-medium text-amber-900 mb-2 block">Image Scale</label>
-                            <div class="flex items-center gap-2">
-                                <button
-                                    onclick="adjustImageScale(-10)"
-                                    class="w-6 h-6 rounded bg-amber-200 hover:bg-amber-300 flex items-center justify-center font-bold text-amber-900 transition"
-                                >−</button>
-                                <input
-                                    type="range"
-                                    min="40"
-                                    max="200"
-                                    value="${imageScale}"
-                                    oninput="updateImageScale(this.value)"
-                                    class="flex-1 h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer slider"
-                                />
-                                <button
-                                    onclick="adjustImageScale(10)"
-                                    class="w-6 h-6 rounded bg-amber-200 hover:bg-amber-300 flex items-center justify-center font-bold text-amber-900 transition"
-                                >+</button>
-                                <span class="text-sm font-medium text-amber-900 w-12">${imageScale}%</span>
+                            ${isPrivate ? `
+                                <div class="mt-3 mb-2 max-w-2xl mx-auto">
+                                    <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+                                        <span class="text-lg flex-shrink-0">⚠️</span>
+                                        <p class="flex-1">${isCreator ? 'These results are private. Only you can view them.' : 'These results are private. Only you and the creator can view them.'}</p>
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            <!-- View Tabs -->
+                            <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                <div class="flex items-center justify-center gap-3">
+                                    <button
+                                        onclick="setShortcakeResultsView('average')"
+                                        class="px-3 py-1 rounded-lg ${state.shortcakeResultsView === 'average' ? 'bg-amber-600 text-white' : 'bg-gray-200'}"
+                                    >
+                                        Total
+                                    </button>
+                                    <button
+                                        onclick="setShortcakeResultsView('userVotes')"
+                                        class="px-3 py-1 rounded-lg ${state.shortcakeResultsView === 'userVotes' ? 'bg-amber-600 text-white' : 'bg-gray-200'}"
+                                    >
+                                        By User
+                                    </button>
+                                    <button
+                                        onclick="setShortcakeResultsView('byVoter')"
+                                        class="px-3 py-1 rounded-lg ${state.shortcakeResultsView === 'byVoter' ? 'bg-amber-600 text-white' : 'bg-gray-200'}"
+                                    >
+                                        Voter Stats
+                                    </button>
+                                </div>
+
+                                ${state.shortcakeResultsView === 'userVotes' ? `
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-sm text-gray-700">View votes by:</label>
+                                        <select
+                                            onchange="setSelectedShortcakeVoter(this.value); render();"
+                                            class="px-2 py-1 border-2 border-gray-300 rounded-lg text-sm"
+                                        >
+                                            ${shortcakeVotes.map(vote => `
+                                                <option value="${vote.user_id}" ${(state.selectedVoterUserId || state.user?.id) === vote.user_id ? 'selected' : ''}>
+                                                    ${vote.voter?.username || 'Unknown'}
+                                                </option>
+                                            `).join('')}
+                                        </select>
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
 
-                        <!-- Results grouped by shortlist count -->
-                        <div class="space-y-4">
-                            ${sortedCounts.map(count => {
-                                const images = grouped[count];
-                                // Dynamic gradient: hue = (count / maxCount) * 240
-                                // This gives: 0 = purple (270°), max = blue (240°)
-                                // But the spec wants purple→red→orange→yellow→green→light blue→blue
-                                // So we need hue from 270 (purple) to 240 (blue), going through red (0/360), orange (30), yellow (60), green (120), cyan (180)
-                                // Let's use: hue = 270 + (count / maxCount) * 330, which wraps around
-                                // Actually, let's use the formula from spec: hue = (count / maxCount) * 240
-                                // This gives 0 to 240: purple=270, so we need to add 270 - 240 = 30
-                                // Hmm, let me think... spec says purple→red→orange→yellow→green→light blue→blue
-                                // In HSL: purple=270, red=0, orange=30, yellow=60, green=120, cyan=180, blue=240
-                                // So from purple (270) to blue (240), we go: 270→360/0→30→60→120→180→240
-                                // That's a range of 330 degrees (270 to 600, or 270 to 240 wrapping)
-                                // Let's use: baseHue = 270 + (count / maxCount) * 330
-                                const ratio = count / maxCount;
-                                const baseHue = 270 + (ratio * 330);
-                                const hue = baseHue % 360;
-                                const bgColor = `hsl(${hue}, 70%, 45%)`;
+                        <!-- Image Scale Slider -->
+                        ${state.shortcakeResultsView !== 'byVoter' ? `
+                            <div class="mb-4 max-w-md mx-auto">
+                                <label class="text-sm font-medium text-amber-900 mb-2 block">Image Scale</label>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        onclick="adjustImageScale(-10)"
+                                        class="w-6 h-6 rounded bg-amber-200 hover:bg-amber-300 flex items-center justify-center font-bold text-amber-900 transition"
+                                    >−</button>
+                                    <input
+                                        type="range"
+                                        min="40"
+                                        max="200"
+                                        value="${imageScale}"
+                                        oninput="updateImageScale(this.value)"
+                                        class="flex-1 h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer slider"
+                                    />
+                                    <button
+                                        onclick="adjustImageScale(10)"
+                                        class="w-6 h-6 rounded bg-amber-200 hover:bg-amber-300 flex items-center justify-center font-bold text-amber-900 transition"
+                                    >+</button>
+                                    <span class="text-sm font-medium text-amber-900 w-12">${imageScale}%</span>
+                                </div>
+                            </div>
+                        ` : ''}
 
-                                return `
-                                    <div class="mb-4">
-                                        <div class="flex items-center gap-3 mb-2">
-                                            <div class="w-24 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-lg" style="background-color: ${bgColor};">
-                                                ${count} vote${count !== 1 ? 's' : ''}
-                                            </div>
-                                            <div class="flex-1 h-1 rounded-full" style="background-color: ${bgColor};"></div>
-                                        </div>
-                                        <div class="flex flex-wrap gap-1">
-                                            ${images.map((img, idx) => `
-                                                <div class="relative" style="height: ${imageHeight}px;">
-                                                    <div
-                                                        class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
-                                                        style="height: ${imageHeight}px; border: 3px solid ${bgColor};"
-                                                    >
-                                                        <img
-                                                            src="${img.url}"
-                                                            alt="Image"
-                                                            class="h-full w-auto object-cover"
-                                                            style="height: ${imageHeight}px;"
-                                                        />
-                                                        <div class="absolute top-2 left-2">
-                                                            <div class="rounded-full flex items-center justify-center font-bold shadow-lg w-8 h-8 text-white" style="background-color: ${bgColor};">
-                                                                ${count}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            `).join('')}
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
+                        <!-- Results Content -->
+                        ${resultsHTML}
 
                         <!-- Back button -->
                         <div class="mt-6 text-center">
@@ -12520,6 +12708,196 @@
                     </div>
                 </div>
             `;
+        }
+
+        // Helper function to render average view with vertical panels
+        function renderShortcakeAverageView(sortedCounts, grouped, imageHeight, maxCount) {
+            return `
+                <div class="space-y-3">
+                    ${sortedCounts.map(count => {
+                        const images = grouped[count];
+                        // Dynamic gradient: purple→red→orange→yellow→green→light blue→blue
+                        const ratio = count / maxCount;
+                        const baseHue = 270 + (ratio * 330); // 270 (purple) + up to 330 degrees
+                        const hue = baseHue % 360;
+                        const bgColor = `hsl(${hue}, 70%, 45%)`;
+
+                        return `
+                            <div class="flex items-stretch gap-2">
+                                <!-- Vertical Score Panel (left side, thin) -->
+                                <div class="w-16 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
+                                    <div class="text-2xl mb-1">${count}</div>
+                                    <div class="text-xs opacity-90 text-center leading-tight">vote${count !== 1 ? 's' : ''}</div>
+                                </div>
+
+                                <!-- Images Panel (right side, wraps) -->
+                                <div class="flex-1 flex flex-wrap gap-1 items-start">
+                                    ${images.map(img => `
+                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageHeight}px;" onclick="showShortcakeBreakdownModal(${img.id})">
+                                            <div
+                                                class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
+                                                style="height: ${imageHeight}px; border: 3px solid ${bgColor};"
+                                            >
+                                                <img
+                                                    src="${img.url}"
+                                                    alt="Image"
+                                                    class="h-full w-auto object-cover"
+                                                    style="height: ${imageHeight}px;"
+                                                />
+                                                <div class="absolute top-1 left-1">
+                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg w-7 h-7 text-white text-xs" style="background-color: ${bgColor};">
+                                                        ${count}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // Helper function to render user votes view
+        function renderShortcakeUserVotesView(sortedCounts, grouped, imageHeight, maxCount, allVotes) {
+            if (sortedCounts.length === 0) {
+                return `
+                    <div class="text-center py-8 text-gray-500">
+                        <div class="text-6xl mb-3">📭</div>
+                        <p>This user hasn't voted on this shortcake yet.</p>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="space-y-3">
+                    ${sortedCounts.map(label => {
+                        const images = grouped[label];
+                        const isShortlisted = label === 'Shortlisted';
+                        const bgColor = isShortlisted ? 'hsl(200, 70%, 45%)' : 'hsl(0, 70%, 45%)';
+                        const icon = isShortlisted ? '✓' : '✗';
+
+                        return `
+                            <div class="flex items-stretch gap-2">
+                                <!-- Vertical Label Panel (left side) -->
+                                <div class="w-20 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
+                                    <div class="text-2xl mb-1">${icon}</div>
+                                    <div class="text-xs opacity-90 text-center leading-tight">${label.replace(' ', '<br>')}</div>
+                                    <div class="text-xs mt-1">(${images.length})</div>
+                                </div>
+
+                                <!-- Images Panel (right side, wraps) -->
+                                <div class="flex-1 flex flex-wrap gap-1 items-start">
+                                    ${images.map(img => `
+                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageHeight}px;" onclick="showShortcakeBreakdownModal(${img.id})">
+                                            <div
+                                                class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
+                                                style="height: ${imageHeight}px; border: 3px solid ${bgColor};"
+                                            >
+                                                <img
+                                                    src="${img.url}"
+                                                    alt="Image"
+                                                    class="h-full w-auto object-cover"
+                                                    style="height: ${imageHeight}px;"
+                                                />
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // Helper function to render by voter view
+        function renderShortcakeByVoterView(shortcake, voterStats, imageScale) {
+            return `
+                <div class="max-w-3xl mx-auto">
+                    <div class="space-y-2">
+                        ${voterStats.map(voter => {
+                            const percentage = parseFloat(voter.percentage);
+                            const barWidth = percentage;
+                            const hue = (percentage / 100) * 120; // 0 (red) to 120 (green)
+                            const barColor = `hsl(${hue}, 70%, 45%)`;
+
+                            return `
+                                <div class="bg-gray-50 rounded-lg p-3 hover:bg-gray-100 transition">
+                                    <div class="flex items-center gap-3 mb-2">
+                                        ${voter.avatar ? `
+                                            <img src="${voter.avatar}" class="w-10 h-10 rounded-full" alt="${voter.username}">
+                                        ` : `
+                                            <div class="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 font-bold">
+                                                ${voter.username.charAt(0).toUpperCase()}
+                                            </div>
+                                        `}
+                                        <div class="flex-1">
+                                            <div class="font-semibold text-gray-800">${voter.username}</div>
+                                            <div class="text-sm text-gray-600">${voter.shortlistedCount} / ${shortcake.images.length} images (${voter.percentage}%)</div>
+                                        </div>
+                                        <div class="text-lg font-bold text-amber-700">${voter.shortlistedCount}</div>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="h-2 rounded-full transition-all duration-300" style="width: ${barWidth}%; background-color: ${barColor};"></div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Helper functions for shortcake results view management
+        function setShortcakeResultsView(view) {
+            state.shortcakeResultsView = view;
+            if (view === 'userVotes' && !state.selectedVoterUserId) {
+                state.selectedVoterUserId = state.user?.id;
+            }
+            render();
+        }
+
+        function setSelectedShortcakeVoter(userId) {
+            state.selectedVoterUserId = userId;
+        }
+
+        // Shortcake breakdown modal function
+        function showShortcakeBreakdownModal(imageId) {
+            const shortcake = state.currentShortcake;
+            const image = shortcake.images.find(img => img.id === imageId);
+            if (!image) return;
+
+            // Get voters who shortlisted and didn't shortlist this image
+            const shortcakeVotes = state.shortcakeResults || [];
+            const shortlisted = [];
+            const notShortlisted = [];
+
+            shortcakeVotes.forEach(vote => {
+                const shortlistedIds = new Set(vote.shortlisted_image_ids || []);
+                const voterInfo = {
+                    userId: vote.user_id,
+                    username: vote.voter?.username || 'Unknown',
+                    avatar: vote.voter?.avatar || null
+                };
+
+                if (shortlistedIds.has(imageId)) {
+                    shortlisted.push(voterInfo);
+                } else {
+                    notShortlisted.push(voterInfo);
+                }
+            });
+
+            state.showBreakdownModal = {
+                imageId: imageId,
+                imageUrl: image.url,
+                shortlisted: shortlisted,
+                notShortlisted: notShortlisted,
+                type: 'shortcake'
+            };
+            render();
         }
 
         function renderMergedResults() {
