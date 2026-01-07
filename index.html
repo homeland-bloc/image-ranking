@@ -10432,7 +10432,7 @@
                                 class="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm mb-3"
                                 placeholder="Enter shortcake title..."
                                 value="${state.newShortcake.title || ''}"
-                                oninput="state.newShortcake.title = this.value; render();"
+                                oninput="setShortcakeTitle(this.value);"
                                 maxlength="50"
                             >
 
@@ -10445,7 +10445,7 @@
                                         placeholder="Min"
                                         value="${state.newShortcake.min}"
                                         min="1"
-                                        oninput="state.newShortcake.min = parseInt(this.value) || 1; render();"
+                                        oninput="setShortcakeMin(this.value);"
                                     >
                                 </div>
                                 <div>
@@ -10456,7 +10456,7 @@
                                         placeholder="Max"
                                         value="${state.newShortcake.max}"
                                         min="1"
-                                        oninput="state.newShortcake.max = parseInt(this.value) || 1; render();"
+                                        oninput="setShortcakeMax(this.value);"
                                     >
                                 </div>
                             </div>
@@ -10555,8 +10555,8 @@
 
                         <button
                             onclick="submitShortcake()"
-                            class="w-full bg-gradient-to-r from-amber-600 to-amber-800 text-white py-3 rounded-lg font-bold text-lg hover:from-amber-700 hover:to-amber-900 transition shadow-xl mb-2 ${state.newShortcake.images.length === 0 || !state.newShortcake.title ? 'opacity-50 cursor-not-allowed' : ''}"
-                            ${state.newShortcake.images.length === 0 || !state.newShortcake.title ? 'disabled' : ''}
+                            class="w-full bg-gradient-to-r from-amber-600 to-amber-800 text-white py-3 rounded-lg font-bold text-lg hover:from-amber-700 hover:to-amber-900 transition shadow-xl mb-2 ${state.newShortcake.images.length === 0 || !state.newShortcake.title.trim() ? 'opacity-50 cursor-not-allowed' : ''}"
+                            ${state.newShortcake.images.length === 0 || !state.newShortcake.title.trim() ? 'disabled' : ''}
                         >
                             Create Shortcake (${state.newShortcake.images.length} images)
                         </button>
@@ -10569,6 +10569,21 @@
         function clearUrlInputShortcake() {
             const input = document.getElementById('shortcakeUrlInput');
             if (input) input.value = '';
+        }
+
+        function setShortcakeTitle(value) {
+            state.newShortcake.title = value;
+            render();
+        }
+
+        function setShortcakeMin(value) {
+            state.newShortcake.min = parseInt(value) || 1;
+            render();
+        }
+
+        function setShortcakeMax(value) {
+            state.newShortcake.max = parseInt(value) || 1;
+            render();
         }
 
         function addImageFromUrlShortcake(inputId) {
@@ -13536,6 +13551,9 @@
         window.confirmCancelCreateShortcake = confirmCancelCreateShortcake;
         window.submitShortcake = submitShortcake;
         window.clearUrlInputShortcake = clearUrlInputShortcake;
+        window.setShortcakeTitle = setShortcakeTitle;
+        window.setShortcakeMin = setShortcakeMin;
+        window.setShortcakeMax = setShortcakeMax;
         window.addImageFromUrlShortcake = addImageFromUrlShortcake;
         window.handleFileSelectShortcake = handleFileSelectShortcake;
         window.handleDragOverShortcake = handleDragOverShortcake;
