@@ -349,7 +349,11 @@
             showAppSettingsModal: false, // Show app settings modal (admin only)
             showActivityLogsModal: false, // Show activity logs modal (admin only)
             activityLogs: [], // Recent vote submission activity
+            activityLogsLoading: false, // Loading state for activity logs modal
+            activityDateStart: null, // Start date for activity logs (null = default to 7 days ago)
+            activityDateEnd: null, // End date for activity logs (null = default to today)
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
+            adminDashboardLoading: false, // Loading state for admin dashboard modal
             showFilters: false, // Toggle for search/sort/filter section
             filters: {
                 createdBy: null,           // Username or null
@@ -393,6 +397,7 @@
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
             isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
+            isCompleteVotingExpanded: false,  // Whether Complete Voting section is expanded (default: folded, show 1 item)
             showPinIcons: false,  // Whether to show pin icons (admin only, default: false)
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
             lastClickedImageId: null,  // Last clicked image ID in multi-mode voting
@@ -4229,21 +4234,36 @@
 
         async function loadActivityLogs() {
             try {
-                // Get the last 7 days (today minus 7 days)
-                const now = new Date();
-                const weekStart = new Date(now);
-                weekStart.setDate(now.getDate() - 7);
-                weekStart.setHours(0, 0, 0, 0);
-                const weekStartISO = weekStart.toISOString();
-                console.log('Recent Activity - Week Start:', weekStartISO, '| Current Date:', now.toISOString());
+                state.activityLogsLoading = true;
+                render(); // Show loading state
 
-                // Query votes from the last 7 days with pagination (2000 row limit per query)
+                // Use state dates or default to last 7 days
+                const now = new Date();
+                let weekStart, weekEnd;
+
+                if (state.activityDateStart && state.activityDateEnd) {
+                    weekStart = new Date(state.activityDateStart);
+                    weekEnd = new Date(state.activityDateEnd);
+                    weekEnd.setHours(23, 59, 59, 999); // End of day
+                } else {
+                    weekStart = new Date(now);
+                    weekStart.setDate(now.getDate() - 7);
+                    weekStart.setHours(0, 0, 0, 0);
+                    weekEnd = new Date(now);
+                    weekEnd.setHours(23, 59, 59, 999);
+                }
+
+                const weekStartISO = weekStart.toISOString();
+                const weekEndISO = weekEnd.toISOString();
+                console.log('Recent Activity - Week Start:', weekStartISO, '| Week End:', weekEndISO);
+
+                // Query votes from the date range with pagination (2000 row limit per query)
                 let votes = [];
                 let offset = 0;
                 const limit = 2000;
                 while (true) {
                     const votesResponse = await fetch(
-                        `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&limit=${limit}&offset=${offset}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
+                        `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=${limit}&offset=${offset}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
                         {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
@@ -4267,9 +4287,9 @@
                     offset += limit;
                 }
 
-                // Query contest creations from the last 7 days
+                // Query contest creations from the date range
                 const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -4279,9 +4299,9 @@
                     }
                 );
 
-                // Query merger creations from the last 7 days
+                // Query merger creations from the date range
                 const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -4291,9 +4311,21 @@
                     }
                 );
 
-                // Query extract creations from the last 7 days
+                // Query extract creations from the date range
                 const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
+
+                // Query user signups from the date range
+                const usersResponse = await fetch(
+                    `${SUPABASE_URL}/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`,
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
@@ -4306,14 +4338,17 @@
                 const contests = contestsResponse.ok ? await contestsResponse.json() : [];
                 const mergers = mergersResponse.ok ? await mergersResponse.json() : [];
                 const extracts = extractsResponse.ok ? await extractsResponse.json() : [];
+                const users = usersResponse.ok ? await usersResponse.json() : [];
 
                 console.log('Recent Activity Data:', {
                     votes: votes.length,
                     contests: contests.length,
                     mergers: mergers.length,
                     extracts: extracts.length,
+                    users: users.length,
                     voteSample: votes[0],
-                    contestSample: contests[0]
+                    contestSample: contests[0],
+                    userSample: users[0]
                 });
 
                 // Group votes by user-contest combination
@@ -4374,6 +4409,17 @@
                     });
                 });
 
+                // Add user signups
+                users.forEach(user => {
+                    activityMap.set(`user-${user.id}`, {
+                        type: 'signup',
+                        userId: user.id,
+                        username: user.username || 'Unknown User',
+                        avatar: user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.id}`,
+                        timestamp: user.created_at
+                    });
+                });
+
                 // Convert to array and sort by timestamp (most recent first)
                 state.activityLogs = Array.from(activityMap.values()).sort((a, b) =>
                     new Date(b.timestamp) - new Date(a.timestamp)
@@ -4384,10 +4430,13 @@
                     console.log('Sample activities:', state.activityLogs.slice(0, 3));
                 }
 
+                state.activityLogsLoading = false;
                 render();
             } catch (error) {
                 console.error('Error loading activity logs:', error);
+                state.activityLogsLoading = false;
                 showToast('Failed to load activity logs', 'error');
+                render();
             }
         }
 
@@ -6680,6 +6729,11 @@
             render();
         }
 
+        function toggleCompleteVotingSection() {
+            state.isCompleteVotingExpanded = !state.isCompleteVotingExpanded;
+            render();
+        }
+
         function toggleAllContestsSection() {
             state.isAllContestsSectionExpanded = !state.isAllContestsSectionExpanded;
             render();
@@ -6687,6 +6741,7 @@
 
         // Make toggle functions globally accessible
         window.togglePinnedSection = togglePinnedSection;
+        window.toggleCompleteVotingSection = toggleCompleteVotingSection;
         window.toggleAllContestsSection = toggleAllContestsSection;
 
         function setResultsView(view, userId = null) {
@@ -6728,6 +6783,10 @@
 
         async function showAdminDashboard() {
             try {
+                state.showAdminDashboard = true;
+                state.adminDashboardLoading = true;
+                render(); // Show loading state
+
                 // Load all users from database
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*&order=username.asc`, {
                     headers: {
@@ -6810,11 +6869,13 @@
 
                 state.adminStats = { totalVotes, totalUniqueVoters, totalImagesShortlisted };
 
-                state.showAdminDashboard = true;
+                state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
                 render();
             } catch (error) {
                 console.error('Error loading admin dashboard:', error);
+                state.adminDashboardLoading = false;
+                state.showAdminDashboard = false;
                 showAlert('Failed to load admin dashboard: ' + error.message, '❌');
             }
         }
@@ -8985,6 +9046,121 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
+                    ${(() => {
+                        // COMPLETE VOTING SECTION
+                        // Identify contests and mergers where user has partial votes
+                        const itemsToComplete = [];
+
+                        // Check contests for partial votes
+                        filteredContests.forEach(contest => {
+                            const userVotes = state.userVotedContests[contest.id];
+                            if (userVotes && Object.keys(userVotes).length > 0) {
+                                const totalImages = contest.images.length;
+                                const votedImages = Object.keys(userVotes).length;
+                                if (votedImages < totalImages) {
+                                    // User has partial votes
+                                    itemsToComplete.push({ item: contest, type: 'contest', votedImages, totalImages });
+                                }
+                            }
+                        });
+
+                        // Check mergers for partial votes
+                        filteredMergers.forEach(merger => {
+                            const mergerContestIds = merger.contestIds || [];
+                            let totalImages = 0;
+                            let votedImages = 0;
+
+                            mergerContestIds.forEach(contestId => {
+                                const contest = state.contests.find(c => c.id === contestId);
+                                if (contest) {
+                                    totalImages += contest.images.length;
+                                    const userVotes = state.userVotedContests[contestId];
+                                    if (userVotes) {
+                                        votedImages += Object.keys(userVotes).length;
+                                    }
+                                }
+                            });
+
+                            if (votedImages > 0 && votedImages < totalImages) {
+                                // User has partial votes in this merger
+                                itemsToComplete.push({ item: merger, type: 'merger', votedImages, totalImages });
+                            }
+                        });
+
+                        // Check extracts for partial votes
+                        filteredExtracts.forEach(extract => {
+                            const extractImageIds = extract.imageIds || [];
+                            const totalImages = extractImageIds.length;
+
+                            // Get the source contest ID for this extract
+                            let sourceContestId = null;
+                            if (extract.sourceType === 'contest') {
+                                sourceContestId = extract.sourceId;
+                            } else if (extract.sourceType === 'merger') {
+                                // For mergers, we need to check all merged contests
+                                const merger = state.mergers.find(m => m.id === extract.sourceId);
+                                if (merger && merger.contestIds && merger.contestIds.length > 0) {
+                                    sourceContestId = merger.contestIds[0]; // Use first contest for simplicity
+                                }
+                            }
+
+                            if (sourceContestId) {
+                                const userVotes = state.userVotedContests[sourceContestId];
+                                if (userVotes) {
+                                    // Count how many extract images have been voted on
+                                    const votedImages = extractImageIds.filter(imgId => userVotes[imgId]).length;
+                                    if (votedImages > 0 && votedImages < totalImages) {
+                                        itemsToComplete.push({ item: extract, type: 'extract', votedImages, totalImages });
+                                    }
+                                }
+                            }
+                        });
+
+                        if (itemsToComplete.length > 0) {
+                            const displayItems = state.isCompleteVotingExpanded ? itemsToComplete : itemsToComplete.slice(0, 1);
+
+                            return `
+                                <div class="mb-4">
+                                    <div class="bg-gradient-to-r from-yellow-500 to-yellow-600 px-4 py-3 rounded-lg shadow-lg mb-3">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-3 flex-1">
+                                                <button
+                                                    onclick="toggleCompleteVotingSection()"
+                                                    class="text-white hover:bg-white/20 rounded-lg p-1 transition"
+                                                >
+                                                    <svg class="w-5 h-5 transition-transform ${state.isCompleteVotingExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                    </svg>
+                                                </button>
+                                                <div class="flex-1">
+                                                    <h3 class="text-lg font-bold text-white">⚠️ Complete Voting</h3>
+                                                    <p class="text-xs text-yellow-100">You have partial votes on ${itemsToComplete.length} item${itemsToComplete.length > 1 ? 's' : ''}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
+                                        ${displayItems.map(({ item, type }) => {
+                                            if (type === 'contest') return renderContestCard(item, true);
+                                            if (type === 'merger') return renderMergerCard(item, true);
+                                            if (type === 'extract') return renderExtractCard(item, true);
+                                            return '';
+                                        }).join('')}
+                                    </div>
+                                    ${itemsToComplete.length > 1 && !state.isCompleteVotingExpanded ? `
+                                        <button
+                                            onclick="toggleCompleteVotingSection()"
+                                            class="w-full text-center text-sm text-yellow-600 hover:text-yellow-700 font-medium py-2 bg-yellow-50 hover:bg-yellow-100 rounded-lg transition"
+                                        >
+                                            Show ${itemsToComplete.length - 1} more item${itemsToComplete.length - 1 > 1 ? 's' : ''} to complete
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }
+                        return '';
+                    })()}
+
                     ${(() => {
                         // PINNED ITEMS SECTION
                         const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -12034,6 +12210,13 @@
                                 </button>
                             </div>
 
+                            ${state.adminDashboardLoading ? `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">⏳</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Loading Dashboard...</h3>
+                                    <p class="text-gray-600">Please wait while we fetch the statistics.</p>
+                                </div>
+                            ` : `
                             <div class="space-y-4">
                                 <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
                                     <div class="flex justify-between items-center mb-3">
@@ -12102,6 +12285,7 @@
                                     ` : '<p class="text-sm text-gray-500 italic">No users have logged in yet</p>'}
                                 </div>
                             </div>
+                            `}
                         </div>
                     </div>
                 </div>
@@ -12219,27 +12403,48 @@
                         return { bg: 'bg-blue-100', hover: 'hover:bg-blue-200', icon: '🔀', text: 'Created merger' };
                     case 'extract':
                         return { bg: 'bg-yellow-100', hover: 'hover:bg-yellow-200', icon: '✂️', text: 'Created extract' };
+                    case 'signup':
+                        return { bg: 'bg-purple-100', hover: 'hover:bg-purple-200', icon: '👤', text: 'Joined the app' };
                     default: // vote
                         return { bg: 'bg-gray-50', hover: 'hover:bg-gray-100', icon: '🗳️', text: 'Voted on' };
                 }
             };
 
-            // Calculate last 7 days range (7 days ago to today)
+            // Calculate date range (use state dates or default to last 7 days)
             const now = new Date();
-            const weekStart = new Date(now);
-            weekStart.setDate(now.getDate() - 7);
+            let weekStart, weekEnd;
+
+            if (state.activityDateStart && state.activityDateEnd) {
+                weekStart = new Date(state.activityDateStart);
+                weekEnd = new Date(state.activityDateEnd);
+            } else {
+                weekStart = new Date(now);
+                weekStart.setDate(now.getDate() - 7);
+                weekEnd = new Date(now);
+            }
+
+            // Format date for input fields (YYYY-MM-DD)
+            const formatDateInput = (date) => {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            };
+
+            const startDateInput = state.activityDateStart || formatDateInput(weekStart);
+            const endDateInput = state.activityDateEnd || formatDateInput(weekEnd);
 
             const formatDate = (date) => {
                 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                 return `${months[date.getMonth()]} ${date.getDate()}`;
             };
-            const weekRange = `${formatDate(weekStart)} - ${formatDate(now)}, ${now.getFullYear()}`;
+            const weekRange = `${formatDate(weekStart)} - ${formatDate(weekEnd)}, ${weekEnd.getFullYear()}`;
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4" onclick="event.target === this && closeActivityLogs()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
                         <div class="p-6 border-b border-gray-200">
-                            <div class="flex justify-between items-center">
+                            <div class="flex justify-between items-center mb-4">
                                 <h3 class="text-2xl font-bold text-gray-800">📊 Recent Activity</h3>
                                 <button onclick="closeActivityLogs()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -12247,15 +12452,51 @@
                                     </svg>
                                 </button>
                             </div>
-                            <p class="text-sm text-gray-600 mt-2">Vote submissions and item creations from the current week (${weekRange})</p>
+                            <div class="flex flex-wrap gap-3 items-end">
+                                <div class="flex-1 min-w-[140px]">
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Start Date</label>
+                                    <input
+                                        type="date"
+                                        id="activityStartDate"
+                                        value="${startDateInput}"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                        onchange="state.activityDateStart = this.value"
+                                    />
+                                </div>
+                                <div class="flex-1 min-w-[140px]">
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">End Date</label>
+                                    <input
+                                        type="date"
+                                        id="activityEndDate"
+                                        value="${endDateInput}"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                        onchange="state.activityDateEnd = this.value"
+                                    />
+                                </div>
+                                <button
+                                    onclick="loadActivityLogs()"
+                                    class="bg-mauve-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-mauve-600 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                    ${state.activityLogsLoading ? 'disabled' : ''}
+                                >
+                                    ${state.activityLogsLoading ? '⏳ Loading...' : '🔄 Refresh'}
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-3">Showing activity from ${weekRange}</p>
                         </div>
 
                         <div class="p-6 overflow-y-auto flex-1">
-                            ${state.activityLogs.length > 0 ? `
+                            ${state.activityLogsLoading ? `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">⏳</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Loading Activity...</h3>
+                                    <p class="text-gray-600">Please wait while we fetch the activity logs.</p>
+                                </div>
+                            ` : state.activityLogs.length > 0 ? `
                                 <div class="space-y-1">
                                     ${state.activityLogs.map(log => {
                                         const style = getEventStyle(log.type);
-                                        const isCreation = log.type !== 'vote';
+                                        const isSignup = log.type === 'signup';
+                                        const isCreation = log.type !== 'vote' && log.type !== 'signup';
                                         const itemName = isCreation ? log.itemName : log.contestTitle;
 
                                         return `
@@ -12278,7 +12519,7 @@
                                                             ${log.username}
                                                         </span>
                                                         <span class="text-gray-600">
-                                                            ${style.text.toLowerCase()}: <span class="font-medium">${itemName}</span>
+                                                            ${isSignup ? style.text.toLowerCase() : `${style.text.toLowerCase()}: <span class="font-medium">${itemName}</span>`}
                                                         </span>
                                                     </div>
                                                 </div>
