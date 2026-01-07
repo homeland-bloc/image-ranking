@@ -1001,6 +1001,15 @@
             });
         }
 
+        function showShortcakeWIPModal() {
+            showModal({
+                type: 'alert',
+                icon: '🚧',
+                message: 'Shortcakes are a work in progress and will be redesigned in the future. This feature is currently unavailable.',
+                buttons: [{ text: 'OK', action: 'closeModal', primary: true }]
+            });
+        }
+
         function showToast(message, icon = '✅') {
             state.toast = { message, icon };
             render();
@@ -7884,7 +7893,7 @@
 
                                 <!-- Shortcake Option -->
                                 <button
-                                    onclick="closeUnifiedCreateModal(); startCreateShortcake();"
+                                    onclick="closeUnifiedCreateModal(); showShortcakeWIPModal();"
                                     class="w-full text-left p-4 bg-gradient-to-r from-amber-50 to-amber-100 hover:from-amber-100 hover:to-amber-200 rounded-lg border-2 border-amber-700 transition group"
                                 >
                                     <div class="flex items-start gap-4">
@@ -9133,8 +9142,7 @@
                                                     </svg>
                                                 </button>
                                                 <div class="flex-1">
-                                                    <h3 class="text-lg font-bold text-white">⚠️ Complete Voting</h3>
-                                                    <p class="text-xs text-yellow-100">You have partial votes on ${itemsToComplete.length} item${itemsToComplete.length > 1 ? 's' : ''}</p>
+                                                    <h3 class="text-lg font-bold text-white">🌠 Complete Voting</h3>
                                                 </div>
                                             </div>
                                         </div>
