@@ -457,7 +457,7 @@
             currentMergerId: null,  // ID of current merger being voted on
             mergerContestIds: [],  // Array of contest IDs in current merger voting session
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
-            votingMode: 'single',  // 'single' or 'multi' - voting view mode (default: single)
+            votingMode: 'multi',  // 'single' or 'multi' - voting view mode (default: multi)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (40-200%)
             multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
@@ -4632,7 +4632,10 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
-            state.votingMode = 'single';  // Always start in single mode
+
+            // Load voting mode preference from localStorage, default to 'multi'
+            const savedVotingMode = localStorage.getItem('peony_voting_mode');
+            state.votingMode = savedVotingMode || 'multi';
 
             // Clear merger context (we're voting on a single contest)
             state.currentMergerId = null;
@@ -5506,7 +5509,10 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
-            state.votingMode = 'single';  // Always start in single mode
+
+            // Load voting mode preference from localStorage, default to 'multi'
+            const savedVotingMode = localStorage.getItem('peony_voting_mode');
+            state.votingMode = savedVotingMode || 'multi';
 
             // Set currentContest to null to indicate merger voting mode
             state.currentContest = null;
@@ -6811,6 +6817,9 @@
 
         function toggleVotingMode() {
             const newMode = state.votingMode === 'single' ? 'multi' : 'single';
+
+            // Save voting mode preference to localStorage
+            localStorage.setItem('peony_voting_mode', newMode);
 
             // Show loading modal when switching to multi mode
             if (newMode === 'multi') {
@@ -13965,6 +13974,12 @@
         // Initialize app
         // Check for existing session on load
         (async function init() {
+            // Load voting mode preference from localStorage
+            const savedVotingMode = localStorage.getItem('peony_voting_mode');
+            if (savedVotingMode === 'single' || savedVotingMode === 'multi') {
+                state.votingMode = savedVotingMode;
+            }
+
             const storedUser = localStorage.getItem('peony_user');
             if (storedUser) {
                 try {
