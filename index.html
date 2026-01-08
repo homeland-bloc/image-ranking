@@ -280,7 +280,8 @@
             background-color: #1a2540 !important;
         }
 
-        body.dark-theme .bg-yellow-50 {
+        /* Extract cards - blueish tint */
+        body.dark-theme .bg-yellow-50:not(button):not(.hover\:bg-yellow-100) {
             background-color: #2a3550 !important;
         }
 
@@ -318,13 +319,17 @@
         }
 
         body.dark-theme .border-gray-200,
-        body.dark-theme .border-gray-300,
-        body.dark-theme .border-blue-300 {
+        body.dark-theme .border-gray-300 {
             border-color: #3a3a4a !important;
         }
 
         body.dark-theme .border-yellow-400 {
             border-color: #6a5a2a !important;
+        }
+
+        /* Merger cards - more blueish border */
+        body.dark-theme .border-blue-300 {
+            border-color: #4a5a7a !important;
         }
 
         body.dark-theme .shadow-lg,
@@ -383,10 +388,50 @@
             background-color: white !important;
         }
 
-        /* Keep menu buttons blue instead of gray */
+        /* Use muted blue-gray for card action buttons (middle ground between blue and gray) */
         body.dark-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
         body.dark-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
-            background: linear-gradient(to right, #3b82f6, #2563eb) !important;
+            background: linear-gradient(to right, #5a7fa3, #4a6b8f) !important;
+        }
+
+        /* Adapt "Show more" button sections to dark theme */
+        body.dark-theme button.bg-yellow-50,
+        body.dark-theme .bg-yellow-50.hover\:bg-yellow-100 {
+            background-color: #3a3520 !important;
+        }
+
+        body.dark-theme button.bg-red-50,
+        body.dark-theme .bg-red-50.hover\:bg-red-100 {
+            background-color: #3a2020 !important;
+        }
+
+        body.dark-theme button.bg-green-50,
+        body.dark-theme .bg-green-50.hover\:bg-green-100 {
+            background-color: #203a20 !important;
+        }
+
+        body.dark-theme .text-yellow-600,
+        body.dark-theme .text-red-600,
+        body.dark-theme .text-green-600 {
+            color: #d0d0d0 !important;
+        }
+
+        body.dark-theme .hover\:text-yellow-700:hover,
+        body.dark-theme .hover\:text-red-700:hover,
+        body.dark-theme .hover\:text-green-700:hover {
+            color: #e0e0e0 !important;
+        }
+
+        body.dark-theme .hover\:bg-yellow-100:hover {
+            background-color: #4a4530 !important;
+        }
+
+        body.dark-theme .hover\:bg-red-100:hover {
+            background-color: #4a3030 !important;
+        }
+
+        body.dark-theme .hover\:bg-green-100:hover {
+            background-color: #304a30 !important;
         }
     </style>
 </head>
