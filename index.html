@@ -284,10 +284,13 @@
             background-color: #2a3550 !important;
         }
 
-        /* Don't change text color for elements on gray backgrounds (bg-gray-50, bg-gray-200) */
-        body.dark-theme .text-gray-800:not(.bg-gray-50 .text-gray-800):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
-        body.dark-theme .text-gray-700:not(.bg-gray-50 .text-gray-700):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
-        body.dark-theme .text-gray-600:not(.bg-gray-50 .text-gray-600):not(.bg-gray-200 .text-gray-700) {
+        /* Don't change text color for most text elements */
+        body.dark-theme .text-gray-800,
+        body.dark-theme .text-gray-600 {
+            color: #e0e0e0 !important;
+        }
+
+        body.dark-theme .text-gray-700 {
             color: #e0e0e0 !important;
         }
 
@@ -295,6 +298,12 @@
         body.dark-theme .bg-gray-50 .text-gray-800,
         body.dark-theme .bg-gray-50 .text-gray-700,
         body.dark-theme .bg-gray-50 .text-gray-600 {
+            color: #374151 !important;
+        }
+
+        /* Keep text dark on buttons and controls with bg-gray-200 */
+        body.dark-theme button.bg-gray-200.text-gray-700,
+        body.dark-theme .bg-gray-200 .text-gray-700 {
             color: #374151 !important;
         }
 
@@ -350,8 +359,18 @@
         }
 
         /* Keep navigation buttons (bg-gray-200) visible in dark theme */
-        body.dark-theme .bg-gray-200 {
+        body.dark-theme button.bg-gray-200,
+        body.dark-theme button.bg-gray-300 {
             background-color: #d0d0d0 !important;
+        }
+
+        body.dark-theme button.hover\:bg-gray-300:hover {
+            background-color: #e0e0e0 !important;
+        }
+
+        /* Progress bar container should be dark */
+        body.dark-theme .bg-gray-200.h-3 {
+            background-color: #1a1a1a !important;
         }
 
         /* Keep text on navigation buttons dark for visibility */
