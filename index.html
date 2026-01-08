@@ -280,14 +280,18 @@
             background-color: #1a2540 !important;
         }
 
-        body.dark-theme .bg-yellow-50 {
+        /* Extract cards - blueish tint */
+        body.dark-theme .bg-yellow-50:not(button):not(.hover\:bg-yellow-100) {
             background-color: #2a3550 !important;
         }
 
-        /* Don't change text color for elements on gray backgrounds (bg-gray-50, bg-gray-200) */
-        body.dark-theme .text-gray-800:not(.bg-gray-50 .text-gray-800):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
-        body.dark-theme .text-gray-700:not(.bg-gray-50 .text-gray-700):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
-        body.dark-theme .text-gray-600:not(.bg-gray-50 .text-gray-600):not(.bg-gray-200 .text-gray-700) {
+        /* Don't change text color for most text elements */
+        body.dark-theme .text-gray-800,
+        body.dark-theme .text-gray-600 {
+            color: #e0e0e0 !important;
+        }
+
+        body.dark-theme .text-gray-700 {
             color: #e0e0e0 !important;
         }
 
@@ -295,6 +299,12 @@
         body.dark-theme .bg-gray-50 .text-gray-800,
         body.dark-theme .bg-gray-50 .text-gray-700,
         body.dark-theme .bg-gray-50 .text-gray-600 {
+            color: #374151 !important;
+        }
+
+        /* Keep text dark on buttons and controls with bg-gray-200 */
+        body.dark-theme button.bg-gray-200.text-gray-700,
+        body.dark-theme .bg-gray-200 .text-gray-700 {
             color: #374151 !important;
         }
 
@@ -309,13 +319,17 @@
         }
 
         body.dark-theme .border-gray-200,
-        body.dark-theme .border-gray-300,
-        body.dark-theme .border-blue-300 {
+        body.dark-theme .border-gray-300 {
             border-color: #3a3a4a !important;
         }
 
         body.dark-theme .border-yellow-400 {
             border-color: #6a5a2a !important;
+        }
+
+        /* Merger cards - more blueish border */
+        body.dark-theme .border-blue-300 {
+            border-color: #4a5a7a !important;
         }
 
         body.dark-theme .shadow-lg,
@@ -350,8 +364,18 @@
         }
 
         /* Keep navigation buttons (bg-gray-200) visible in dark theme */
-        body.dark-theme .bg-gray-200 {
+        body.dark-theme button.bg-gray-200,
+        body.dark-theme button.bg-gray-300 {
             background-color: #d0d0d0 !important;
+        }
+
+        body.dark-theme button.hover\:bg-gray-300:hover {
+            background-color: #e0e0e0 !important;
+        }
+
+        /* Progress bar container should be dark */
+        body.dark-theme .bg-gray-200.h-3 {
+            background-color: #1a1a1a !important;
         }
 
         /* Keep text on navigation buttons dark for visibility */
@@ -364,10 +388,50 @@
             background-color: white !important;
         }
 
-        /* Keep menu buttons blue instead of gray */
+        /* Use muted blue-gray for card action buttons (middle ground between blue and gray) */
         body.dark-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
         body.dark-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
-            background: linear-gradient(to right, #3b82f6, #2563eb) !important;
+            background: linear-gradient(to right, #5a7fa3, #4a6b8f) !important;
+        }
+
+        /* Adapt "Show more" button sections to dark theme */
+        body.dark-theme button.bg-yellow-50,
+        body.dark-theme .bg-yellow-50.hover\:bg-yellow-100 {
+            background-color: #3a3520 !important;
+        }
+
+        body.dark-theme button.bg-red-50,
+        body.dark-theme .bg-red-50.hover\:bg-red-100 {
+            background-color: #3a2020 !important;
+        }
+
+        body.dark-theme button.bg-green-50,
+        body.dark-theme .bg-green-50.hover\:bg-green-100 {
+            background-color: #203a20 !important;
+        }
+
+        body.dark-theme .text-yellow-600,
+        body.dark-theme .text-red-600,
+        body.dark-theme .text-green-600 {
+            color: #d0d0d0 !important;
+        }
+
+        body.dark-theme .hover\:text-yellow-700:hover,
+        body.dark-theme .hover\:text-red-700:hover,
+        body.dark-theme .hover\:text-green-700:hover {
+            color: #e0e0e0 !important;
+        }
+
+        body.dark-theme .hover\:bg-yellow-100:hover {
+            background-color: #4a4530 !important;
+        }
+
+        body.dark-theme .hover\:bg-red-100:hover {
+            background-color: #4a3030 !important;
+        }
+
+        body.dark-theme .hover\:bg-green-100:hover {
+            background-color: #304a30 !important;
         }
     </style>
 </head>
@@ -10303,13 +10367,13 @@
                                         ` : hasVotedAll ? `
                                             <button
                                                 onclick='startRevoteFromHome(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                                class="flex-[0.5] bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                                             >
                                                 Revote
                                             </button>
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                                class="flex-[1.5] bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
@@ -10442,13 +10506,13 @@
                         ` : hasVotedAll ? `
                             <button
                                 onclick='startMergerVoting("${merger.id}", true)'
-                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                class="flex-[0.5] bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                             >
                                 Revote
                             </button>
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
-                                class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                class="flex-[1.5] bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
@@ -10634,13 +10698,13 @@
                         ` : hasVotedAll ? `
                             <button
                                 onclick='startExtractVoting("${extract.id}", true)'
-                                class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
+                                class="flex-[0.5] bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
                             >
                                 Revote
                             </button>
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                class="flex-[1.5] bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
