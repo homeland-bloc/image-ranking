@@ -284,10 +284,18 @@
             background-color: #2a3550 !important;
         }
 
-        body.dark-theme .text-gray-800,
-        body.dark-theme .text-gray-700,
-        body.dark-theme .text-gray-600 {
+        /* Don't change text color for elements on gray backgrounds (bg-gray-50, bg-gray-200) */
+        body.dark-theme .text-gray-800:not(.bg-gray-50 .text-gray-800):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
+        body.dark-theme .text-gray-700:not(.bg-gray-50 .text-gray-700):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
+        body.dark-theme .text-gray-600:not(.bg-gray-50 .text-gray-600):not(.bg-gray-200 .text-gray-700) {
             color: #e0e0e0 !important;
+        }
+
+        /* Keep text dark on gray backgrounds for readability */
+        body.dark-theme .bg-gray-50 .text-gray-800,
+        body.dark-theme .bg-gray-50 .text-gray-700,
+        body.dark-theme .bg-gray-50 .text-gray-600 {
+            color: #374151 !important;
         }
 
         body.dark-theme .text-blue-900,
@@ -12537,7 +12545,7 @@
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-amber-600">${totalImagesShortlisted}</div>
-                                            <div class="text-xs text-gray-600">Total Images Shortlisted</div>
+                                            <div class="text-xs text-gray-600">Total Shortlisted</div>
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
@@ -13959,6 +13967,7 @@
         window.adminViewMergerResults = adminViewMergerResults;
         window.adminViewExtractResults = adminViewExtractResults;
         window.startRevote = startRevote;
+        window.startRevoteFromHome = startRevoteFromHome;
         window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
         window.shareContest = shareContest;
