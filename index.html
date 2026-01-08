@@ -266,8 +266,8 @@
         /* Dark Theme Styles */
         body.dark-theme {
             background: linear-gradient(to bottom,
-                rgba(20, 20, 30, 0.95),
-                rgba(30, 30, 40, 0.95)
+                rgba(60, 55, 65, 0.95),
+                rgba(55, 65, 60, 0.95)
             );
             color: #e0e0e0;
         }
@@ -277,13 +277,25 @@
         }
 
         body.dark-theme .bg-blue-50 {
-            background-color: #1a1a2e !important;
+            background-color: #1a2540 !important;
         }
 
-        body.dark-theme .text-gray-800,
-        body.dark-theme .text-gray-700,
-        body.dark-theme .text-gray-600 {
+        body.dark-theme .bg-yellow-50 {
+            background-color: #2a3550 !important;
+        }
+
+        /* Don't change text color for elements on gray backgrounds (bg-gray-50, bg-gray-200) */
+        body.dark-theme .text-gray-800:not(.bg-gray-50 .text-gray-800):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
+        body.dark-theme .text-gray-700:not(.bg-gray-50 .text-gray-700):not(.bg-gray-200 .text-gray-700):not(.bg-gray-50 .text-gray-600),
+        body.dark-theme .text-gray-600:not(.bg-gray-50 .text-gray-600):not(.bg-gray-200 .text-gray-700) {
             color: #e0e0e0 !important;
+        }
+
+        /* Keep text dark on gray backgrounds for readability */
+        body.dark-theme .bg-gray-50 .text-gray-800,
+        body.dark-theme .bg-gray-50 .text-gray-700,
+        body.dark-theme .bg-gray-50 .text-gray-600 {
+            color: #374151 !important;
         }
 
         body.dark-theme .text-blue-900,
@@ -291,10 +303,19 @@
             color: #a0c4ff !important;
         }
 
+        body.dark-theme .text-yellow-900,
+        body.dark-theme .text-yellow-700 {
+            color: #ffd68a !important;
+        }
+
         body.dark-theme .border-gray-200,
         body.dark-theme .border-gray-300,
         body.dark-theme .border-blue-300 {
             border-color: #3a3a4a !important;
+        }
+
+        body.dark-theme .border-yellow-400 {
+            border-color: #6a5a2a !important;
         }
 
         body.dark-theme .shadow-lg,
@@ -324,12 +345,29 @@
             background: rgba(0, 0, 0, 0.85) !important;
         }
 
-        body.dark-theme .bg-gradient-to-r.from-blue-500 {
-            background: linear-gradient(to right, #4a5568, #2d3748) !important;
-        }
-
         body.dark-theme .image-loading {
             background: linear-gradient(90deg, #2a2a3a 25%, #3a3a4a 50%, #2a2a3a 75%);
+        }
+
+        /* Keep navigation buttons (bg-gray-200) visible in dark theme */
+        body.dark-theme .bg-gray-200 {
+            background-color: #d0d0d0 !important;
+        }
+
+        /* Keep text on navigation buttons dark for visibility */
+        body.dark-theme .bg-gray-200.text-gray-700 {
+            color: #374151 !important;
+        }
+
+        /* Keep voting mode switch circle white */
+        body.dark-theme .toggle-slider {
+            background-color: white !important;
+        }
+
+        /* Keep menu buttons blue instead of gray */
+        body.dark-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
+        body.dark-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
+            background: linear-gradient(to right, #3b82f6, #2563eb) !important;
         }
     </style>
 </head>
@@ -10479,12 +10517,20 @@
             let hasVotedAll = false;
             let hasVotedSome = false;
             let hasVotedNone = true;
+            let sourceFullyVoted = false; // Track if origin contest/merger was already fully voted
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             if (extract.sourceType === 'contest' && extract.sourceContestId) {
+                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
                 const userVotes = state.userVotedContests[extract.sourceContestId] || {};
                 const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
                 const votedCount = extract.imageIds.filter(imageId => votedImageIds.includes(imageId)).length;
+
+                // Check if the source contest itself has been fully voted
+                if (sourceContest) {
+                    const totalVotedInContest = Object.keys(userVotes).length;
+                    sourceFullyVoted = totalVotedInContest === sourceContest.images.length && sourceContest.images.length > 0;
+                }
 
                 hasVotedAll = votedCount === extract.imageIds.length && extract.imageIds.length > 0;
                 hasVotedSome = votedCount > 0 && votedCount < extract.imageIds.length;
@@ -10493,6 +10539,16 @@
                 // For mergers, check if user has voted on all images from any of the merged contests
                 const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
                 if (merger) {
+                    // Check if the source merger itself has been fully voted
+                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                    const contestVotingStatus = mergedContests.map(c => {
+                        const userVotes = state.userVotedContests[c.id] || {};
+                        const votedImageCount = Object.keys(userVotes).length;
+                        const totalImageCount = c.images.length;
+                        return votedImageCount === totalImageCount && totalImageCount > 0;
+                    });
+                    sourceFullyVoted = contestVotingStatus.every(voted => voted) && mergedContests.length > 0;
+
                     // Check if user has voted on all extract images across all merged contests
                     let allVotedImageIds = [];
                     merger.contestIds.forEach(contestId => {
@@ -10568,6 +10624,13 @@
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
+                        ` : sourceFullyVoted ? `
+                            <button
+                                onclick='viewExtractResults("${extract.id}")'
+                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
                         ` : hasVotedAll ? `
                             <button
                                 onclick='startExtractVoting("${extract.id}", true)'
@@ -12482,7 +12545,7 @@
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-amber-600">${totalImagesShortlisted}</div>
-                                            <div class="text-xs text-gray-600">Total Images Shortlisted</div>
+                                            <div class="text-xs text-gray-600">Total Shortlisted</div>
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
@@ -13904,6 +13967,7 @@
         window.adminViewMergerResults = adminViewMergerResults;
         window.adminViewExtractResults = adminViewExtractResults;
         window.startRevote = startRevote;
+        window.startRevoteFromHome = startRevoteFromHome;
         window.confirmRevote = confirmRevote;
         window.toggleUserDropdown = toggleUserDropdown;
         window.shareContest = shareContest;
