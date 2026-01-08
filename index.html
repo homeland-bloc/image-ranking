@@ -262,6 +262,75 @@
         .toggle-switch.active .toggle-slider {
             transform: translateX(24px);
         }
+
+        /* Dark Theme Styles */
+        body.dark-theme {
+            background: linear-gradient(to bottom,
+                rgba(20, 20, 30, 0.95),
+                rgba(30, 30, 40, 0.95)
+            );
+            color: #e0e0e0;
+        }
+
+        body.dark-theme .bg-white {
+            background-color: #1e1e2e !important;
+        }
+
+        body.dark-theme .bg-blue-50 {
+            background-color: #1a1a2e !important;
+        }
+
+        body.dark-theme .text-gray-800,
+        body.dark-theme .text-gray-700,
+        body.dark-theme .text-gray-600 {
+            color: #e0e0e0 !important;
+        }
+
+        body.dark-theme .text-blue-900,
+        body.dark-theme .text-blue-700 {
+            color: #a0c4ff !important;
+        }
+
+        body.dark-theme .border-gray-200,
+        body.dark-theme .border-gray-300,
+        body.dark-theme .border-blue-300 {
+            border-color: #3a3a4a !important;
+        }
+
+        body.dark-theme .shadow-lg,
+        body.dark-theme .shadow-xl {
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+        }
+
+        body.dark-theme .hover\:bg-gray-100:hover {
+            background-color: #2a2a3a !important;
+        }
+
+        body.dark-theme input[type="text"],
+        body.dark-theme input[type="number"],
+        body.dark-theme textarea,
+        body.dark-theme select {
+            background-color: #2a2a3a !important;
+            color: #e0e0e0 !important;
+            border-color: #3a3a4a !important;
+        }
+
+        body.dark-theme input::placeholder,
+        body.dark-theme textarea::placeholder {
+            color: #888 !important;
+        }
+
+        body.dark-theme .modal-overlay {
+            background: rgba(0, 0, 0, 0.85) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-blue-500 {
+            background: linear-gradient(to right, #4a5568, #2d3748) !important;
+        }
+
+        body.dark-theme .image-loading {
+            background: linear-gradient(90deg, #2a2a3a 25%, #3a3a4a 50%, #2a2a3a 75%);
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -388,7 +457,7 @@
             currentMergerId: null,  // ID of current merger being voted on
             mergerContestIds: [],  // Array of contest IDs in current merger voting session
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
-            votingMode: 'single',  // 'single' or 'multi' - voting view mode (default: single)
+            votingMode: 'multi',  // 'single' or 'multi' - voting view mode (default: multi)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (40-200%)
             multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
@@ -405,7 +474,8 @@
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
-            sessionExpired: false  // Whether session has expired (show banner on login screen)
+            sessionExpired: false,  // Whether session has expired (show banner on login screen)
+            darkTheme: false  // Dark theme enabled
         };
 
         function shuffleArray(array) {
@@ -2848,6 +2918,43 @@
             render();
         }
 
+        async function toggleDarkTheme() {
+            state.darkTheme = !state.darkTheme;
+
+            // Apply dark theme class to body
+            if (state.darkTheme) {
+                document.body.classList.add('dark-theme');
+            } else {
+                document.body.classList.remove('dark-theme');
+            }
+
+            // Save to database
+            if (state.user && state.user.id) {
+                try {
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${state.user.id}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({
+                            dark_theme: state.darkTheme
+                        })
+                    });
+
+                    if (!response.ok) {
+                        console.error('Failed to save dark theme preference');
+                    }
+                } catch (error) {
+                    console.error('Error saving dark theme preference:', error);
+                }
+            }
+
+            render();
+        }
+
         function toggleMergedContestsDropdown() {
             state.showMergedContestsDropdown = !state.showMergedContestsDropdown;
             render();
@@ -4525,7 +4632,10 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
-            state.votingMode = 'single';  // Always start in single mode
+
+            // Load voting mode preference from localStorage, default to 'multi'
+            const savedVotingMode = localStorage.getItem('peony_voting_mode');
+            state.votingMode = savedVotingMode || 'multi';
 
             // Clear merger context (we're voting on a single contest)
             state.currentMergerId = null;
@@ -4534,7 +4644,21 @@
             // Update URL hash for shareable link
             window.location.hash = `contest=${contest.id}`;
 
-            render();
+            // Show loading modal if starting in multi mode
+            if (state.votingMode === 'multi') {
+                state.isLoadingMultiModeImages = true;
+                state.multiModeLoadedImages = 0;
+                state.multiModeTotalImages = state.shuffledImages.length;
+                render();
+
+                // Hide loading modal after a short delay
+                setTimeout(() => {
+                    state.isLoadingMultiModeImages = false;
+                    render();
+                }, 500);
+            } else {
+                render();
+            }
         }
 
         async function startShortcakeVoting(shortcake) {
@@ -4774,6 +4898,13 @@
                 clearLoading();
                 showAlert('Error loading extract results: ' + error.message, '❌');
             }
+        }
+
+        function startRevoteFromHome(contest) {
+            // Set the current contest first
+            state.currentContest = contest;
+            // Then call the standard revote flow
+            startRevote();
         }
 
         function startRevote() {
@@ -5392,7 +5523,10 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
-            state.votingMode = 'single';  // Always start in single mode
+
+            // Load voting mode preference from localStorage, default to 'multi'
+            const savedVotingMode = localStorage.getItem('peony_voting_mode');
+            state.votingMode = savedVotingMode || 'multi';
 
             // Set currentContest to null to indicate merger voting mode
             state.currentContest = null;
@@ -5400,7 +5534,21 @@
             // Update URL hash for shareable link
             window.location.hash = `merger=${mergerId}`;
 
-            render();
+            // Show loading modal if starting in multi mode
+            if (state.votingMode === 'multi') {
+                state.isLoadingMultiModeImages = true;
+                state.multiModeLoadedImages = 0;
+                state.multiModeTotalImages = state.shuffledImages.length;
+                render();
+
+                // Hide loading modal after a short delay
+                setTimeout(() => {
+                    state.isLoadingMultiModeImages = false;
+                    render();
+                }, 500);
+            } else {
+                render();
+            }
         }
 
         function revoteMerge() {
@@ -6697,6 +6845,9 @@
 
         function toggleVotingMode() {
             const newMode = state.votingMode === 'single' ? 'multi' : 'single';
+
+            // Save voting mode preference to localStorage
+            localStorage.setItem('peony_voting_mode', newMode);
 
             // Show loading modal when switching to multi mode
             if (newMode === 'multi') {
@@ -8890,7 +9041,13 @@
                                                     🔧 App Settings
                                                 </button>
                                             ` : ''}
-                                            <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
+                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between ${isAdmin ? 'border-t border-gray-200' : ''}">
+                                                <span>🌙 Dark Theme</span>
+                                                <div class="relative inline-block w-10 h-5 transition duration-200 ease-in-out rounded-full ${state.darkTheme ? 'bg-purple-500' : 'bg-gray-300'}">
+                                                    <span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 ease-in-out ${state.darkTheme ? 'translate-x-5' : 'translate-x-0'}"></span>
+                                                </div>
+                                            </button>
+                                            <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200">
                                                 Logout
                                             </button>
                                         </div>
@@ -10107,10 +10264,10 @@
                                             </button>
                                         ` : hasVotedAll ? `
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
-                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                                onclick='startRevoteFromHome(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r from-purple-500 to-purple-600 text-white py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md text-sm"
                                             >
-                                                View Results
+                                                🔄 Revote
                                             </button>
                                         ` : hasVotedSome ? `
                                             <button
@@ -10119,6 +10276,12 @@
                                             >
                                                 Complete Voting
                                             </button>
+                                            <button
+                                                onclick='viewResults(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                            >
+                                                View Results
+                                            </button>
                                         ` : hasVotedNone ? `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
@@ -10126,12 +10289,24 @@
                                             >
                                                 Start Voting
                                             </button>
+                                            <button
+                                                onclick='viewResults(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                            >
+                                                View Results
+                                            </button>
                                         ` : `
                                             <button
                                                 onclick='startVoting(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
                                             >
                                                 Start Voting
+                                            </button>
+                                            <button
+                                                onclick='viewResults(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                            >
+                                                View Results
                                             </button>
                                         `}
                                         <button
@@ -13827,6 +14002,12 @@
         // Initialize app
         // Check for existing session on load
         (async function init() {
+            // Load voting mode preference from localStorage
+            const savedVotingMode = localStorage.getItem('peony_voting_mode');
+            if (savedVotingMode === 'single' || savedVotingMode === 'multi') {
+                state.votingMode = savedVotingMode;
+            }
+
             const storedUser = localStorage.getItem('peony_user');
             if (storedUser) {
                 try {
@@ -13834,10 +14015,10 @@
 
                     // Check if token is expired
                     if (user.expiresAt && Date.now() < user.expiresAt) {
-                        // Check if user is banned and get ban reason
+                        // Check if user is banned and get ban reason, also load dark theme preference
                         // Only clear auth on confirmed ban, not on network errors
                         try {
-                            const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason`, {
+                            const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
                                 headers: {
                                     'apikey': SUPABASE_ANON_KEY,
                                     'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -13854,6 +14035,12 @@
                                     localStorage.removeItem('peony_user');
                                     showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
                                     return; // Exit early, don't proceed with login
+                                }
+
+                                // Load dark theme preference
+                                if (userData && userData.length > 0 && userData[0].dark_theme === true) {
+                                    state.darkTheme = true;
+                                    document.body.classList.add('dark-theme');
                                 }
                             } else {
                                 // Network error or API issue - don't log out, just warn
