@@ -4644,7 +4644,21 @@
             // Update URL hash for shareable link
             window.location.hash = `contest=${contest.id}`;
 
-            render();
+            // Show loading modal if starting in multi mode
+            if (state.votingMode === 'multi') {
+                state.isLoadingMultiModeImages = true;
+                state.multiModeLoadedImages = 0;
+                state.multiModeTotalImages = state.shuffledImages.length;
+                render();
+
+                // Hide loading modal after a short delay
+                setTimeout(() => {
+                    state.isLoadingMultiModeImages = false;
+                    render();
+                }, 500);
+            } else {
+                render();
+            }
         }
 
         async function startShortcakeVoting(shortcake) {
@@ -5520,7 +5534,21 @@
             // Update URL hash for shareable link
             window.location.hash = `merger=${mergerId}`;
 
-            render();
+            // Show loading modal if starting in multi mode
+            if (state.votingMode === 'multi') {
+                state.isLoadingMultiModeImages = true;
+                state.multiModeLoadedImages = 0;
+                state.multiModeTotalImages = state.shuffledImages.length;
+                render();
+
+                // Hide loading modal after a short delay
+                setTimeout(() => {
+                    state.isLoadingMultiModeImages = false;
+                    render();
+                }, 500);
+            } else {
+                render();
+            }
         }
 
         function revoteMerge() {
