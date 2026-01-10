@@ -272,8 +272,18 @@
             color: #e0e0e0;
         }
 
-        body.dark-theme .bg-white {
+        body.dark-theme .bg-white:not(.rounded-full) {
             background-color: #1e1e2e !important;
+        }
+
+        /* Keep voting mode switch circle white */
+        body.dark-theme .bg-white.rounded-full {
+            background-color: white !important;
+        }
+
+        /* Loading spinner should be transparent, not white */
+        body.dark-theme .animate-spin.rounded-full {
+            background-color: transparent !important;
         }
 
         body.dark-theme .bg-blue-50 {
@@ -369,6 +379,11 @@
             background-color: #d0d0d0 !important;
         }
 
+        /* Keep theme switch background gray in dark mode */
+        body.dark-theme .bg-gray-300.rounded-full {
+            background-color: #6b7280 !important; /* Proper gray that contrasts with white circle */
+        }
+
         body.dark-theme button.hover\:bg-gray-300:hover {
             background-color: #e0e0e0 !important;
         }
@@ -410,6 +425,16 @@
             background-color: #203a20 !important;
         }
 
+        /* Keep activity list backgrounds in their original colors */
+        body.dark-theme .modal-content .bg-yellow-50,
+        body.dark-theme .modal-content .bg-yellow-100,
+        body.dark-theme .modal-content .bg-green-100,
+        body.dark-theme .modal-content .bg-blue-100,
+        body.dark-theme .modal-content .bg-purple-100,
+        body.dark-theme .modal-content .bg-gray-50 {
+            background-color: revert !important;
+        }
+
         body.dark-theme .text-yellow-600,
         body.dark-theme .text-red-600,
         body.dark-theme .text-green-600 {
@@ -422,16 +447,28 @@
             color: #e0e0e0 !important;
         }
 
-        body.dark-theme .hover\:bg-yellow-100:hover {
+        body.dark-theme .hover\:bg-yellow-100:hover:not(.modal-content *) {
             background-color: #4a4530 !important;
         }
 
-        body.dark-theme .hover\:bg-red-100:hover {
+        body.dark-theme .hover\:bg-red-100:hover:not(.modal-content *) {
             background-color: #4a3030 !important;
         }
 
-        body.dark-theme .hover\:bg-green-100:hover {
+        body.dark-theme .hover\:bg-green-100:hover:not(.modal-content *) {
             background-color: #304a30 !important;
+        }
+
+        body.dark-theme .hover\:bg-blue-200:hover:not(.modal-content *) {
+            background-color: #304050 !important;
+        }
+
+        body.dark-theme .hover\:bg-purple-200:hover:not(.modal-content *) {
+            background-color: #403050 !important;
+        }
+
+        body.dark-theme .hover\:bg-yellow-200:hover:not(.modal-content *) {
+            background-color: #4a4530 !important;
         }
 
         /* Keep images with white backgrounds visible */
@@ -449,16 +486,8 @@
             color: #000 !important;
         }
 
-        /* Keep "Statistics" label black */
-        body.dark-theme h3:has(+ div .text-3xl),
-        body.dark-theme .statistics-label {
-            color: #000 !important;
-        }
-
-        /* Keep stat numbers in their original color */
-        body.dark-theme .text-3xl.font-bold {
-            color: #1f2937 !important;
-        }
+        /* Statistics label and numbers should keep their default colors in dark theme */
+        /* Removed forced dark colors to allow proper visibility */
 
         /* Keep info buttons gray instead of blue */
         body.dark-theme button[onclick*="showContestInfoModal"].bg-blue-500,
@@ -466,11 +495,8 @@
             background: linear-gradient(to right, #4a5568, #2d3748) !important;
         }
 
-        /* Keep recent activity creation text black */
-        body.dark-theme .bg-green-100 .text-gray-600,
-        body.dark-theme .bg-purple-100 .text-gray-600 {
-            color: #4b5563 !important;
-        }
+        /* Activity list text should keep default colors for readability */
+        /* Removed forced dark text colors on light backgrounds */
 
         /* Polish folder header colors for dark theme */
         body.dark-theme .bg-gradient-to-r.from-yellow-400.to-yellow-500 {
@@ -5183,8 +5209,8 @@
                 message: 'How would you like to revote?',
                 buttons: [
                     { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Start Fresh', action: 'confirmRevote', primary: false },
-                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: true }
+                    { text: 'Start Fresh', action: 'confirmRevote', primary: false, color: 'pink' },
+                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: true, color: 'blue' }
                 ]
             };
             document.body.classList.add('modal-open');
@@ -8487,18 +8513,26 @@
                                 const isAddButton = btn.action === 'confirmAddMultipleItemsToFolder';
                                 const isDisabled = isAddButton && state.selectedFolderItems.length === 0;
 
+                                // Determine button color based on custom color property
+                                let buttonClass = '';
+                                if (isDisabled) {
+                                    buttonClass = 'bg-gray-300 text-gray-500 cursor-not-allowed';
+                                } else if (btn.color === 'pink') {
+                                    buttonClass = 'bg-gradient-to-r from-pink-400 to-pink-600 text-white hover:from-pink-500 hover:to-pink-700';
+                                } else if (btn.color === 'blue') {
+                                    buttonClass = 'bg-gradient-to-r from-blue-400 to-blue-600 text-white hover:from-blue-500 hover:to-blue-700';
+                                } else if (btn.primary) {
+                                    buttonClass = 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700';
+                                } else {
+                                    buttonClass = 'bg-gray-200 text-gray-700 hover:bg-gray-300';
+                                }
+
                                 return `
                                     <button
                                         ${isAddButton ? 'data-add-items-button' : ''}
                                         ${isDisabled ? 'disabled' : ''}
                                         onclick="${onclick}"
-                                        class="px-5 py-2 rounded-lg font-semibold transition text-sm ${
-                                            btn.primary
-                                                ? isDisabled
-                                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                                    : 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700'
-                                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                        }"
+                                        class="px-5 py-2 rounded-lg font-semibold transition text-sm ${buttonClass}"
                                     >
                                         ${btn.text}
                                     </button>
