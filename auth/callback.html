@@ -163,8 +163,14 @@
                     // Don't throw - allow login to continue even if database insert fails
                 }
 
-                // Redirect to main app
-                window.location.href = '../index.html';
+                // Check for pending route and redirect accordingly
+                const pendingRoute = localStorage.getItem('peony_pending_route');
+                if (pendingRoute) {
+                    localStorage.removeItem('peony_pending_route');
+                    window.location.href = `../index.html#${pendingRoute}`;
+                } else {
+                    window.location.href = '../index.html';
+                }
 
             } catch (err) {
                 console.error('Auth error:', err);

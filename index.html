@@ -577,6 +577,8 @@
             activityLogsLoading: false, // Loading state for activity logs modal
             activityDateStart: null, // Start date for activity logs (null = default to 7 days ago)
             activityDateEnd: null, // End date for activity logs (null = default to today)
+            activityFilterUser: null, // Filter activity by specific user ID (null = all users)
+            activityFilterContest: null, // Filter activity by specific contest ID (null = all contests)
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             adminDashboardLoading: false, // Loading state for admin dashboard modal
             showFilters: false, // Toggle for search/sort/filter section
@@ -632,7 +634,8 @@
             showLogoutConfirmModal: false,  // Show logout confirmation modal
             sessionExpired: false,  // Whether session has expired (show banner on login screen)
             darkTheme: false,  // Dark theme enabled
-            themeToggling: false  // Prevent theme toggle spam
+            themeToggling: false,  // Prevent theme toggle spam
+            pendingRoute: null  // Store route to redirect after login (e.g., '#contest=uuid')
         };
 
         function shuffleArray(array) {
@@ -3615,6 +3618,15 @@
             const mergerId = params.get('merger');
             const extractId = params.get('extract');
 
+            // If user is not logged in but trying to access a shared link, store it and show login
+            if ((contestId || mergerId || extractId) && !state.isLoggedIn) {
+                console.log('🔗 [NAVIGATION] Shared link detected but user not logged in, storing route');
+                state.pendingRoute = hash;
+                localStorage.setItem('peony_pending_route', hash);
+                render(); // This will show the login screen with the pending route
+                return;
+            }
+
             // Check for contest share: #contest={uuid}
             if (contestId && state.isLoggedIn) {
                 // Prevent infinite loop: don't reload if already viewing this contest's results
@@ -4755,6 +4767,16 @@
 
         function setActivityEndDate(value) {
             state.activityDateEnd = value;
+        }
+
+        function setActivityFilterUser(userId) {
+            state.activityFilterUser = userId || null;
+            render();
+        }
+
+        function setActivityFilterContest(contestId) {
+            state.activityFilterContest = contestId || null;
+            render();
         }
 
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
@@ -9360,6 +9382,14 @@
                             </p>
                         </div>
                     ` : ''}
+                    ${state.pendingRoute ? `
+                        <div class="bg-blue-50 border border-blue-300 rounded-lg p-3 mb-4">
+                            <p class="text-sm text-blue-800 flex items-center gap-2">
+                                <span class="text-lg">🔗</span>
+                                <span><strong>Shared Link Detected!</strong> Please login to view this content. You'll be redirected automatically after logging in.</span>
+                            </p>
+                        </div>
+                    ` : ''}
                     <div class="text-center mb-6">
                         <div class="w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌺</span>
@@ -13079,6 +13109,62 @@
                                     ${state.activityLogsLoading ? '⏳ Loading...' : '🔄 Refresh'}
                                 </button>
                             </div>
+                            <div class="flex flex-wrap gap-3 items-center mt-3">
+                                <div class="flex-1 min-w-[140px]">
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Filter by User</label>
+                                    <select
+                                        onchange="setActivityFilterUser(this.value)"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                    >
+                                        <option value="">All Users</option>
+                                        ${(() => {
+                                            const uniqueUsers = new Map();
+                                            state.activityLogs.forEach(log => {
+                                                if (!uniqueUsers.has(log.userId)) {
+                                                    uniqueUsers.set(log.userId, {
+                                                        userId: log.userId,
+                                                        username: log.username
+                                                    });
+                                                }
+                                            });
+                                            return Array.from(uniqueUsers.values())
+                                                .sort((a, b) => a.username.localeCompare(b.username))
+                                                .map(user => `
+                                                    <option value="${user.userId}" ${state.activityFilterUser === user.userId ? 'selected' : ''}>
+                                                        ${user.username}
+                                                    </option>
+                                                `).join('');
+                                        })()}
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[140px]">
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Filter by Contest</label>
+                                    <select
+                                        onchange="setActivityFilterContest(this.value)"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                    >
+                                        <option value="">All Contests</option>
+                                        ${(() => {
+                                            const uniqueContests = new Map();
+                                            state.activityLogs.forEach(log => {
+                                                if (log.contestId && !uniqueContests.has(log.contestId)) {
+                                                    uniqueContests.set(log.contestId, {
+                                                        contestId: log.contestId,
+                                                        contestTitle: log.contestTitle
+                                                    });
+                                                }
+                                            });
+                                            return Array.from(uniqueContests.values())
+                                                .sort((a, b) => a.contestTitle.localeCompare(b.contestTitle))
+                                                .map(contest => `
+                                                    <option value="${contest.contestId}" ${state.activityFilterContest == contest.contestId ? 'selected' : ''}>
+                                                        ${contest.contestTitle}
+                                                    </option>
+                                                `).join('');
+                                        })()}
+                                    </select>
+                                </div>
+                            </div>
                             <p class="text-xs text-gray-500 mt-3">Showing activity from ${weekRange}</p>
                         </div>
 
@@ -13091,10 +13177,34 @@
                                 </div>
                             ` : state.activityLogs.length > 0 ? `
                                 <div class="space-y-1">
-                                    ${state.activityLogs.map(log => {
+                                    ${(() => {
+                                        // Apply filters to activity logs
+                                        let filteredLogs = state.activityLogs;
+
+                                        // Filter by user
+                                        if (state.activityFilterUser) {
+                                            filteredLogs = filteredLogs.filter(log => log.userId === state.activityFilterUser);
+                                        }
+
+                                        // Filter by contest
+                                        if (state.activityFilterContest) {
+                                            filteredLogs = filteredLogs.filter(log => log.contestId == state.activityFilterContest);
+                                        }
+
+                                        if (filteredLogs.length === 0) {
+                                            return `
+                                                <div class="text-center py-12">
+                                                    <div class="text-6xl mb-4">🔍</div>
+                                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3>
+                                                    <p class="text-gray-600">No activity matches the selected filters.</p>
+                                                </div>
+                                            `;
+                                        }
+
+                                        return filteredLogs.map(log => {
                                         const style = getEventStyle(log.type);
                                         const isSignup = log.type === 'signup';
-                                        const isCreation = log.type !== 'vote' && log.type !== 'signup';
+                                        const isCreation = log.type !== 'vote' && log.type !== 'vote_completed' && log.type !== 'signup';
                                         const itemName = isCreation ? log.itemName : log.contestTitle;
 
                                         return `
@@ -13127,7 +13237,8 @@
                                                 </div>
                                             </div>
                                         `;
-                                    }).join('')}
+                                    }).join('');
+                                    })()}
                                 </div>
                             ` : `
                                 <div class="text-center py-12">
@@ -14336,6 +14447,8 @@
         window.closeActivityLogs = closeActivityLogs;
         window.setActivityStartDate = setActivityStartDate;
         window.setActivityEndDate = setActivityEndDate;
+        window.setActivityFilterUser = setActivityFilterUser;
+        window.setActivityFilterContest = setActivityFilterContest;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
@@ -14533,6 +14646,12 @@
                         localStorage.removeItem('peony_user');
                     }
                 }
+            }
+
+            // Check for pending route from shared link
+            const pendingRoute = localStorage.getItem('peony_pending_route');
+            if (pendingRoute && !state.isLoggedIn) {
+                state.pendingRoute = pendingRoute;
             }
 
             // Set initialization flag to prevent premature rendering
