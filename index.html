@@ -4725,6 +4725,64 @@
         }
         // --- END ADD ---
 
+        // Helper function to load images with proper tracking
+        function loadImagesWithTracking(images) {
+            return new Promise((resolve) => {
+                const MAX_TIMEOUT = 10000; // 10 seconds max timeout
+                let loadedCount = 0;
+                let hasCompleted = false;
+
+                // Timeout fallback
+                const timeoutId = setTimeout(() => {
+                    if (!hasCompleted) {
+                        hasCompleted = true;
+                        state.isLoadingMultiModeImages = false;
+                        render();
+                        resolve();
+                    }
+                }, MAX_TIMEOUT);
+
+                // If no images, resolve immediately
+                if (!images || images.length === 0) {
+                    clearTimeout(timeoutId);
+                    state.isLoadingMultiModeImages = false;
+                    render();
+                    resolve();
+                    return;
+                }
+
+                // Create image load promises
+                const imagePromises = images.map((img, index) => {
+                    return new Promise((resolveImg) => {
+                        const imageObj = new Image();
+
+                        const onLoadOrError = () => {
+                            if (!hasCompleted) {
+                                loadedCount++;
+                                state.multiModeLoadedImages = loadedCount;
+                                render();
+                                resolveImg();
+                            }
+                        };
+
+                        imageObj.onload = onLoadOrError;
+                        imageObj.onerror = onLoadOrError; // Count errors as loaded to prevent hanging
+                        imageObj.src = img.url;
+                    });
+                });
+
+                // Wait for all images to load
+                Promise.all(imagePromises).then(() => {
+                    if (!hasCompleted) {
+                        hasCompleted = true;
+                        clearTimeout(timeoutId);
+                        state.isLoadingMultiModeImages = false;
+                        render();
+                        resolve();
+                    }
+                });
+            });
+        }
 
         function startVoting(contest) {
             state.currentContest = contest;
@@ -4753,11 +4811,8 @@
                 state.multiModeTotalImages = state.shuffledImages.length;
                 render();
 
-                // Hide loading modal after a short delay
-                setTimeout(() => {
-                    state.isLoadingMultiModeImages = false;
-                    render();
-                }, 500);
+                // Load images with tracking, hide modal when done or after 10s timeout
+                loadImagesWithTracking(state.shuffledImages);
             } else {
                 render();
             }
@@ -5643,11 +5698,8 @@
                 state.multiModeTotalImages = state.shuffledImages.length;
                 render();
 
-                // Hide loading modal after a short delay
-                setTimeout(() => {
-                    state.isLoadingMultiModeImages = false;
-                    render();
-                }, 500);
+                // Load images with tracking, hide modal when done or after 10s timeout
+                loadImagesWithTracking(state.shuffledImages);
             } else {
                 render();
             }
@@ -6959,11 +7011,8 @@
                 state.votingMode = newMode;
                 render();
 
-                // Simulate image loading tracking - hide modal after a short delay
-                setTimeout(() => {
-                    state.isLoadingMultiModeImages = false;
-                    render();
-                }, 500); // Short delay to show loading modal briefly
+                // Load images with tracking, hide modal when done or after 10s timeout
+                loadImagesWithTracking(state.shuffledImages);
             } else {
                 // Switching from multi to single mode
                 state.votingMode = newMode;
@@ -9066,11 +9115,19 @@
 
         function renderMultiModeLoadingModal() {
             if (!state.isLoadingMultiModeImages) return '';
+            const loadedCount = state.multiModeLoadedImages;
+            const totalCount = state.multiModeTotalImages;
+            const progress = totalCount > 0 ? (loadedCount / totalCount * 100) : 0;
+
             return `<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-                <div class="bg-white rounded-lg p-8 flex flex-col items-center max-w-md">
+                <div class="bg-white rounded-lg p-8 flex flex-col items-center max-w-md w-full mx-4">
                     <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-green-600 mb-4"></div>
                     <h3 class="text-xl font-bold text-gray-800 mb-2">Loading Multi-Mode View</h3>
-                    <p class="text-gray-600 text-center">Preparing ${state.multiModeTotalImages} images...</p>
+                    <p class="text-gray-600 text-center mb-4">Loading ${loadedCount} of ${totalCount} images...</p>
+                    <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                        <div class="bg-gradient-to-r from-green-500 to-green-600 h-full rounded-full transition-all duration-300" style="width: ${progress.toFixed(1)}%"></div>
+                    </div>
+                    <p class="text-sm text-gray-500 mt-2">${progress.toFixed(0)}% complete</p>
                 </div>
             </div>`;
         }
