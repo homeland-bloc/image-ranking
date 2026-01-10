@@ -433,6 +433,60 @@
         body.dark-theme .hover\:bg-green-100:hover {
             background-color: #304a30 !important;
         }
+
+        /* Keep images with white backgrounds visible */
+        body.dark-theme img:not(.rounded-full):not(.avatar) {
+            background-color: white !important;
+        }
+
+        /* Keep avatar circles with their background */
+        body.dark-theme .rounded-full {
+            background-color: white !important;
+        }
+
+        /* Keep tabs text black on results page */
+        body.dark-theme button[onclick*="setResultsView"] {
+            color: #000 !important;
+        }
+
+        /* Keep "Statistics" label black */
+        body.dark-theme h3:has(+ div .text-3xl),
+        body.dark-theme .statistics-label {
+            color: #000 !important;
+        }
+
+        /* Keep stat numbers in their original color */
+        body.dark-theme .text-3xl.font-bold {
+            color: #1f2937 !important;
+        }
+
+        /* Keep info buttons gray instead of blue */
+        body.dark-theme button[onclick*="showContestInfoModal"].bg-blue-500,
+        body.dark-theme button[onclick*="showContestInfoModal"].hover\:bg-blue-600 {
+            background: linear-gradient(to right, #4a5568, #2d3748) !important;
+        }
+
+        /* Keep recent activity creation text black */
+        body.dark-theme .bg-green-100 .text-gray-600,
+        body.dark-theme .bg-purple-100 .text-gray-600 {
+            color: #4b5563 !important;
+        }
+
+        /* Polish folder header colors for dark theme */
+        body.dark-theme .bg-gradient-to-r.from-yellow-400.to-yellow-500 {
+            background: linear-gradient(to right, #b8860b, #daa520) !important;
+        }
+
+        /* Polish "Complete Voting" section header */
+        body.dark-theme .bg-gradient-to-r.from-yellow-300.to-yellow-400 {
+            background: linear-gradient(to right, #b8860b, #daa520) !important;
+        }
+
+        /* Polish top bar gradient */
+        body.dark-theme .bg-gradient-to-r.from-mauve-400.to-purple-500,
+        body.dark-theme .bg-gradient-to-r.from-mauve-500.to-purple-600 {
+            background: linear-gradient(to right, #6b5b95, #8b7bb8) !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -561,7 +615,7 @@
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
             votingMode: 'multi',  // 'single' or 'multi' - voting view mode (default: multi)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
-            multiVotingImageScale: 100,  // Image scale for multi-mode voting (40-200%)
+            multiVotingImageScale: 67,  // Image scale for multi-mode voting (20-200%)
             multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
             multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
             showUnifiedCreateModal: false,  // Show unified creation modal
@@ -577,7 +631,8 @@
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
             sessionExpired: false,  // Whether session has expired (show banner on login screen)
-            darkTheme: false  // Dark theme enabled
+            darkTheme: false,  // Dark theme enabled
+            themeToggling: false  // Prevent theme toggle spam
         };
 
         function shuffleArray(array) {
@@ -3021,6 +3076,15 @@
         }
 
         async function toggleDarkTheme() {
+            // Prevent spam clicking
+            if (state.themeToggling) return;
+
+            state.themeToggling = true;
+            setLoading('Switching theme...');
+
+            // Small delay to show loading modal and smooth transition
+            await new Promise(resolve => setTimeout(resolve, 300));
+
             state.darkTheme = !state.darkTheme;
 
             // Apply dark theme class to body
@@ -3054,6 +3118,8 @@
                 }
             }
 
+            clearLoading();
+            state.themeToggling = false;
             render();
         }
 
@@ -4569,21 +4635,36 @@
                     userSample: users[0]
                 });
 
-                // Group votes by user-contest combination
+                // Group votes by user-contest combination and check if voting is complete
                 const activityMap = new Map();
+                const voteCountMap = new Map(); // Track vote counts per user-contest
+
+                // First, count votes per user-contest
+                votes.forEach(vote => {
+                    const countKey = `${vote.user_id}-${vote.contest_id}`;
+                    voteCountMap.set(countKey, (voteCountMap.get(countKey) || 0) + 1);
+                });
+
                 votes.forEach(vote => {
                     const key = `vote-${vote.user_id}-${vote.contest_id}`;
                     if (!activityMap.has(key) || new Date(vote.created_at) > new Date(activityMap.get(key).timestamp)) {
-                        // Get contest title from state.contests
+                        // Get contest title and image count from state.contests
                         const contest = state.contests.find(c => c.id === vote.contest_id);
+                        const totalImages = contest?.images?.length || 0;
+                        const countKey = `${vote.user_id}-${vote.contest_id}`;
+                        const userVoteCount = voteCountMap.get(countKey) || 0;
+                        const isCompleted = totalImages > 0 && userVoteCount === totalImages;
+
                         activityMap.set(key, {
-                            type: 'vote',
+                            type: isCompleted ? 'vote_completed' : 'vote',
                             userId: vote.user_id,
                             username: vote.voter?.username || 'Unknown User',
                             avatar: vote.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${vote.user_id}`,
                             contestId: vote.contest_id,
                             contestTitle: contest?.title || 'Unknown Contest',
-                            timestamp: vote.created_at
+                            timestamp: vote.created_at,
+                            voteCount: userVoteCount,
+                            totalImages: totalImages
                         });
                     }
                 });
@@ -4666,6 +4747,14 @@
         function closeActivityLogs() {
             state.showActivityLogsModal = false;
             render();
+        }
+
+        function setActivityStartDate(value) {
+            state.activityDateStart = value;
+        }
+
+        function setActivityEndDate(value) {
+            state.activityDateEnd = value;
         }
 
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
@@ -5065,14 +5154,15 @@
         }
 
         function startRevote() {
-            // Show confirmation modal
+            // Show confirmation modal with options to start fresh or preload existing votes
             state.modal = {
                 type: 'confirm',
                 icon: '🔄',
-                message: 'Re-vote from scratch? Your new votes will replace your old ones when submitted.',
+                message: 'How would you like to revote?',
                 buttons: [
                     { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Start Revote', action: 'confirmRevote', primary: true }
+                    { text: 'Start Fresh', action: 'confirmRevote', primary: false },
+                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: true }
                 ]
             };
             document.body.classList.add('modal-open');
@@ -5091,6 +5181,46 @@
             state.view = 'vote';
 
             render();
+        }
+
+        async function confirmRevoteWithPrefill() {
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            setLoading('Loading your previous votes...');
+
+            try {
+                // Fetch user's previous votes for this contest
+                const userVotes = await fetchAllVotesPaginated(
+                    `contest_id=eq.${state.currentContest.id}&user_id=eq.${state.user.id}`,
+                    'image_id,score'
+                );
+
+                // Prefill votes from previous submission
+                state.votes = {};
+                userVotes.forEach(vote => {
+                    state.votes[vote.image_id] = vote.score;
+                });
+
+                // Set up voting state
+                state.hasSubmitted = false;
+                state.shuffledImages = shuffleArray(state.currentContest.images);
+                state.currentImageIndex = 0;
+                state.view = 'vote';
+
+                clearLoading();
+                render();
+
+                // Show toast to confirm prefill
+                showToast('Previous votes loaded!', 'success');
+            } catch (error) {
+                console.error('Error loading previous votes:', error);
+                clearLoading();
+                showAlert('Failed to load previous votes. Starting fresh instead.', '❌');
+
+                // Fall back to fresh start
+                confirmRevote();
+            }
         }
 
         async function toggleContestLock(itemId) {
@@ -6680,7 +6810,7 @@
         }
 
         function adjustMultiVotingImageScale(delta) {
-            const newScale = Math.max(40, Math.min(200, state.multiVotingImageScale + delta));
+            const newScale = Math.max(20, Math.min(200, state.multiVotingImageScale + delta));
             state.multiVotingImageScale = newScale;
             render();
         }
@@ -9441,6 +9571,13 @@
                             }
                         });
 
+                        // Sort items by created_at (newest first)
+                        itemsToComplete.sort((a, b) => {
+                            const dateA = new Date(a.item.createdAt || a.item.created_at || 0);
+                            const dateB = new Date(b.item.createdAt || b.item.created_at || 0);
+                            return dateB - dateA;
+                        });
+
                         if (itemsToComplete.length > 0) {
                             const displayItems = state.isCompleteVotingExpanded ? itemsToComplete : itemsToComplete.slice(0, 1);
 
@@ -9464,10 +9601,15 @@
                                         </div>
                                     </div>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
-                                        ${displayItems.map(({ item, type }) => {
-                                            if (type === 'contest') return renderContestCard(item, true);
-                                            if (type === 'merger') return renderMergerCard(item, true);
-                                            if (type === 'extract') return renderExtractCard(item, true);
+                                        ${displayItems.map(({ item, type, votedImages, totalImages }) => {
+                                            const unvotedCount = totalImages - votedImages;
+                                            const unvotedLabel = unvotedCount === 1
+                                                ? 'Just 1 more vote needed!'
+                                                : `Just ${unvotedCount} more votes needed!`;
+
+                                            if (type === 'contest') return renderContestCard(item, false, unvotedLabel);
+                                            if (type === 'merger') return renderMergerCard(item, false, unvotedLabel);
+                                            if (type === 'extract') return renderExtractCard(item, false, unvotedLabel);
                                             return '';
                                         }).join('')}
                                     </div>
@@ -10358,7 +10500,7 @@
             `;
         }
 
-        function renderContestCard(contest, isPinned = false) {
+        function renderContestCard(contest, isPinned = false, unvotedLabel = null) {
                         try {
                                 const userVotes = state.userVotedContests[contest.id] || {};
                                 const votedImageCount = Object.keys(userVotes).length;
@@ -10373,6 +10515,11 @@
 
                             return `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
+                                    ${unvotedLabel ? `
+                                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                                            ${unvotedLabel}
+                                        </div>
+                                    ` : ''}
                                     ${isAdmin && state.appSettings.show_pin_icons ? `
                                         <button
                                             onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
@@ -10490,7 +10637,7 @@
                             }
         }
 
-        function renderMergerCard(merger, isPinned = false) {
+        function renderMergerCard(merger, isPinned = false, unvotedLabel = null) {
             // Get contest details for the merged contests
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
@@ -10519,6 +10666,11 @@
 
             return `
                 <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    ${unvotedLabel ? `
+                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                            ${unvotedLabel}
+                        </div>
+                    ` : ''}
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
@@ -10619,7 +10771,7 @@
             `;
         }
 
-        function renderExtractCard(extract, isPinned = false) {
+        function renderExtractCard(extract, isPinned = false, unvotedLabel = null) {
             // Get source reference
             let sourceRef = 'Unknown';
             if (extract.sourceType === 'contest') {
@@ -10704,6 +10856,11 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                    ${unvotedLabel ? `
+                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                            ${unvotedLabel}
+                        </div>
+                    ` : ''}
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
@@ -11353,7 +11510,7 @@
                                     >−</button>
                                     <input
                                         type="range"
-                                        min="40"
+                                        min="20"
                                         max="200"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
@@ -11763,7 +11920,7 @@
                                     >−</button>
                                     <input
                                         type="range"
-                                        min="40"
+                                        min="20"
                                         max="200"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
@@ -12037,7 +12194,14 @@
             // === USER VOTES VIEW ===
             // Shows images grouped by a selected user's vote scores
             else if (state.resultsView === 'userVotes') {
-                const selectedUserId = state.selectedVoterUserId || state.user?.id;
+                // If no voter is explicitly selected, default to the first voter in the list (not necessarily the current user)
+                let selectedUserId = state.selectedVoterUserId;
+                if (!selectedUserId && state.contestVoters.length > 0) {
+                    selectedUserId = state.contestVoters[0].userId;
+                }
+                if (!selectedUserId) {
+                    selectedUserId = state.user?.id;
+                }
 
                 // Find all votes by the selected user from the loaded results (including blocked ones)
                 const userVotesMap = {};
@@ -12196,8 +12360,10 @@
                                                 onchange="setResultsView('userVotes', this.value)"
                                                 class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
                                             >
-                                                ${state.contestVoters.map(voter => {
-                                                    const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
+                                                ${state.contestVoters.map((voter, index) => {
+                                                    // Default to first voter if no explicit selection
+                                                    const defaultUserId = state.contestVoters.length > 0 ? state.contestVoters[0].userId : state.user?.id;
+                                                    const isSelected = (state.selectedVoterUserId || defaultUserId) === voter.userId;
                                                     const isCurrent = voter.userId === state.user?.id;
                                                     return `
                                                         <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
@@ -12835,7 +13001,9 @@
                         return { bg: 'bg-yellow-100', hover: 'hover:bg-yellow-200', icon: '✂️', text: 'Created extract' };
                     case 'signup':
                         return { bg: 'bg-purple-100', hover: 'hover:bg-purple-200', icon: '👤', text: 'Joined the app' };
-                    default: // vote
+                    case 'vote_completed':
+                        return { bg: 'bg-yellow-50', hover: 'hover:bg-yellow-100', icon: '✅', text: 'Completed voting on' };
+                    default: // vote (partial)
                         return { bg: 'bg-gray-50', hover: 'hover:bg-gray-100', icon: '🗳️', text: 'Voted on' };
                 }
             };
@@ -12890,7 +13058,7 @@
                                         id="activityStartDate"
                                         value="${startDateInput}"
                                         class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
-                                        onchange="state.activityDateStart = this.value"
+                                        onchange="setActivityStartDate(this.value)"
                                     />
                                 </div>
                                 <div class="flex-1 min-w-[140px]">
@@ -12900,7 +13068,7 @@
                                         id="activityEndDate"
                                         value="${endDateInput}"
                                         class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
-                                        onchange="state.activityDateEnd = this.value"
+                                        onchange="setActivityEndDate(this.value)"
                                     />
                                 </div>
                                 <button
@@ -13659,7 +13827,27 @@
             }
             // === USER VOTES VIEW ===
             else if (state.resultsView === 'userVotes') {
-                const selectedUserId = state.selectedVoterUserId || state.user?.id;
+                // Get all voters first to determine default
+                const voterSetTemp = new Set();
+                mergedResultsData.forEach(img => {
+                    (img.breakdown || []).forEach(vote => {
+                        if (!vote.isBlocked) {
+                            voterSetTemp.add(JSON.stringify({ userId: vote.userId, username: vote.username, avatar: vote.avatar }));
+                        }
+                    });
+                });
+                const tempVoters = Array.from(voterSetTemp)
+                    .map(v => JSON.parse(v))
+                    .sort((a, b) => a.username.localeCompare(b.username));
+
+                // Default to first voter if no explicit selection
+                let selectedUserId = state.selectedVoterUserId;
+                if (!selectedUserId && tempVoters.length > 0) {
+                    selectedUserId = tempVoters[0].userId;
+                }
+                if (!selectedUserId) {
+                    selectedUserId = state.user?.id;
+                }
 
                 const userVotesMap = {};
                 mergedResultsData.forEach(imageResult => {
@@ -13792,8 +13980,10 @@
                                             onchange="setResultsView('userVotes', this.value)"
                                             class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
                                         >
-                                            ${mergedVoters.map(voter => {
-                                                const isSelected = (state.selectedVoterUserId || state.user?.id) === voter.userId;
+                                            ${mergedVoters.map((voter, index) => {
+                                                // Default to first voter if no explicit selection
+                                                const defaultUserId = mergedVoters.length > 0 ? mergedVoters[0].userId : state.user?.id;
+                                                const isSelected = (state.selectedVoterUserId || defaultUserId) === voter.userId;
                                                 const isCurrent = voter.userId === state.user?.id;
                                                 return `
                                                     <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
@@ -14090,6 +14280,7 @@
         window.startRevote = startRevote;
         window.startRevoteFromHome = startRevoteFromHome;
         window.confirmRevote = confirmRevote;
+        window.confirmRevoteWithPrefill = confirmRevoteWithPrefill;
         window.toggleUserDropdown = toggleUserDropdown;
         window.shareContest = shareContest;
         window.shareMerge = shareMerge;
@@ -14143,6 +14334,8 @@
         window.toggleAppSetting = toggleAppSetting;
         window.showActivityLogs = showActivityLogs;
         window.closeActivityLogs = closeActivityLogs;
+        window.setActivityStartDate = setActivityStartDate;
+        window.setActivityEndDate = setActivityEndDate;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
