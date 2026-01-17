@@ -305,6 +305,10 @@
             color: #e0e0e0 !important;
         }
 
+        body.dark-theme .text-gray-500 {
+            color: #b0b0b0 !important;
+        }
+
         /* Keep text dark on gray backgrounds for readability */
         body.dark-theme .bg-gray-50 .text-gray-800,
         body.dark-theme .bg-gray-50 .text-gray-700,
@@ -471,15 +475,8 @@
             background-color: #4a4530 !important;
         }
 
-        /* Keep images with white backgrounds visible */
-        body.dark-theme img:not(.rounded-full):not(.avatar) {
-            background-color: white !important;
-        }
-
-        /* Keep avatar circles with their background */
-        body.dark-theme .rounded-full {
-            background-color: white !important;
-        }
+        /* No default white backgrounds for images or avatars in dark theme */
+        /* Specific elements that need white backgrounds are handled by individual rules below */
 
         /* Keep tabs text black on results page */
         body.dark-theme button[onclick*="setResultsView"] {
@@ -512,6 +509,47 @@
         body.dark-theme .bg-gradient-to-r.from-mauve-400.to-purple-500,
         body.dark-theme .bg-gradient-to-r.from-mauve-500.to-purple-600 {
             background: linear-gradient(to right, #6b5b95, #8b7bb8) !important;
+        }
+
+        /* Fix Statistics section background for dark theme */
+        body.dark-theme .bg-gradient-to-r.from-purple-50.to-pink-50 {
+            background: linear-gradient(to right, #2a2040, #402030) !important;
+        }
+
+        body.dark-theme .border-purple-200 {
+            border-color: #5a4a6a !important;
+        }
+
+        /* Keep unvoted score indicator circles white in dark theme */
+        body.dark-theme .score-indicator-unvoted {
+            background-color: white !important;
+            color: #9ca3af !important;
+        }
+
+        /* Fix Create modal button gradients for dark theme */
+        body.dark-theme .bg-gradient-to-r.from-green-50.to-green-100 {
+            background: linear-gradient(to right, #1a3a1a, #2a4a2a) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-amber-50.to-amber-100 {
+            background: linear-gradient(to right, #3a3010, #4a4020) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-blue-50.to-blue-100 {
+            background: linear-gradient(to right, #1a2a3a, #2a3a4a) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-yellow-50.to-yellow-100 {
+            background: linear-gradient(to right, #3a3520, #4a4530) !important;
+        }
+
+        /* Fix hover state light backgrounds in dark theme */
+        body.dark-theme .hover\:bg-yellow-50:hover {
+            background-color: #3a3520 !important;
+        }
+
+        body.dark-theme .hover\:bg-blue-50:hover {
+            background-color: #1a2a3a !important;
         }
     </style>
 </head>
@@ -643,7 +681,7 @@
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
             votingMode: 'multi',  // 'single' or 'multi' - voting view mode (default: multi)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
-            multiVotingImageScale: 67,  // Image scale for multi-mode voting (20-200%)
+            multiVotingImageScale: 100,  // Image scale for multi-mode voting (20-200%)
             multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
             multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
             showUnifiedCreateModal: false,  // Show unified creation modal
@@ -2283,10 +2321,10 @@
                 return;
             }
 
-            // Admin can bypass 100-image limit
+            // Admin can bypass 150-image limit
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 100 && !isAdmin) {
-                showAlert('Maximum 100 images per contest!', '❌');
+            if (state.newContest.images.length >= 150 && !isAdmin) {
+                showAlert('Maximum 150 images per contest!', '❌');
                 return;
             }
 
@@ -2323,10 +2361,10 @@
 
             console.log('✅ User confirmed adding duplicate URL:', url);
 
-            // Admin can bypass 100-image limit
+            // Admin can bypass 150-image limit
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 100 && !isAdmin) {
-                showAlert('Maximum 100 images per contest!', '❌');
+            if (state.newContest.images.length >= 150 && !isAdmin) {
+                showAlert('Maximum 150 images per contest!', '❌');
                 state.tempDuplicateUrl = null;
                 state.tempDuplicateUrlInputId = null;
                 state.modalProcessing = false;
@@ -2568,18 +2606,18 @@
                 return;
             }
 
-            // Check if adding all files would exceed the 100 image limit (admin can bypass)
+            // Check if adding all files would exceed the 150 image limit (admin can bypass)
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const totalImages = state.newContest.images.length + files.length;
-            if (totalImages > 100) {
+            if (totalImages > 150) {
                 if (!isAdmin) {
-                    const availableSlots = 100 - state.newContest.images.length;
-                    showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 100 total)`, '❌');
+                    const availableSlots = 150 - state.newContest.images.length;
+                    showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 150 total)`, '❌');
                     fileInput.value = '';
                     return;
                 } else {
                     // Admin bypassing limit - show notification
-                    showToast(`Admin: Bypassing 100 image limit (adding ${files.length} images, total: ${totalImages})`, 'info');
+                    showToast(`Admin: Bypassing 150 image limit (adding ${files.length} images, total: ${totalImages})`, 'info');
                 }
             }
 
@@ -4675,36 +4713,64 @@
 
                 // Group votes by user-contest combination and check if voting is complete
                 const activityMap = new Map();
-                const voteCountMap = new Map(); // Track vote counts per user-contest
+                const votesByUserContest = new Map(); // Group all votes by user-contest
 
-                // First, count votes per user-contest
+                // Group all votes by user-contest combination
                 votes.forEach(vote => {
-                    const countKey = `${vote.user_id}-${vote.contest_id}`;
-                    voteCountMap.set(countKey, (voteCountMap.get(countKey) || 0) + 1);
+                    const key = `${vote.user_id}-${vote.contest_id}`;
+                    if (!votesByUserContest.has(key)) {
+                        votesByUserContest.set(key, []);
+                    }
+                    votesByUserContest.get(key).push(vote);
                 });
 
-                votes.forEach(vote => {
-                    const key = `vote-${vote.user_id}-${vote.contest_id}`;
-                    if (!activityMap.has(key) || new Date(vote.created_at) > new Date(activityMap.get(key).timestamp)) {
-                        // Get contest title and image count from state.contests
-                        const contest = state.contests.find(c => c.id === vote.contest_id);
-                        const totalImages = contest?.images?.length || 0;
-                        const countKey = `${vote.user_id}-${vote.contest_id}`;
-                        const userVoteCount = voteCountMap.get(countKey) || 0;
-                        const isCompleted = totalImages > 0 && userVoteCount === totalImages;
+                // Analyze each user-contest combination to determine voting portions
+                votesByUserContest.forEach((userVotes, key) => {
+                    // Sort votes by timestamp
+                    userVotes.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-                        activityMap.set(key, {
-                            type: isCompleted ? 'vote_completed' : 'vote',
-                            userId: vote.user_id,
-                            username: vote.voter?.username || 'Unknown User',
-                            avatar: vote.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${vote.user_id}`,
-                            contestId: vote.contest_id,
+                    // Get contest info
+                    const contest = state.contests.find(c => c.id === userVotes[0].contest_id);
+                    const totalImages = contest?.images?.length || 0;
+
+                    // Group votes into portions based on time gaps (> 1 hour = new portion)
+                    const portions = [];
+                    let currentPortion = [userVotes[0]];
+
+                    for (let i = 1; i < userVotes.length; i++) {
+                        const prevTime = new Date(userVotes[i - 1].created_at);
+                        const currTime = new Date(userVotes[i].created_at);
+                        const timeDiff = (currTime - prevTime) / (1000 * 60 * 60); // hours
+
+                        if (timeDiff > 1) {
+                            // New portion - significant time gap
+                            portions.push(currentPortion);
+                            currentPortion = [userVotes[i]];
+                        } else {
+                            currentPortion.push(userVotes[i]);
+                        }
+                    }
+                    portions.push(currentPortion); // Add last portion
+
+                    // For each portion, create an activity entry
+                    // First portion is always "voted on", subsequent portions are "completed voting on"
+                    portions.forEach((portion, portionIndex) => {
+                        const isFirstPortion = portionIndex === 0;
+                        const latestVoteInPortion = portion[portion.length - 1];
+                        const activityKey = `vote-${key}-${portionIndex}`;
+
+                        activityMap.set(activityKey, {
+                            type: isFirstPortion ? 'vote' : 'vote_completed',
+                            userId: latestVoteInPortion.user_id,
+                            username: latestVoteInPortion.voter?.username || 'Unknown User',
+                            avatar: latestVoteInPortion.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${latestVoteInPortion.user_id}`,
+                            contestId: latestVoteInPortion.contest_id,
                             contestTitle: contest?.title || 'Unknown Contest',
-                            timestamp: vote.created_at,
-                            voteCount: userVoteCount,
+                            timestamp: latestVoteInPortion.created_at,
+                            voteCount: userVotes.length,
                             totalImages: totalImages
                         });
-                    }
+                    });
                 });
 
                 // Add contest creations
@@ -5209,8 +5275,8 @@
                 message: 'How would you like to revote?',
                 buttons: [
                     { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Start Fresh', action: 'confirmRevote', primary: false, color: 'pink' },
-                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: true, color: 'blue' }
+                    { text: 'Start Fresh', action: 'confirmRevote', primary: true },
+                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: false, color: 'blue' }
                 ]
             };
             document.body.classList.add('modal-open');
@@ -5756,25 +5822,12 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Check if user has voted on ALL contests (unless admin/creator)
+            // Check permissions (admin/creator can view)
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isCreator = state.user && state.user.id === merger.createdBy;
 
+            // Check if all source contests have public results
             if (!isAdmin && !isCreator) {
-                // Check if user has voted on all contests
-                const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
-                const unvotedContests = mergedContests.filter(c => !state.userVotedContests[c.id]);
-
-                if (unvotedContests.length > 0) {
-                    const contestTitles = unvotedContests.map(c => `• ${c.title}`).join('\n');
-                    showAlert(
-                        `You must vote on all ${mergedContests.length} contests before viewing merge results.\n\nRemaining contests:\n${contestTitles}`,
-                        '🗳️'
-                    );
-                    return;
-                }
-
-                // Check if all source contests have public results
                 const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
                 if (hasPrivateContest) {
                     showAlert('Some contests in this merger have private results. Only the creator or admin can view them.', '🔒');
@@ -7244,8 +7297,14 @@
                 // If userId provided, select that user
                 state.selectedVoterUserId = userId;
             } else if (state.selectedVoterUserId === null) {
-                // Default to current user if not already selected
-                state.selectedVoterUserId = state.user?.id || null;
+                // Check if current user has voted - if not, leave selection empty
+                const currentItemId = state.currentContest?.id || state.currentMergerId;
+                const hasVoted = state.userVotedContests[currentItemId];
+                if (hasVoted) {
+                    // Default to current user only if they have voted
+                    state.selectedVoterUserId = state.user?.id || null;
+                }
+                // Otherwise leave it as null to force user to select someone
             }
 
             render();
@@ -10259,16 +10318,6 @@
                                                 ${item.resultsPublic !== false ? '👁️ Public' : '🔒 Private'}
                                             </button>
                                         </div>
-                                        <!-- View Results Button (Bypass Voting) -->
-                                        <button
-                                            onclick="${itemType === 'merger' ? `adminViewMergerResults('${item.id}')` : itemType === 'extract' ? `adminViewExtractResults('${item.id}')` : `adminViewResults('${item.id}')`}; closeContestInfoModal();"
-                                            class="w-full px-4 py-2 bg-gradient-to-r from-mauve-500 to-mauve-600 text-white rounded-lg font-semibold hover:from-mauve-600 hover:to-mauve-700 transition text-sm flex items-center justify-center gap-2"
-                                        >
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                                            </svg>
-                                            View Results (Bypass Voting)
-                                        </button>
                                         <!-- Edit Extract Button (Extract Only) -->
                                         ${itemType === 'extract' ? `
                                             <button
@@ -10587,21 +10636,21 @@
                                     ${isAdmin && state.appSettings.show_pin_icons ? `
                                         <button
                                             onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-1 right-1 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
                                         </button>
                                     ` : ''}
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-3 ${isAdmin ? (contest.resultsPublic === false ? 'right-20' : 'right-11') : (contest.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                        <div class="absolute top-1 ${isAdmin ? (contest.resultsPublic === false ? 'right-20' : 'right-11') : (contest.resultsPublic === false ? 'right-12' : 'right-1')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
                                     ${contest.resultsPublic === false ? `
-                                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                                        <div class="absolute top-1 ${isAdmin ? 'right-11' : 'right-1'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
@@ -10738,21 +10787,21 @@
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-1 right-1 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${merger.isLocked ? `
-                        <div class="absolute top-3 ${isAdmin ? (merger.resultsPublic === false ? 'right-20' : 'right-11') : (merger.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                        <div class="absolute top-1 ${isAdmin ? (merger.resultsPublic === false ? 'right-20' : 'right-11') : (merger.resultsPublic === false ? 'right-12' : 'right-1')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${merger.resultsPublic === false ? `
-                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-1 ${isAdmin ? 'right-11' : 'right-1'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
@@ -10825,7 +10874,7 @@
                         `}
                         <button
                             onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
-                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
+                            class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
                             title="Merger Info"
                         >
                             ℹ️
@@ -10928,21 +10977,21 @@
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-1 right-1 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${extract.isLocked ? `
-                        <div class="absolute top-3 ${isAdmin ? (extract.resultsPublic === false ? 'right-20' : 'right-11') : (extract.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                        <div class="absolute top-1 ${isAdmin ? (extract.resultsPublic === false ? 'right-20' : 'right-11') : (extract.resultsPublic === false ? 'right-12' : 'right-1')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${extract.resultsPublic === false ? `
-                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-1 ${isAdmin ? 'right-11' : 'right-1'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
@@ -11192,7 +11241,7 @@
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
                             <div class="text-sm font-semibold text-gray-800">
-                                ${state.newContest.images.length} / 100 images added
+                                ${state.newContest.images.length} / 150 images added
                             </div>
                         </div>
 
@@ -11356,7 +11405,7 @@
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
                             <div class="text-sm font-semibold text-gray-800">
-                                ${state.newShortcake.images.length} / 100 images added
+                                ${state.newShortcake.images.length} / 150 images added
                             </div>
                         </div>
 
@@ -11578,7 +11627,7 @@
                                         max="200"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
-                                        class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
                                     />
                                     <button
                                         onclick="adjustMultiVotingImageScale(1)"
@@ -11673,8 +11722,8 @@
 
                                                 <!-- Score indicator circle (top-left) -->
                                                 <div class="absolute top-2 left-2">
-                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg ${currentVote ? '' : 'bg-white text-gray-400'}"
-                                                         style="width: ${circleSize}px; height: ${circleSize}px; font-size: ${fontSize}px; ${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : ''}">
+                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg ${currentVote ? '' : 'score-indicator-unvoted'}"
+                                                         style="width: ${circleSize}px; height: ${circleSize}px; font-size: ${fontSize}px; ${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : 'background-color: white; color: #9ca3af;'}">
                                                         ${currentVote || '?'}
                                                     </div>
                                                 </div>
@@ -12258,40 +12307,41 @@
             // === USER VOTES VIEW ===
             // Shows images grouped by a selected user's vote scores
             else if (state.resultsView === 'userVotes') {
-                // If no voter is explicitly selected, default to the first voter in the list (not necessarily the current user)
+                // Get the selected user ID (no automatic default selection)
                 let selectedUserId = state.selectedVoterUserId;
-                if (!selectedUserId && state.contestVoters.length > 0) {
-                    selectedUserId = state.contestVoters[0].userId;
-                }
+
+                // If no user is selected, show empty results with a placeholder message
                 if (!selectedUserId) {
-                    selectedUserId = state.user?.id;
-                }
-
-                // Find all votes by the selected user from the loaded results (including blocked ones)
-                const userVotesMap = {};
-                const blockedVotesSet = new Set();
-                state.results.forEach(imageResult => {
-                    const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId);
-                    if (userVote) {
-                        userVotesMap[imageResult.id] = userVote.score;
-                        if (userVote.isBlocked) {
-                            blockedVotesSet.add(imageResult.id);
+                    displayResults = [];
+                    grouped = {};
+                    sortedKeys = [];
+                } else {
+                    // Find all votes by the selected user from the loaded results (including blocked ones)
+                    const userVotesMap = {};
+                    const blockedVotesSet = new Set();
+                    state.results.forEach(imageResult => {
+                        const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId);
+                        if (userVote) {
+                            userVotesMap[imageResult.id] = userVote.score;
+                            if (userVote.isBlocked) {
+                                blockedVotesSet.add(imageResult.id);
+                            }
                         }
-                    }
-                });
+                    });
 
-                const hasVotes = Object.keys(userVotesMap).length > 0;
+                    const hasVotes = Object.keys(userVotesMap).length > 0;
 
-                // Map the selected user's votes onto the images
-                displayResults = state.results.map(img => ({
-                    ...img,
-                    averageScore: userVotesMap[img.id] || 0,
-                    userVoteScore: userVotesMap[img.id],
-                    isBlocked: blockedVotesSet.has(img.id)
-                })).filter(img => img.userVoteScore); // Only show images the user voted on
+                    // Map the selected user's votes onto the images
+                    displayResults = state.results.map(img => ({
+                        ...img,
+                        averageScore: userVotesMap[img.id] || 0,
+                        userVoteScore: userVotesMap[img.id],
+                        isBlocked: blockedVotesSet.has(img.id)
+                    })).filter(img => img.userVoteScore); // Only show images the user voted on
 
-                grouped = groupMyVotesByScore(displayResults);
-                sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
+                    grouped = groupMyVotesByScore(displayResults);
+                    sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
+                }
             }
             // === AVERAGE VIEW ===
             // Shows images grouped by average score ranges (e.g., 4.5-5.0, 4.0-4.49, etc.)
@@ -12376,34 +12426,6 @@
                                         </div>
                                     `;
                                 })()}
-                                <!-- Second row: Action buttons (only show if user has voted and contest is not locked) -->
-                                ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
-                                    <div class="flex items-center justify-center gap-3">
-                                        ${(() => {
-                                            const revotingEnabled = state.appSettings.revoting_enabled !== false;
-                                            if (!revotingEnabled) {
-                                                return `
-                                                    <button
-                                                        onclick="showRevotingDisabledModal()"
-                                                        class="px-3 py-1 rounded-lg bg-gray-400 text-gray-200 opacity-50 cursor-not-allowed transition text-sm"
-                                                        title="Revoting is temporarily disabled"
-                                                    >
-                                                        Revote
-                                                    </button>
-                                                `;
-                                            }
-                                            return `
-                                                <button
-                                                    onclick="startRevote()"
-                                                    class="px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition text-sm"
-                                                    title="Re-vote from scratch"
-                                                >
-                                                    Revote
-                                                </button>
-                                            `;
-                                        })()}
-                                    </div>
-                                ` : ''}
                             </div>
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? (() => {
@@ -12424,10 +12446,9 @@
                                                 onchange="setResultsView('userVotes', this.value)"
                                                 class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
                                             >
+                                                ${state.selectedVoterUserId === null ? '<option value="" selected disabled>Select a user...</option>' : ''}
                                                 ${state.contestVoters.map((voter, index) => {
-                                                    // Default to first voter if no explicit selection
-                                                    const defaultUserId = state.contestVoters.length > 0 ? state.contestVoters[0].userId : state.user?.id;
-                                                    const isSelected = (state.selectedVoterUserId || defaultUserId) === voter.userId;
+                                                    const isSelected = state.selectedVoterUserId === voter.userId;
                                                     const isCurrent = voter.userId === state.user?.id;
                                                     return `
                                                         <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
@@ -12539,9 +12560,15 @@
                             `}
                         ` : state.resultsView === 'userVotes' && (!displayResults || displayResults.length === 0) ? `
                             <div class="text-center py-12">
-                                <div class="text-6xl mb-4">📭</div>
-                                <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
-                                <p class="text-gray-600">This user hasn't voted on this contest yet.</p>
+                                ${!state.selectedVoterUserId ? `
+                                    <div class="text-6xl mb-4">👆</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Select a User</h3>
+                                    <p class="text-gray-600">Please select a user from the dropdown above to view their votes.</p>
+                                ` : `
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
+                                    <p class="text-gray-600">This user hasn't voted on this contest yet.</p>
+                                `}
                             </div>
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
@@ -14460,6 +14487,7 @@
         window.toggleScoreSelection = toggleScoreSelection;
         window.voteImageMulti = voteImageMulti;
         window.updateMultiVotingImageScale = updateMultiVotingImageScale;
+        window.adjustMultiVotingImageScale = adjustMultiVotingImageScale;
         window.setMultiModeFilter = setMultiModeFilter;
         window.setMultiModeSort = setMultiModeSort;
         window.deleteContest = deleteContest;
