@@ -10687,9 +10687,9 @@
                             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
                             return `
-                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
+                                <div class="bg-white rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
                                     ${unvotedLabel ? `
-                                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                                             ${unvotedLabel}
                                         </div>
                                     ` : ''}
@@ -10838,9 +10838,9 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
                     ${unvotedLabel ? `
-                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                             ${unvotedLabel}
                         </div>
                     ` : ''}
@@ -11028,9 +11028,9 @@
             }
 
             return `
-                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
                     ${unvotedLabel ? `
-                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                             ${unvotedLabel}
                         </div>
                     ` : ''}
