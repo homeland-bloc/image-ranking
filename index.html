@@ -305,6 +305,10 @@
             color: #e0e0e0 !important;
         }
 
+        body.dark-theme .text-gray-500 {
+            color: #b0b0b0 !important;
+        }
+
         /* Keep text dark on gray backgrounds for readability */
         body.dark-theme .bg-gray-50 .text-gray-800,
         body.dark-theme .bg-gray-50 .text-gray-700,
@@ -520,6 +524,32 @@
         body.dark-theme .score-indicator-unvoted {
             background-color: white !important;
             color: #9ca3af !important;
+        }
+
+        /* Fix Create modal button gradients for dark theme */
+        body.dark-theme .bg-gradient-to-r.from-green-50.to-green-100 {
+            background: linear-gradient(to right, #1a3a1a, #2a4a2a) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-amber-50.to-amber-100 {
+            background: linear-gradient(to right, #3a3010, #4a4020) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-blue-50.to-blue-100 {
+            background: linear-gradient(to right, #1a2a3a, #2a3a4a) !important;
+        }
+
+        body.dark-theme .bg-gradient-to-r.from-yellow-50.to-yellow-100 {
+            background: linear-gradient(to right, #3a3520, #4a4530) !important;
+        }
+
+        /* Fix hover state light backgrounds in dark theme */
+        body.dark-theme .hover\:bg-yellow-50:hover {
+            background-color: #3a3520 !important;
+        }
+
+        body.dark-theme .hover\:bg-blue-50:hover {
+            background-color: #1a2a3a !important;
         }
     </style>
 </head>
@@ -5245,8 +5275,8 @@
                 message: 'How would you like to revote?',
                 buttons: [
                     { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Start Fresh', action: 'confirmRevote', primary: false, color: 'pink' },
-                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: true, color: 'blue' }
+                    { text: 'Start Fresh', action: 'confirmRevote', primary: true },
+                    { text: 'Preload Previous Votes', action: 'confirmRevoteWithPrefill', primary: false, color: 'blue' }
                 ]
             };
             document.body.classList.add('modal-open');
@@ -10606,21 +10636,21 @@
                                     ${isAdmin && state.appSettings.show_pin_icons ? `
                                         <button
                                             onclick="togglePin(event, 'contest', '${contest.id}', ${isPinned})"
-                                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                                            class="absolute top-1 right-1 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                                             title="${isPinned ? 'Unpin contest' : 'Pin contest'}"
                                         >
                                             📌
                                         </button>
                                     ` : ''}
                                     ${contest.isLocked ? `
-                                        <div class="absolute top-3 ${isAdmin ? (contest.resultsPublic === false ? 'right-20' : 'right-11') : (contest.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
+                                        <div class="absolute top-1 ${isAdmin ? (contest.resultsPublic === false ? 'right-20' : 'right-11') : (contest.resultsPublic === false ? 'right-12' : 'right-1')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Contest is locked">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                                             </svg>
                                         </div>
                                     ` : ''}
                                     ${contest.resultsPublic === false ? `
-                                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                                        <div class="absolute top-1 ${isAdmin ? 'right-11' : 'right-1'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                                             </svg>
@@ -10757,21 +10787,21 @@
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'merger', '${merger.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-1 right-1 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin merger' : 'Pin merger'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${merger.isLocked ? `
-                        <div class="absolute top-3 ${isAdmin ? (merger.resultsPublic === false ? 'right-20' : 'right-11') : (merger.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
+                        <div class="absolute top-1 ${isAdmin ? (merger.resultsPublic === false ? 'right-20' : 'right-11') : (merger.resultsPublic === false ? 'right-12' : 'right-1')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Merger is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${merger.resultsPublic === false ? `
-                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-1 ${isAdmin ? 'right-11' : 'right-1'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
@@ -10947,21 +10977,21 @@
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
-                            class="absolute top-3 right-3 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
+                            class="absolute top-1 right-1 ${isPinned ? 'bg-red-800 hover:bg-red-900' : 'bg-red-50 hover:bg-red-100'} ${isPinned ? 'text-white' : 'text-red-800'} p-1 rounded-full shadow-lg transition z-10"
                             title="${isPinned ? 'Unpin extract' : 'Pin extract'}"
                         >
                             📌
                         </button>
                     ` : ''}
                     ${extract.isLocked ? `
-                        <div class="absolute top-3 ${isAdmin ? (extract.resultsPublic === false ? 'right-20' : 'right-11') : (extract.resultsPublic === false ? 'right-12' : 'right-3')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
+                        <div class="absolute top-1 ${isAdmin ? (extract.resultsPublic === false ? 'right-20' : 'right-11') : (extract.resultsPublic === false ? 'right-12' : 'right-1')} bg-black text-white p-1.5 rounded-full shadow-lg" title="Extract is locked">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                             </svg>
                         </div>
                     ` : ''}
                     ${extract.resultsPublic === false ? `
-                        <div class="absolute top-3 ${isAdmin ? 'right-11' : 'right-3'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
+                        <div class="absolute top-1 ${isAdmin ? 'right-11' : 'right-1'} bg-gray-800 text-white p-1.5 rounded-full shadow-lg" title="Results are hidden">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.5 6.5m12.975 12.975L16.121 16.12m0 0l-4.243-4.243m0 0L9.5 9.5M3.5 3.5l5.378 5.378m0 0a3 3 0 014.243 4.243L9.878 9.878z"/>
                             </svg>
