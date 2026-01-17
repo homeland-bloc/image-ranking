@@ -471,16 +471,8 @@
             background-color: #4a4530 !important;
         }
 
-        /* Keep images with white backgrounds visible */
-        body.dark-theme img:not(.rounded-full):not(.avatar) {
-            background-color: white !important;
-        }
-
-        /* Keep avatar circles and specific UI elements with white background */
-        /* Exclude voting score buttons which use inline background-color styles */
-        body.dark-theme .rounded-full:not(button[onclick*="handleVote"]):not(button[onclick*="toggleScoreSelection"]):not(button[data-score]) {
-            background-color: white !important;
-        }
+        /* No default white backgrounds for images or avatars in dark theme */
+        /* Specific elements that need white backgrounds are handled by individual rules below */
 
         /* Keep tabs text black on results page */
         body.dark-theme button[onclick*="setResultsView"] {
@@ -4691,36 +4683,64 @@
 
                 // Group votes by user-contest combination and check if voting is complete
                 const activityMap = new Map();
-                const voteCountMap = new Map(); // Track vote counts per user-contest
+                const votesByUserContest = new Map(); // Group all votes by user-contest
 
-                // First, count votes per user-contest
+                // Group all votes by user-contest combination
                 votes.forEach(vote => {
-                    const countKey = `${vote.user_id}-${vote.contest_id}`;
-                    voteCountMap.set(countKey, (voteCountMap.get(countKey) || 0) + 1);
+                    const key = `${vote.user_id}-${vote.contest_id}`;
+                    if (!votesByUserContest.has(key)) {
+                        votesByUserContest.set(key, []);
+                    }
+                    votesByUserContest.get(key).push(vote);
                 });
 
-                votes.forEach(vote => {
-                    const key = `vote-${vote.user_id}-${vote.contest_id}`;
-                    if (!activityMap.has(key) || new Date(vote.created_at) > new Date(activityMap.get(key).timestamp)) {
-                        // Get contest title and image count from state.contests
-                        const contest = state.contests.find(c => c.id === vote.contest_id);
-                        const totalImages = contest?.images?.length || 0;
-                        const countKey = `${vote.user_id}-${vote.contest_id}`;
-                        const userVoteCount = voteCountMap.get(countKey) || 0;
-                        const isCompleted = totalImages > 0 && userVoteCount === totalImages;
+                // Analyze each user-contest combination to determine voting portions
+                votesByUserContest.forEach((userVotes, key) => {
+                    // Sort votes by timestamp
+                    userVotes.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-                        activityMap.set(key, {
-                            type: isCompleted ? 'vote_completed' : 'vote',
-                            userId: vote.user_id,
-                            username: vote.voter?.username || 'Unknown User',
-                            avatar: vote.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${vote.user_id}`,
-                            contestId: vote.contest_id,
+                    // Get contest info
+                    const contest = state.contests.find(c => c.id === userVotes[0].contest_id);
+                    const totalImages = contest?.images?.length || 0;
+
+                    // Group votes into portions based on time gaps (> 1 hour = new portion)
+                    const portions = [];
+                    let currentPortion = [userVotes[0]];
+
+                    for (let i = 1; i < userVotes.length; i++) {
+                        const prevTime = new Date(userVotes[i - 1].created_at);
+                        const currTime = new Date(userVotes[i].created_at);
+                        const timeDiff = (currTime - prevTime) / (1000 * 60 * 60); // hours
+
+                        if (timeDiff > 1) {
+                            // New portion - significant time gap
+                            portions.push(currentPortion);
+                            currentPortion = [userVotes[i]];
+                        } else {
+                            currentPortion.push(userVotes[i]);
+                        }
+                    }
+                    portions.push(currentPortion); // Add last portion
+
+                    // For each portion, create an activity entry
+                    // First portion is always "voted on", subsequent portions are "completed voting on"
+                    portions.forEach((portion, portionIndex) => {
+                        const isFirstPortion = portionIndex === 0;
+                        const latestVoteInPortion = portion[portion.length - 1];
+                        const activityKey = `vote-${key}-${portionIndex}`;
+
+                        activityMap.set(activityKey, {
+                            type: isFirstPortion ? 'vote' : 'vote_completed',
+                            userId: latestVoteInPortion.user_id,
+                            username: latestVoteInPortion.voter?.username || 'Unknown User',
+                            avatar: latestVoteInPortion.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${latestVoteInPortion.user_id}`,
+                            contestId: latestVoteInPortion.contest_id,
                             contestTitle: contest?.title || 'Unknown Contest',
-                            timestamp: vote.created_at,
-                            voteCount: userVoteCount,
+                            timestamp: latestVoteInPortion.created_at,
+                            voteCount: userVotes.length,
                             totalImages: totalImages
                         });
-                    }
+                    });
                 });
 
                 // Add contest creations
