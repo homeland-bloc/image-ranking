@@ -4755,17 +4755,17 @@
                     votesByUserContest.get(key).push(vote);
                 });
 
-                // For each user-contest combination, we need to fetch ALL votes (not just those in date range)
-                // to properly determine if a voting session is the first or a continuation
+                // For each user-contest combination, check if there are votes BEFORE the date range
+                // This tells us if the first portion in the date range is truly the first, or a continuation
                 const userContestCombinations = Array.from(votesByUserContest.keys());
-                const allVotesMap = new Map();
+                const hasEarlierVotesMap = new Map();
 
-                // Fetch all votes for each user-contest combination to determine portion order correctly
+                // Efficient check: only query if votes exist before date range (lightweight query with limit 1)
                 for (const key of userContestCombinations) {
                     const [userId, contestId] = key.split('-');
                     try {
-                        const allVotesResponse = await fetch(
-                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&contest_id=eq.${contestId}&select=created_at&order=created_at.asc`,
+                        const earlierVotesResponse = await fetch(
+                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&contest_id=eq.${contestId}&created_at=lt.${weekStartISO}&select=created_at&limit=1`,
                             {
                                 headers: {
                                     'apikey': SUPABASE_ANON_KEY,
@@ -4774,12 +4774,15 @@
                                 }
                             }
                         );
-                        if (allVotesResponse.ok) {
-                            const allVotes = await allVotesResponse.json();
-                            allVotesMap.set(key, allVotes);
+                        if (earlierVotesResponse.ok) {
+                            const earlierVotes = await earlierVotesResponse.json();
+                            hasEarlierVotesMap.set(key, earlierVotes.length > 0);
+                        } else {
+                            hasEarlierVotesMap.set(key, false);
                         }
                     } catch (error) {
-                        console.error(`Error fetching all votes for ${key}:`, error);
+                        console.error(`Error checking earlier votes for ${key}:`, error);
+                        hasEarlierVotesMap.set(key, false); // Default to false on error
                     }
                 }
 
@@ -4792,31 +4795,10 @@
                     const contest = state.contests.find(c => c.id === userVotes[0].contest_id);
                     const totalImages = contest?.images?.length || 0;
 
-                    // Get ALL votes for this user-contest to determine true portion order
-                    const allVotesForCombo = allVotesMap.get(key) || userVotes;
+                    // Check if there are earlier votes outside the date range
+                    const hasEarlierVotes = hasEarlierVotesMap.get(key) || false;
 
-                    // Group ALL votes into portions based on time gaps (> 1 hour = new portion)
-                    const allPortions = [];
-                    if (allVotesForCombo.length > 0) {
-                        let currentPortion = [allVotesForCombo[0]];
-
-                        for (let i = 1; i < allVotesForCombo.length; i++) {
-                            const prevTime = new Date(allVotesForCombo[i - 1].created_at);
-                            const currTime = new Date(allVotesForCombo[i].created_at);
-                            const timeDiff = (currTime - prevTime) / (1000 * 60 * 60); // hours
-
-                            if (timeDiff > 1) {
-                                // New portion - significant time gap
-                                allPortions.push(currentPortion);
-                                currentPortion = [allVotesForCombo[i]];
-                            } else {
-                                currentPortion.push(allVotesForCombo[i]);
-                            }
-                        }
-                        allPortions.push(currentPortion); // Add last portion
-                    }
-
-                    // Now group the votes in date range into portions
+                    // Group votes in date range into portions based on time gaps (> 1 hour = new portion)
                     const portions = [];
                     let currentPortion = [userVotes[0]];
 
@@ -4835,23 +4817,13 @@
                     }
                     portions.push(currentPortion); // Add last portion
 
-                    // For each portion in the date range, determine if it's the first overall or a continuation
-                    portions.forEach((portion) => {
+                    // For each portion in the date range, determine type
+                    // If there are earlier votes, all portions are "completed"
+                    // If no earlier votes, first portion is "vote", rest are "completed"
+                    portions.forEach((portion, portionIndex) => {
                         const latestVoteInPortion = portion[portion.length - 1];
-                        const portionTimestamp = new Date(latestVoteInPortion.created_at);
-
-                        // Find which portion index this is in the overall list
-                        let overallPortionIndex = 0;
-                        for (let i = 0; i < allPortions.length; i++) {
-                            const allPortionLatestTime = new Date(allPortions[i][allPortions[i].length - 1].created_at);
-                            if (Math.abs(allPortionLatestTime - portionTimestamp) < 1000) { // within 1 second
-                                overallPortionIndex = i;
-                                break;
-                            }
-                        }
-
-                        const isFirstPortion = overallPortionIndex === 0;
-                        const activityKey = `vote-${key}-${overallPortionIndex}`;
+                        const isFirstPortion = !hasEarlierVotes && portionIndex === 0;
+                        const activityKey = `vote-${key}-${portionIndex}`;
 
                         activityMap.set(activityKey, {
                             type: isFirstPortion ? 'vote' : 'vote_completed',
@@ -4861,7 +4833,7 @@
                             contestId: latestVoteInPortion.contest_id,
                             contestTitle: contest?.title || 'Unknown Contest',
                             timestamp: latestVoteInPortion.created_at,
-                            voteCount: allVotesForCombo.length,
+                            voteCount: userVotes.length,
                             totalImages: totalImages
                         });
                     });
