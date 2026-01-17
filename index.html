@@ -453,6 +453,21 @@
             color: revert !important;
         }
 
+        /* Make voter stats usernames more readable in dark theme (but exclude modal content) */
+        body.dark-theme div.text-xs.font-semibold.text-gray-800:not(.modal-content *) {
+            color: #e0e0e0 !important;
+        }
+
+        /* Darken Contest Average card background for better text contrast */
+        body.dark-theme .bg-gradient-to-br.from-yellow-50.to-yellow-100 {
+            background: linear-gradient(to bottom right, #4a4020, #5a5030) !important;
+        }
+
+        /* Make vote count text more readable on dark Contest Average card */
+        body.dark-theme .bg-gradient-to-br.from-yellow-50.to-yellow-100 .text-gray-500 {
+            color: #b0b0b0 !important;
+        }
+
         body.dark-theme .text-yellow-600:not(.modal-content *),
         body.dark-theme .text-red-600:not(.modal-content *),
         body.dark-theme .text-green-600:not(.modal-content *) {
@@ -6973,7 +6988,7 @@
                 return;
             }
             showConfirm(
-                'Confirm to submit your votes. After submission, you can only revote completely.',
+                'Confirm to submit your votes. After submission, you can revote completely. When revoting, you can choose to start fresh or preload your existing votes.',
                 'confirmSubmitVotes',
                 '🗳️'
             );
