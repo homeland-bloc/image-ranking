@@ -295,6 +295,11 @@
             background-color: #2a3550 !important;
         }
 
+        /* Image container backgrounds blend with dark theme */
+        body.dark-theme .bg-gray-100 {
+            background-color: #2a2a3a !important;
+        }
+
         /* Don't change text color for most text elements */
         body.dark-theme .text-gray-800,
         body.dark-theme .text-gray-600 {
@@ -435,13 +440,37 @@
         body.dark-theme .modal-content .bg-green-100,
         body.dark-theme .modal-content .bg-blue-100,
         body.dark-theme .modal-content .bg-purple-100,
-        body.dark-theme .modal-content .bg-gray-50 {
+        body.dark-theme .modal-content .bg-gray-50,
+        body.dark-theme .modal-content .bg-blue-50 {
             background-color: revert !important;
         }
 
-        body.dark-theme .text-yellow-600,
-        body.dark-theme .text-red-600,
-        body.dark-theme .text-green-600 {
+        /* Ensure text in modal content is readable on light backgrounds */
+        body.dark-theme .modal-content .text-gray-800,
+        body.dark-theme .modal-content .text-gray-700,
+        body.dark-theme .modal-content .text-gray-600,
+        body.dark-theme .modal-content .text-blue-800 {
+            color: revert !important;
+        }
+
+        /* Make voter stats usernames more readable in dark theme (but exclude modal content) */
+        body.dark-theme div.text-xs.font-semibold.text-gray-800:not(.modal-content *) {
+            color: #e0e0e0 !important;
+        }
+
+        /* Darken Contest Average card background for better text contrast */
+        body.dark-theme .bg-gradient-to-br.from-yellow-50.to-yellow-100 {
+            background: linear-gradient(to bottom right, #4a4020, #5a5030) !important;
+        }
+
+        /* Make vote count text more readable on dark Contest Average card */
+        body.dark-theme .bg-gradient-to-br.from-yellow-50.to-yellow-100 .text-gray-500 {
+            color: #b0b0b0 !important;
+        }
+
+        body.dark-theme .text-yellow-600:not(.modal-content *),
+        body.dark-theme .text-red-600:not(.modal-content *),
+        body.dark-theme .text-green-600:not(.modal-content *) {
             color: #d0d0d0 !important;
         }
 
@@ -643,6 +672,7 @@
             activityDateEnd: null, // End date for activity logs (null = default to today)
             activityFilterUser: null, // Filter activity by specific user ID (null = all users)
             activityFilterContest: null, // Filter activity by specific contest ID (null = all contests)
+            activityFilterAction: null, // Filter activity by action type (null = all actions)
             adminStats: { totalVotes: 0, totalUniqueVoters: 0 }, // Admin dashboard statistics
             adminDashboardLoading: false, // Loading state for admin dashboard modal
             showFilters: false, // Toggle for search/sort/filter section
@@ -693,6 +723,7 @@
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
             lastClickedImageId: null,  // Last clicked image ID in multi-mode voting
             isLoadingMultiModeImages: false,  // Whether images are loading in multi mode
+            isTransitioningVotingMode: false,  // Whether voting mode is transitioning (brief modal)
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
@@ -4871,6 +4902,11 @@
             render();
         }
 
+        function setActivityFilterAction(actionType) {
+            state.activityFilterAction = actionType || null;
+            render();
+        }
+
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
         function ensureLocalUser(user) {
             // returns a Promise that resolves when the user exists (or after insertion)
@@ -5017,7 +5053,13 @@
                 // Load images with tracking, hide modal when done or after 10s timeout
                 loadImagesWithTracking(state.shuffledImages);
             } else {
+                // Show brief transition modal for single mode
+                state.isTransitioningVotingMode = true;
                 render();
+                setTimeout(() => {
+                    state.isTransitioningVotingMode = false;
+                    render();
+                }, 400);
             }
         }
 
@@ -6946,7 +6988,7 @@
                 return;
             }
             showConfirm(
-                'Confirm to submit your votes. After submission, you can only revote completely.',
+                'Confirm to submit your votes. After submission, you can revote completely. When revoting, you can choose to start fresh or preload your existing votes.',
                 'confirmSubmitVotes',
                 '🗳️'
             );
@@ -7245,19 +7287,25 @@
                 // Load images with tracking, hide modal when done or after 10s timeout
                 loadImagesWithTracking(state.shuffledImages);
             } else {
-                // Switching from multi to single mode
-                state.votingMode = newMode;
-                state.selectedScore = null;
-
-                // If there was a last clicked image, navigate to it
-                if (state.lastClickedImageId) {
-                    const imageIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
-                    if (imageIndex !== -1) {
-                        state.currentImageIndex = imageIndex;
-                    }
-                }
-
+                // Switching from multi to single mode - show brief transition modal
+                state.isTransitioningVotingMode = true;
                 render();
+
+                setTimeout(() => {
+                    state.votingMode = newMode;
+                    state.selectedScore = null;
+
+                    // If there was a last clicked image, navigate to it
+                    if (state.lastClickedImageId) {
+                        const imageIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
+                        if (imageIndex !== -1) {
+                            state.currentImageIndex = imageIndex;
+                        }
+                    }
+
+                    state.isTransitioningVotingMode = false;
+                    render();
+                }, 400);
             }
         }
 
@@ -9377,6 +9425,18 @@
             </div>`;
         }
 
+        function renderTransitionModal() {
+            if (!state.isTransitioningVotingMode) return '';
+
+            return `<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+                <div class="bg-white rounded-lg p-8 flex flex-col items-center max-w-md w-full mx-4">
+                    <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-mauve-600 mb-4"></div>
+                    <h3 class="text-xl font-bold text-gray-800 mb-2">Switching View...</h3>
+                    <p class="text-gray-600 text-center">Please wait a moment</p>
+                </div>
+            </div>`;
+        }
+
         function renderHeader() {
             const showBackButton = state.view === 'results' || state.view === 'vote' || state.view === 'mergedResults' || state.view === 'createExtract' || state.view === 'editExtract';
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
@@ -9706,7 +9766,7 @@
 
                             return `
                                 <div class="mb-4">
-                                    <div class="bg-gradient-to-r from-yellow-500 to-yellow-600 px-4 py-3 rounded-lg shadow-lg mb-3">
+                                    <div class="bg-gradient-to-r from-yellow-500 to-yellow-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-3 flex-1">
                                                 <button
@@ -9778,7 +9838,7 @@
 
                             return `
                                 <div class="mb-4">
-                                    <div class="bg-gradient-to-r from-red-500 to-red-600 px-4 py-3 rounded-lg shadow-lg mb-3">
+                                    <div class="bg-gradient-to-r from-red-500 to-red-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-3 flex-1">
                                                 <button
@@ -9818,7 +9878,7 @@
                         return '';
                     })()}
 
-                    <div class="bg-gradient-to-r from-green-500 to-green-600 px-3 md:px-4 py-2 md:py-2.5 rounded-lg shadow-lg mb-2">
+                    <div class="bg-gradient-to-r from-green-500 to-green-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-2">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-3 flex-1">
                                 <button
@@ -9830,7 +9890,7 @@
                                     </svg>
                                 </button>
                                 <div class="flex-1">
-                                    <h2 class="text-xl font-bold text-white">All Votings</h2>
+                                    <h2 class="text-lg font-bold text-white">📚 All Votings</h2>
                                 </div>
                             </div>
                             ${!isBanned ? `
@@ -10627,9 +10687,9 @@
                             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
                             return `
-                                <div class="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
+                                <div class="bg-white rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative border-2 border-gray-300">
                                     ${unvotedLabel ? `
-                                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                                             ${unvotedLabel}
                                         </div>
                                     ` : ''}
@@ -10778,9 +10838,9 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
                     ${unvotedLabel ? `
-                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                             ${unvotedLabel}
                         </div>
                     ` : ''}
@@ -10968,9 +11028,9 @@
             }
 
             return `
-                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition fade-in p-4 relative">
+                <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
                     ${unvotedLabel ? `
-                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
+                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                             ${unvotedLabel}
                         </div>
                     ` : ''}
@@ -11600,6 +11660,12 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
+                    <!-- Voting Mode Info Label -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center">
+                        <p class="text-xs text-blue-800">
+                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi-image voting views.
+                        </p>
+                    </div>
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header with progress -->
                         <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
@@ -11627,7 +11693,7 @@
                                         max="200"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
-                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
                                     />
                                     <button
                                         onclick="adjustMultiVotingImageScale(1)"
@@ -11863,6 +11929,12 @@
 
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
+                    <!-- Voting Mode Info Label -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center">
+                        <p class="text-xs text-blue-800">
+                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi-image voting views.
+                        </p>
+                    </div>
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <div class="bg-gray-200 h-3 flex gap-1 p-1">
                             ${Array.from({ length: segmentCount }, (_, segmentIdx) => {
@@ -13095,7 +13167,7 @@
                     case 'vote_completed':
                         return { bg: 'bg-yellow-50', hover: 'hover:bg-yellow-100', icon: '✅', text: 'Completed voting on' };
                     default: // vote (partial)
-                        return { bg: 'bg-gray-50', hover: 'hover:bg-gray-100', icon: '🗳️', text: 'Voted on' };
+                        return { bg: 'bg-gray-100', hover: 'hover:bg-gray-200', icon: '🗳️', text: 'Voted on' };
                 }
             };
 
@@ -13171,7 +13243,7 @@
                                 </button>
                             </div>
                             <div class="flex flex-wrap gap-3 items-center mt-3">
-                                <div class="flex-1 min-w-[140px]">
+                                <div class="flex-1 min-w-[120px]">
                                     <label class="block text-xs font-semibold text-gray-600 mb-1">Filter by User</label>
                                     <select
                                         onchange="setActivityFilterUser(this.value)"
@@ -13198,7 +13270,7 @@
                                         })()}
                                     </select>
                                 </div>
-                                <div class="flex-1 min-w-[140px]">
+                                <div class="flex-1 min-w-[120px]">
                                     <label class="block text-xs font-semibold text-gray-600 mb-1">Filter by Contest</label>
                                     <select
                                         onchange="setActivityFilterContest(this.value)"
@@ -13223,6 +13295,19 @@
                                                     </option>
                                                 `).join('');
                                         })()}
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[120px]">
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Filter by Action</label>
+                                    <select
+                                        onchange="setActivityFilterAction(this.value)"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                    >
+                                        <option value="">All Actions</option>
+                                        <option value="vote" ${state.activityFilterAction === 'vote' ? 'selected' : ''}>Voted On</option>
+                                        <option value="vote_completed" ${state.activityFilterAction === 'vote_completed' ? 'selected' : ''}>Completed</option>
+                                        <option value="contest" ${state.activityFilterAction === 'contest' ? 'selected' : ''}>Created</option>
+                                        <option value="signup" ${state.activityFilterAction === 'signup' ? 'selected' : ''}>Joined</option>
                                     </select>
                                 </div>
                             </div>
@@ -13250,6 +13335,11 @@
                                         // Filter by contest
                                         if (state.activityFilterContest) {
                                             filteredLogs = filteredLogs.filter(log => log.contestId == state.activityFilterContest);
+                                        }
+
+                                        // Filter by action type
+                                        if (state.activityFilterAction) {
+                                            filteredLogs = filteredLogs.filter(log => log.type === state.activityFilterAction);
                                         }
 
                                         if (filteredLogs.length === 0) {
@@ -14412,7 +14502,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderLogoutConfirmModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
         }
 
         window.login = login;
