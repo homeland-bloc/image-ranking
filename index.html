@@ -643,7 +643,7 @@
             selectedFolderItems: [],  // Array of indices for multi-select in Add Item modal
             votingMode: 'multi',  // 'single' or 'multi' - voting view mode (default: multi)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
-            multiVotingImageScale: 67,  // Image scale for multi-mode voting (20-200%)
+            multiVotingImageScale: 100,  // Image scale for multi-mode voting (20-200%)
             multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
             multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
             showUnifiedCreateModal: false,  // Show unified creation modal
@@ -7244,8 +7244,14 @@
                 // If userId provided, select that user
                 state.selectedVoterUserId = userId;
             } else if (state.selectedVoterUserId === null) {
-                // Default to current user if not already selected
-                state.selectedVoterUserId = state.user?.id || null;
+                // Check if current user has voted - if not, leave selection empty
+                const currentItemId = state.currentContest?.id || state.currentMergerId;
+                const hasVoted = state.userVotedContests[currentItemId];
+                if (hasVoted) {
+                    // Default to current user only if they have voted
+                    state.selectedVoterUserId = state.user?.id || null;
+                }
+                // Otherwise leave it as null to force user to select someone
             }
 
             render();
@@ -10259,16 +10265,6 @@
                                                 ${item.resultsPublic !== false ? '👁️ Public' : '🔒 Private'}
                                             </button>
                                         </div>
-                                        <!-- View Results Button (Bypass Voting) -->
-                                        <button
-                                            onclick="${itemType === 'merger' ? `adminViewMergerResults('${item.id}')` : itemType === 'extract' ? `adminViewExtractResults('${item.id}')` : `adminViewResults('${item.id}')`}; closeContestInfoModal();"
-                                            class="w-full px-4 py-2 bg-gradient-to-r from-mauve-500 to-mauve-600 text-white rounded-lg font-semibold hover:from-mauve-600 hover:to-mauve-700 transition text-sm flex items-center justify-center gap-2"
-                                        >
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                                            </svg>
-                                            View Results (Bypass Voting)
-                                        </button>
                                         <!-- Edit Extract Button (Extract Only) -->
                                         ${itemType === 'extract' ? `
                                             <button
@@ -11578,7 +11574,7 @@
                                         max="200"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
-                                        class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                        class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
                                     />
                                     <button
                                         onclick="adjustMultiVotingImageScale(1)"
@@ -12258,40 +12254,41 @@
             // === USER VOTES VIEW ===
             // Shows images grouped by a selected user's vote scores
             else if (state.resultsView === 'userVotes') {
-                // If no voter is explicitly selected, default to the first voter in the list (not necessarily the current user)
+                // Get the selected user ID (no automatic default selection)
                 let selectedUserId = state.selectedVoterUserId;
-                if (!selectedUserId && state.contestVoters.length > 0) {
-                    selectedUserId = state.contestVoters[0].userId;
-                }
+
+                // If no user is selected, show empty results with a placeholder message
                 if (!selectedUserId) {
-                    selectedUserId = state.user?.id;
-                }
-
-                // Find all votes by the selected user from the loaded results (including blocked ones)
-                const userVotesMap = {};
-                const blockedVotesSet = new Set();
-                state.results.forEach(imageResult => {
-                    const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId);
-                    if (userVote) {
-                        userVotesMap[imageResult.id] = userVote.score;
-                        if (userVote.isBlocked) {
-                            blockedVotesSet.add(imageResult.id);
+                    displayResults = [];
+                    grouped = {};
+                    sortedKeys = [];
+                } else {
+                    // Find all votes by the selected user from the loaded results (including blocked ones)
+                    const userVotesMap = {};
+                    const blockedVotesSet = new Set();
+                    state.results.forEach(imageResult => {
+                        const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId);
+                        if (userVote) {
+                            userVotesMap[imageResult.id] = userVote.score;
+                            if (userVote.isBlocked) {
+                                blockedVotesSet.add(imageResult.id);
+                            }
                         }
-                    }
-                });
+                    });
 
-                const hasVotes = Object.keys(userVotesMap).length > 0;
+                    const hasVotes = Object.keys(userVotesMap).length > 0;
 
-                // Map the selected user's votes onto the images
-                displayResults = state.results.map(img => ({
-                    ...img,
-                    averageScore: userVotesMap[img.id] || 0,
-                    userVoteScore: userVotesMap[img.id],
-                    isBlocked: blockedVotesSet.has(img.id)
-                })).filter(img => img.userVoteScore); // Only show images the user voted on
+                    // Map the selected user's votes onto the images
+                    displayResults = state.results.map(img => ({
+                        ...img,
+                        averageScore: userVotesMap[img.id] || 0,
+                        userVoteScore: userVotesMap[img.id],
+                        isBlocked: blockedVotesSet.has(img.id)
+                    })).filter(img => img.userVoteScore); // Only show images the user voted on
 
-                grouped = groupMyVotesByScore(displayResults);
-                sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
+                    grouped = groupMyVotesByScore(displayResults);
+                    sortedKeys = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
+                }
             }
             // === AVERAGE VIEW ===
             // Shows images grouped by average score ranges (e.g., 4.5-5.0, 4.0-4.49, etc.)
@@ -12376,34 +12373,6 @@
                                         </div>
                                     `;
                                 })()}
-                                <!-- Second row: Action buttons (only show if user has voted and contest is not locked) -->
-                                ${state.userVotedContests[state.currentContest.id] && !state.currentContest.isLocked ? `
-                                    <div class="flex items-center justify-center gap-3">
-                                        ${(() => {
-                                            const revotingEnabled = state.appSettings.revoting_enabled !== false;
-                                            if (!revotingEnabled) {
-                                                return `
-                                                    <button
-                                                        onclick="showRevotingDisabledModal()"
-                                                        class="px-3 py-1 rounded-lg bg-gray-400 text-gray-200 opacity-50 cursor-not-allowed transition text-sm"
-                                                        title="Revoting is temporarily disabled"
-                                                    >
-                                                        Revote
-                                                    </button>
-                                                `;
-                                            }
-                                            return `
-                                                <button
-                                                    onclick="startRevote()"
-                                                    class="px-3 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition text-sm"
-                                                    title="Re-vote from scratch"
-                                                >
-                                                    Revote
-                                                </button>
-                                            `;
-                                        })()}
-                                    </div>
-                                ` : ''}
                             </div>
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? (() => {
@@ -12424,10 +12393,9 @@
                                                 onchange="setResultsView('userVotes', this.value)"
                                                 class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm"
                                             >
+                                                ${state.selectedVoterUserId === null ? '<option value="" selected disabled>Select a user...</option>' : ''}
                                                 ${state.contestVoters.map((voter, index) => {
-                                                    // Default to first voter if no explicit selection
-                                                    const defaultUserId = state.contestVoters.length > 0 ? state.contestVoters[0].userId : state.user?.id;
-                                                    const isSelected = (state.selectedVoterUserId || defaultUserId) === voter.userId;
+                                                    const isSelected = state.selectedVoterUserId === voter.userId;
                                                     const isCurrent = voter.userId === state.user?.id;
                                                     return `
                                                         <option value="${voter.userId}" ${isSelected ? 'selected' : ''}>
@@ -12539,9 +12507,15 @@
                             `}
                         ` : state.resultsView === 'userVotes' && (!displayResults || displayResults.length === 0) ? `
                             <div class="text-center py-12">
-                                <div class="text-6xl mb-4">📭</div>
-                                <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
-                                <p class="text-gray-600">This user hasn't voted on this contest yet.</p>
+                                ${!state.selectedVoterUserId ? `
+                                    <div class="text-6xl mb-4">👆</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Select a User</h3>
+                                    <p class="text-gray-600">Please select a user from the dropdown above to view their votes.</p>
+                                ` : `
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
+                                    <p class="text-gray-600">This user hasn't voted on this contest yet.</p>
+                                `}
                             </div>
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
@@ -14460,6 +14434,7 @@
         window.toggleScoreSelection = toggleScoreSelection;
         window.voteImageMulti = voteImageMulti;
         window.updateMultiVotingImageScale = updateMultiVotingImageScale;
+        window.adjustMultiVotingImageScale = adjustMultiVotingImageScale;
         window.setMultiModeFilter = setMultiModeFilter;
         window.setMultiModeSort = setMultiModeSort;
         window.deleteContest = deleteContest;
