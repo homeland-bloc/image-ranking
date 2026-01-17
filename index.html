@@ -476,8 +476,9 @@
             background-color: white !important;
         }
 
-        /* Keep avatar circles with their background */
-        body.dark-theme .rounded-full {
+        /* Keep avatar circles and specific UI elements with white background */
+        /* Exclude voting score buttons which use inline background-color styles */
+        body.dark-theme .rounded-full:not(button[onclick*="handleVote"]):not(button[onclick*="toggleScoreSelection"]):not(button[data-score]) {
             background-color: white !important;
         }
 
@@ -512,6 +513,21 @@
         body.dark-theme .bg-gradient-to-r.from-mauve-400.to-purple-500,
         body.dark-theme .bg-gradient-to-r.from-mauve-500.to-purple-600 {
             background: linear-gradient(to right, #6b5b95, #8b7bb8) !important;
+        }
+
+        /* Fix Statistics section background for dark theme */
+        body.dark-theme .bg-gradient-to-r.from-purple-50.to-pink-50 {
+            background: linear-gradient(to right, #2a2040, #402030) !important;
+        }
+
+        body.dark-theme .border-purple-200 {
+            border-color: #5a4a6a !important;
+        }
+
+        /* Keep unvoted score indicator circles white in dark theme */
+        body.dark-theme .score-indicator-unvoted {
+            background-color: white !important;
+            color: #9ca3af !important;
         }
     </style>
 </head>
@@ -2283,10 +2299,10 @@
                 return;
             }
 
-            // Admin can bypass 100-image limit
+            // Admin can bypass 150-image limit
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 100 && !isAdmin) {
-                showAlert('Maximum 100 images per contest!', '❌');
+            if (state.newContest.images.length >= 150 && !isAdmin) {
+                showAlert('Maximum 150 images per contest!', '❌');
                 return;
             }
 
@@ -2323,10 +2339,10 @@
 
             console.log('✅ User confirmed adding duplicate URL:', url);
 
-            // Admin can bypass 100-image limit
+            // Admin can bypass 150-image limit
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 100 && !isAdmin) {
-                showAlert('Maximum 100 images per contest!', '❌');
+            if (state.newContest.images.length >= 150 && !isAdmin) {
+                showAlert('Maximum 150 images per contest!', '❌');
                 state.tempDuplicateUrl = null;
                 state.tempDuplicateUrlInputId = null;
                 state.modalProcessing = false;
@@ -2568,18 +2584,18 @@
                 return;
             }
 
-            // Check if adding all files would exceed the 100 image limit (admin can bypass)
+            // Check if adding all files would exceed the 150 image limit (admin can bypass)
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const totalImages = state.newContest.images.length + files.length;
-            if (totalImages > 100) {
+            if (totalImages > 150) {
                 if (!isAdmin) {
-                    const availableSlots = 100 - state.newContest.images.length;
-                    showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 100 total)`, '❌');
+                    const availableSlots = 150 - state.newContest.images.length;
+                    showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 150 total)`, '❌');
                     fileInput.value = '';
                     return;
                 } else {
                     // Admin bypassing limit - show notification
-                    showToast(`Admin: Bypassing 100 image limit (adding ${files.length} images, total: ${totalImages})`, 'info');
+                    showToast(`Admin: Bypassing 150 image limit (adding ${files.length} images, total: ${totalImages})`, 'info');
                 }
             }
 
@@ -5756,25 +5772,12 @@
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
-            // Check if user has voted on ALL contests (unless admin/creator)
+            // Check permissions (admin/creator can view)
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isCreator = state.user && state.user.id === merger.createdBy;
 
+            // Check if all source contests have public results
             if (!isAdmin && !isCreator) {
-                // Check if user has voted on all contests
-                const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
-                const unvotedContests = mergedContests.filter(c => !state.userVotedContests[c.id]);
-
-                if (unvotedContests.length > 0) {
-                    const contestTitles = unvotedContests.map(c => `• ${c.title}`).join('\n');
-                    showAlert(
-                        `You must vote on all ${mergedContests.length} contests before viewing merge results.\n\nRemaining contests:\n${contestTitles}`,
-                        '🗳️'
-                    );
-                    return;
-                }
-
-                // Check if all source contests have public results
                 const hasPrivateContest = mergedContests.some(c => c.resultsPublic === false && c.createdBy !== state.user.id);
                 if (hasPrivateContest) {
                     showAlert('Some contests in this merger have private results. Only the creator or admin can view them.', '🔒');
@@ -10821,7 +10824,7 @@
                         `}
                         <button
                             onclick='showContestInfoModal(${safeStringify(merger)}, "merger")'
-                            class="bg-gradient-to-r from-blue-300 to-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-400 hover:to-blue-600 transition shadow-md text-sm flex items-center gap-1"
+                            class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
                             title="Merger Info"
                         >
                             ℹ️
@@ -11188,7 +11191,7 @@
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
                             <div class="text-sm font-semibold text-gray-800">
-                                ${state.newContest.images.length} / 100 images added
+                                ${state.newContest.images.length} / 150 images added
                             </div>
                         </div>
 
@@ -11352,7 +11355,7 @@
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
                             <div class="text-sm font-semibold text-gray-800">
-                                ${state.newShortcake.images.length} / 100 images added
+                                ${state.newShortcake.images.length} / 150 images added
                             </div>
                         </div>
 
@@ -11669,8 +11672,8 @@
 
                                                 <!-- Score indicator circle (top-left) -->
                                                 <div class="absolute top-2 left-2">
-                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg ${currentVote ? '' : 'bg-white text-gray-400'}"
-                                                         style="width: ${circleSize}px; height: ${circleSize}px; font-size: ${fontSize}px; ${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : ''}">
+                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg ${currentVote ? '' : 'score-indicator-unvoted'}"
+                                                         style="width: ${circleSize}px; height: ${circleSize}px; font-size: ${fontSize}px; ${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : 'background-color: white; color: #9ca3af;'}">
                                                         ${currentVote || '?'}
                                                     </div>
                                                 </div>
