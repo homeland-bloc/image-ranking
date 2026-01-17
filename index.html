@@ -11662,8 +11662,8 @@
                 <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
                     <!-- Voting Mode Info Label -->
                     <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center">
-                        <p class="text-xs text-blue-800">
-                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi-image voting views.
+                        <p class="text-xs text-blue-800 dark:text-blue-200">
+                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
                         </p>
                     </div>
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
@@ -11931,8 +11931,8 @@
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     <!-- Voting Mode Info Label -->
                     <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center">
-                        <p class="text-xs text-blue-800">
-                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi-image voting views.
+                        <p class="text-xs text-blue-800 dark:text-blue-200">
+                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
                         </p>
                     </div>
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
@@ -13215,7 +13215,7 @@
                             </div>
                             <div class="flex flex-wrap gap-3 items-end">
                                 <div class="flex-1 min-w-[140px]">
-                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Start Date</label>
+                                    <label class="block text-xs font-semibold text-gray-600 dark:text-black mb-1">Start Date</label>
                                     <input
                                         type="date"
                                         id="activityStartDate"
@@ -13225,7 +13225,7 @@
                                     />
                                 </div>
                                 <div class="flex-1 min-w-[140px]">
-                                    <label class="block text-xs font-semibold text-gray-600 mb-1">End Date</label>
+                                    <label class="block text-xs font-semibold text-gray-600 dark:text-black mb-1">End Date</label>
                                     <input
                                         type="date"
                                         id="activityEndDate"
@@ -14601,6 +14601,7 @@
         window.setActivityEndDate = setActivityEndDate;
         window.setActivityFilterUser = setActivityFilterUser;
         window.setActivityFilterContest = setActivityFilterContest;
+        window.setActivityFilterAction = setActivityFilterAction;
         window.confirmBanUser = confirmBanUser;
         window.handleBanUserReason = handleBanUserReason;
         window.executeBanUser = executeBanUser;
