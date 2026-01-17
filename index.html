@@ -4755,6 +4755,34 @@
                     votesByUserContest.get(key).push(vote);
                 });
 
+                // For each user-contest combination, we need to fetch ALL votes (not just those in date range)
+                // to properly determine if a voting session is the first or a continuation
+                const userContestCombinations = Array.from(votesByUserContest.keys());
+                const allVotesMap = new Map();
+
+                // Fetch all votes for each user-contest combination to determine portion order correctly
+                for (const key of userContestCombinations) {
+                    const [userId, contestId] = key.split('-');
+                    try {
+                        const allVotesResponse = await fetch(
+                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&contest_id=eq.${contestId}&select=created_at&order=created_at.asc`,
+                            {
+                                headers: {
+                                    'apikey': SUPABASE_ANON_KEY,
+                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                    'Cache-Control': 'no-cache'
+                                }
+                            }
+                        );
+                        if (allVotesResponse.ok) {
+                            const allVotes = await allVotesResponse.json();
+                            allVotesMap.set(key, allVotes);
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching all votes for ${key}:`, error);
+                    }
+                }
+
                 // Analyze each user-contest combination to determine voting portions
                 votesByUserContest.forEach((userVotes, key) => {
                     // Sort votes by timestamp
@@ -4764,7 +4792,31 @@
                     const contest = state.contests.find(c => c.id === userVotes[0].contest_id);
                     const totalImages = contest?.images?.length || 0;
 
-                    // Group votes into portions based on time gaps (> 1 hour = new portion)
+                    // Get ALL votes for this user-contest to determine true portion order
+                    const allVotesForCombo = allVotesMap.get(key) || userVotes;
+
+                    // Group ALL votes into portions based on time gaps (> 1 hour = new portion)
+                    const allPortions = [];
+                    if (allVotesForCombo.length > 0) {
+                        let currentPortion = [allVotesForCombo[0]];
+
+                        for (let i = 1; i < allVotesForCombo.length; i++) {
+                            const prevTime = new Date(allVotesForCombo[i - 1].created_at);
+                            const currTime = new Date(allVotesForCombo[i].created_at);
+                            const timeDiff = (currTime - prevTime) / (1000 * 60 * 60); // hours
+
+                            if (timeDiff > 1) {
+                                // New portion - significant time gap
+                                allPortions.push(currentPortion);
+                                currentPortion = [allVotesForCombo[i]];
+                            } else {
+                                currentPortion.push(allVotesForCombo[i]);
+                            }
+                        }
+                        allPortions.push(currentPortion); // Add last portion
+                    }
+
+                    // Now group the votes in date range into portions
                     const portions = [];
                     let currentPortion = [userVotes[0]];
 
@@ -4783,12 +4835,23 @@
                     }
                     portions.push(currentPortion); // Add last portion
 
-                    // For each portion, create an activity entry
-                    // First portion is always "voted on", subsequent portions are "completed voting on"
-                    portions.forEach((portion, portionIndex) => {
-                        const isFirstPortion = portionIndex === 0;
+                    // For each portion in the date range, determine if it's the first overall or a continuation
+                    portions.forEach((portion) => {
                         const latestVoteInPortion = portion[portion.length - 1];
-                        const activityKey = `vote-${key}-${portionIndex}`;
+                        const portionTimestamp = new Date(latestVoteInPortion.created_at);
+
+                        // Find which portion index this is in the overall list
+                        let overallPortionIndex = 0;
+                        for (let i = 0; i < allPortions.length; i++) {
+                            const allPortionLatestTime = new Date(allPortions[i][allPortions[i].length - 1].created_at);
+                            if (Math.abs(allPortionLatestTime - portionTimestamp) < 1000) { // within 1 second
+                                overallPortionIndex = i;
+                                break;
+                            }
+                        }
+
+                        const isFirstPortion = overallPortionIndex === 0;
+                        const activityKey = `vote-${key}-${overallPortionIndex}`;
 
                         activityMap.set(activityKey, {
                             type: isFirstPortion ? 'vote' : 'vote_completed',
@@ -4798,7 +4861,7 @@
                             contestId: latestVoteInPortion.contest_id,
                             contestTitle: contest?.title || 'Unknown Contest',
                             timestamp: latestVoteInPortion.created_at,
-                            voteCount: userVotes.length,
+                            voteCount: allVotesForCombo.length,
                             totalImages: totalImages
                         });
                     });
@@ -13220,7 +13283,7 @@
                                         type="date"
                                         id="activityStartDate"
                                         value="${startDateInput}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 dark:text-gray-900 focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
                                         onchange="setActivityStartDate(this.value)"
                                     />
                                 </div>
@@ -13230,7 +13293,7 @@
                                         type="date"
                                         id="activityEndDate"
                                         value="${endDateInput}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 dark:text-gray-900 focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
                                         onchange="setActivityEndDate(this.value)"
                                     />
                                 </div>
@@ -13339,7 +13402,13 @@
 
                                         // Filter by action type
                                         if (state.activityFilterAction) {
-                                            filteredLogs = filteredLogs.filter(log => log.type === state.activityFilterAction);
+                                            filteredLogs = filteredLogs.filter(log => {
+                                                // "Created" filter should include contests, mergers, and extracts
+                                                if (state.activityFilterAction === 'contest') {
+                                                    return log.type === 'contest' || log.type === 'merger' || log.type === 'extract';
+                                                }
+                                                return log.type === state.activityFilterAction;
+                                            });
                                         }
 
                                         if (filteredLogs.length === 0) {
