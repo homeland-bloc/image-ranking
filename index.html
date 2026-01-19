@@ -14582,6 +14582,27 @@
                                         </div>
                                     `;
                                 })()}
+
+                                <!-- Score selection buttons for Count view -->
+                                ${state.resultsView === 'count' ? `
+                                    <div class="flex items-center justify-center gap-2 mt-3">
+                                        <label class="text-xs font-medium text-gray-700">Select Scores:</label>
+                                        ${[1, 2, 3, 4, 5].map(score => {
+                                            const isSelected = state.countSelectedScores.includes(score);
+                                            const colorStyle = getScoreColor(score);
+                                            return `
+                                                <button
+                                                    onclick="toggleCountScore(${score})"
+                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-60 hover:opacity-100'}"
+                                                    style="background-color: ${colorStyle};"
+                                                    title="${isSelected ? 'Click to deselect' : 'Click to select'}"
+                                                >
+                                                    ${score}
+                                                </button>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                ` : ''}
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && mergedVoters.length > 0 ? `
                                     <div class="flex items-center gap-2">
