@@ -455,6 +455,12 @@
             color: revert !important;
         }
 
+        /* Override Tailwind dark: variants to only respond to app theme toggle, not OS preference */
+        /* Force dark blue text in light mode (consistent across mobile and PC) */
+        body:not(.dark-theme) .bg-blue-50 .text-blue-800 {
+            color: #1e40af !important; /* blue-800 - matches PC behavior */
+        }
+
         /* Make tip message text readable in dark theme (multi-mode voting) */
         body.dark-theme .bg-blue-50 .text-blue-800 {
             color: #bfdbfe !important; /* blue-200 */
