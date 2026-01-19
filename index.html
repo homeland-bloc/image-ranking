@@ -14798,9 +14798,15 @@
                             `}
                         ` : state.resultsView === 'userVotes' && (!displayResults || displayResults.length === 0) ? `
                             <div class="text-center py-12">
-                                <div class="text-6xl mb-4">📭</div>
-                                <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
-                                <p class="text-gray-600">This user hasn't voted on any images in these contests.</p>
+                                ${!state.selectedVoterUserId ? `
+                                    <div class="text-6xl mb-4">👆</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Select a User</h3>
+                                    <p class="text-gray-600">Please select a user from the dropdown above to view their votes.</p>
+                                ` : `
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
+                                    <p class="text-gray-600">This user hasn't voted on any images in these contests.</p>
+                                `}
                             </div>
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
