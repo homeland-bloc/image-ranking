@@ -41,6 +41,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
+            darkMode: ['class', '.dark-theme'],
             theme: {
                 extend: {
                     colors: {
@@ -452,6 +453,11 @@
         body.dark-theme .modal-content .text-gray-600,
         body.dark-theme .modal-content .text-blue-800 {
             color: revert !important;
+        }
+
+        /* Make tip message text readable in dark theme (multi-mode voting) */
+        body.dark-theme .bg-blue-50 .text-blue-800 {
+            color: #bfdbfe !important; /* blue-200 */
         }
 
         /* Make voter stats usernames more readable in dark theme (but exclude modal content) */
