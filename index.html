@@ -12834,9 +12834,8 @@
                                         return `
                                             <div class="flex items-stretch gap-2">
                                                 <!-- Vertical Score Panel (left side, thin) -->
-                                                <div class="w-16 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
-                                                    <div class="text-2xl mb-1">${count}</div>
-                                                    <div class="text-xs opacity-90 text-center leading-tight">count</div>
+                                                <div class="w-12 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
+                                                    <div class="text-2xl">${count}</div>
                                                 </div>
 
                                                 <!-- Images Panel (right side, wraps) -->
@@ -12853,11 +12852,6 @@
                                                                     class="h-full w-auto object-cover"
                                                                     style="height: ${imageSize}px;"
                                                                 />
-                                                                <div class="absolute top-1 left-1">
-                                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg w-7 h-7 text-white text-xs" style="background-color: ${bgColor};">
-                                                                        ${count}
-                                                                    </div>
-                                                                </div>
                                                                 <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
                                                                     ${img.averageScore}
                                                                 </div>
@@ -14687,9 +14681,8 @@
                                         return `
                                             <div class="flex items-stretch gap-2">
                                                 <!-- Vertical Score Panel (left side, thin) -->
-                                                <div class="w-16 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
-                                                    <div class="text-2xl mb-1">${count}</div>
-                                                    <div class="text-xs opacity-90 text-center leading-tight">count</div>
+                                                <div class="w-12 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
+                                                    <div class="text-2xl">${count}</div>
                                                 </div>
 
                                                 <!-- Images Panel (right side, wraps) -->
@@ -14706,11 +14699,6 @@
                                                                     class="h-full w-auto object-cover"
                                                                     style="height: ${imageSize}px;"
                                                                 />
-                                                                <div class="absolute top-1 left-1">
-                                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg w-7 h-7 text-white text-xs" style="background-color: ${bgColor};">
-                                                                        ${count}
-                                                                    </div>
-                                                                </div>
                                                                 <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
                                                                     ${img.averageScore}
                                                                 </div>
@@ -15080,6 +15068,8 @@
         window.shareMerger = shareMerger;
         window.revoteMerge = revoteMerge;
         window.startRevoteFromHomeMerger = startRevoteFromHomeMerger;
+        window.confirmRevoteMerger = confirmRevoteMerger;
+        window.confirmRevoteMergerWithPrefill = confirmRevoteMergerWithPrefill;
         window.confirmRevoteAll = confirmRevoteAll;
         window.confirmVoteMissingOnly = confirmVoteMissingOnly;
         window.showContestVoteModal = showContestVoteModal;
