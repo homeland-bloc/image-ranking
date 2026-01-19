@@ -655,10 +655,11 @@
             newContest: { title: '', images: [] },
             newShortcake: { title: '', images: [], min: 5, max: 20 },
             showMyVotes: false,  // Deprecated, use resultsView
-            resultsView: 'average',  // 'average', 'userVotes', or 'byVoter'
+            resultsView: 'average',  // 'average', 'userVotes', 'byVoter', or 'count'
             voterSortBy: 'scoreDesc',  // 'scoreDesc', 'scoreAsc', 'nameAsc', 'nameDesc' for byVoter view
             selectedVoterUserId: null,  // For user votes dropdown (null = current user)
             contestVoters: [],  // List of all users who voted in current contest(s)
+            countSelectedScores: [],  // Array of selected scores for count view (e.g., [1, 5])
             shuffledImages: [],
             nextContestId: 1,
             bannedUsers: [], // Array of user IDs who are banned from app
@@ -7478,6 +7479,67 @@
             render();
         }
 
+        function toggleCountScore(score) {
+            const index = state.countSelectedScores.indexOf(score);
+            if (index > -1) {
+                // Remove score if already selected
+                state.countSelectedScores.splice(index, 1);
+            } else {
+                // Add score if not selected
+                state.countSelectedScores.push(score);
+            }
+            render();
+        }
+
+        function generateCountData() {
+            // Count how many times each image received the selected scores
+            const countMap = {}; // { imageId: count }
+
+            state.results.forEach(imageResult => {
+                let count = 0;
+                imageResult.breakdown.forEach(vote => {
+                    // Only count non-blocked votes
+                    if (!vote.isBlocked && state.countSelectedScores.includes(vote.score)) {
+                        count++;
+                    }
+                });
+
+                if (count > 0) {
+                    countMap[imageResult.id] = count;
+                }
+            });
+
+            // Group images by count
+            const grouped = {}; // { count: [imageResults] }
+            const imagesWithCounts = state.results
+                .filter(img => countMap[img.id] > 0)
+                .map(img => ({
+                    ...img,
+                    count: countMap[img.id]
+                }));
+
+            imagesWithCounts.forEach(img => {
+                if (!grouped[img.count]) {
+                    grouped[img.count] = [];
+                }
+                grouped[img.count].push(img);
+            });
+
+            // Sort images within each count group by average score (tie-breaker)
+            Object.keys(grouped).forEach(count => {
+                grouped[count].sort((a, b) => b.averageScore - a.averageScore);
+            });
+
+            // Get sorted counts (highest to lowest)
+            const sortedCounts = Object.keys(grouped)
+                .map(k => parseInt(k))
+                .sort((a, b) => b - a);
+
+            const maxCount = sortedCounts.length > 0 ? sortedCounts[0] : 0;
+
+            return { grouped, sortedCounts, maxCount };
+        }
+
         function updateScale(value) {
             clearTimeout(state.scaleUpdateTimeout);
             state.scaleUpdateTimeout = setTimeout(() => {
@@ -12489,6 +12551,9 @@
                                         Total
                                     </button>
                                     <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
+                                        Count
+                                    </button>
+                                    <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
                                         By User
                                     </button>
                                     <button class="px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed" disabled>
@@ -12510,11 +12575,16 @@
                 `;
             }
 
-            let displayResults, grouped, sortedKeys, voterStats;
+            let displayResults, grouped, sortedKeys, voterStats, countData;
 
+            // === COUNT VIEW ===
+            // Shows images grouped by count of specific score votes
+            if (state.resultsView === 'count') {
+                countData = generateCountData();
+            }
             // === BY VOTER VIEW ===
             // Shows statistics for each voter, including their average score across all images
-            if (state.resultsView === 'byVoter') {
+            else if (state.resultsView === 'byVoter') {
                 voterStats = generateVoterStats();
             }
             // === USER VOTES VIEW ===
@@ -12584,6 +12654,7 @@
                             <p class="text-gray-600 text-sm mb-1">${
                                 state.resultsView === 'byVoter' ? 'Average scores per voter' :
                                 state.resultsView === 'userVotes' ? 'Individual user votes' :
+                                state.resultsView === 'count' ? 'Count of specific score votes' :
                                 'Total votes from all participants'
                             }</p>
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
@@ -12623,6 +12694,13 @@
                                                 Total
                                             </button>
                                             <button
+                                                ${onclick}="setResultsView('count')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'count' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Count
+                                            </button>
+                                            <button
                                                 ${onclick}="setResultsView('userVotes')"
                                                 class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
                                                 ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
@@ -12639,6 +12717,27 @@
                                         </div>
                                     `;
                                 })()}
+
+                                <!-- Score selection buttons for Count view -->
+                                ${state.resultsView === 'count' ? `
+                                    <div class="flex items-center justify-center gap-2 mt-3">
+                                        <label class="text-xs font-medium text-gray-700">Select Scores:</label>
+                                        ${[1, 2, 3, 4, 5].map(score => {
+                                            const isSelected = state.countSelectedScores.includes(score);
+                                            const colorStyle = getScoreColor(score);
+                                            return `
+                                                <button
+                                                    onclick="toggleCountScore(${score})"
+                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-60 hover:opacity-100'}"
+                                                    style="background-color: ${colorStyle};"
+                                                    title="${isSelected ? 'Click to deselect' : 'Click to select'}"
+                                                >
+                                                    ${score}
+                                                </button>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                ` : ''}
                             </div>
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && state.contestVoters.length > 0 ? (() => {
@@ -12703,7 +12802,69 @@
                             </div>
                         ` : ''}
 
-                        ${state.resultsView === 'byVoter' ? `
+                        ${state.resultsView === 'count' ? `
+                            ${state.countSelectedScores.length === 0 ? `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">👆</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Select Score(s)</h3>
+                                    <p class="text-gray-600">Please select one or more scores from the buttons above to see the count breakdown.</p>
+                                </div>
+                            ` : countData && countData.sortedCounts.length > 0 ? `
+                                <div class="space-y-3">
+                                    ${countData.sortedCounts.map(count => {
+                                        const images = countData.grouped[count];
+                                        // Dynamic gradient: purple→red→orange→yellow→green→light blue→blue
+                                        const ratio = count / countData.maxCount;
+                                        const baseHue = 270 + (ratio * 330); // 270 (purple) + up to 330 degrees
+                                        const hue = baseHue % 360;
+                                        const bgColor = `hsl(${hue}, 70%, 45%)`;
+
+                                        return `
+                                            <div class="flex items-stretch gap-2">
+                                                <!-- Vertical Score Panel (left side, thin) -->
+                                                <div class="w-16 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
+                                                    <div class="text-2xl mb-1">${count}</div>
+                                                    <div class="text-xs opacity-90 text-center leading-tight">count</div>
+                                                </div>
+
+                                                <!-- Images Panel (right side, wraps) -->
+                                                <div class="flex-1 flex flex-wrap gap-1 items-start">
+                                                    ${images.map(img => `
+                                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdown(${img.id})">
+                                                            <div
+                                                                class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
+                                                                style="height: ${imageSize}px; border: 3px solid ${bgColor};"
+                                                            >
+                                                                <img
+                                                                    src="${img.url}"
+                                                                    alt="Image"
+                                                                    class="h-full w-auto object-cover"
+                                                                    style="height: ${imageSize}px;"
+                                                                />
+                                                                <div class="absolute top-1 left-1">
+                                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg w-7 h-7 text-white text-xs" style="background-color: ${bgColor};">
+                                                                        ${count}
+                                                                    </div>
+                                                                </div>
+                                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                                    ${img.averageScore}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    `).join('')}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3>
+                                    <p class="text-gray-600">No images have received the selected score(s).</p>
+                                </div>
+                            `}
+                        ` : state.resultsView === 'byVoter' ? `
                             ${voterStats && voterStats.length > 0 ? `
                                 <div class="mb-4 flex justify-center">
                                     <div class="flex items-center gap-2">
@@ -14189,10 +14350,59 @@
                 breakdown: img.voteBreakdown || []
             }));
 
-            let displayResults, grouped, sortedKeys, voterStats;
+            let displayResults, grouped, sortedKeys, voterStats, countData;
 
+            // === COUNT VIEW ===
+            if (state.resultsView === 'count') {
+                // Count how many times each image received the selected scores
+                const countMap = {}; // { imageId: count }
+
+                mergedResultsData.forEach(imageResult => {
+                    let count = 0;
+                    (imageResult.breakdown || []).forEach(vote => {
+                        // Only count non-blocked votes
+                        if (!vote.isBlocked && state.countSelectedScores.includes(vote.score)) {
+                            count++;
+                        }
+                    });
+
+                    if (count > 0) {
+                        countMap[imageResult.id] = count;
+                    }
+                });
+
+                // Group images by count
+                const grouped = {}; // { count: [imageResults] }
+                const imagesWithCounts = mergedResultsData
+                    .filter(img => countMap[img.id] > 0)
+                    .map(img => ({
+                        ...img,
+                        count: countMap[img.id]
+                    }));
+
+                imagesWithCounts.forEach(img => {
+                    if (!grouped[img.count]) {
+                        grouped[img.count] = [];
+                    }
+                    grouped[img.count].push(img);
+                });
+
+                // Sort images within each count group by average score (tie-breaker)
+                Object.keys(grouped).forEach(count => {
+                    grouped[count].sort((a, b) => b.averageScore - a.averageScore);
+                });
+
+                // Get sorted counts (highest to lowest)
+                const sortedCounts = Object.keys(grouped)
+                    .map(k => parseInt(k))
+                    .sort((a, b) => b - a);
+
+                const maxCount = sortedCounts.length > 0 ? sortedCounts[0] : 0;
+
+                countData = { grouped, sortedCounts, maxCount };
+            }
             // === BY VOTER VIEW ===
-            if (state.resultsView === 'byVoter') {
+            else if (state.resultsView === 'byVoter') {
                 // Generate voter stats from breakdown data
                 const voterMap = {};
                 mergedResultsData.forEach(imageResult => {
@@ -14349,6 +14559,13 @@
                                                 Total
                                             </button>
                                             <button
+                                                ${onclick}="setResultsView('count')"
+                                                class="px-3 py-1 rounded-lg ${state.resultsView === 'count' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
+                                                ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
+                                            >
+                                                Count
+                                            </button>
+                                            <button
                                                 ${onclick}="setResultsView('userVotes')"
                                                 class="px-3 py-1 rounded-lg ${state.resultsView === 'userVotes' ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${disabledClass}"
                                                 ${!canSwitchTabs ? 'disabled title="Results are hidden - viewing your votes only"' : ''}
@@ -14365,6 +14582,27 @@
                                         </div>
                                     `;
                                 })()}
+
+                                <!-- Score selection buttons for Count view -->
+                                ${state.resultsView === 'count' ? `
+                                    <div class="flex items-center justify-center gap-2 mt-3">
+                                        <label class="text-xs font-medium text-gray-700">Select Scores:</label>
+                                        ${[1, 2, 3, 4, 5].map(score => {
+                                            const isSelected = state.countSelectedScores.includes(score);
+                                            const colorStyle = getScoreColor(score);
+                                            return `
+                                                <button
+                                                    onclick="toggleCountScore(${score})"
+                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-60 hover:opacity-100'}"
+                                                    style="background-color: ${colorStyle};"
+                                                    title="${isSelected ? 'Click to deselect' : 'Click to select'}"
+                                                >
+                                                    ${score}
+                                                </button>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                ` : ''}
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && mergedVoters.length > 0 ? `
                                     <div class="flex items-center gap-2">
@@ -14417,7 +14655,69 @@
                             </div>
                         ` : ''}
 
-                        ${state.resultsView === 'byVoter' ? `
+                        ${state.resultsView === 'count' ? `
+                            ${state.countSelectedScores.length === 0 ? `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">👆</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Select Score(s)</h3>
+                                    <p class="text-gray-600">Please select one or more scores from the buttons above to see the count breakdown.</p>
+                                </div>
+                            ` : countData && countData.sortedCounts.length > 0 ? `
+                                <div class="space-y-3">
+                                    ${countData.sortedCounts.map(count => {
+                                        const images = countData.grouped[count];
+                                        // Dynamic gradient: purple→red→orange→yellow→green→light blue→blue
+                                        const ratio = count / countData.maxCount;
+                                        const baseHue = 270 + (ratio * 330); // 270 (purple) + up to 330 degrees
+                                        const hue = baseHue % 360;
+                                        const bgColor = `hsl(${hue}, 70%, 45%)`;
+
+                                        return `
+                                            <div class="flex items-stretch gap-2">
+                                                <!-- Vertical Score Panel (left side, thin) -->
+                                                <div class="w-16 flex-shrink-0 rounded-lg flex flex-col items-center justify-center text-white font-bold text-sm shadow-lg px-1 py-2" style="background-color: ${bgColor};">
+                                                    <div class="text-2xl mb-1">${count}</div>
+                                                    <div class="text-xs opacity-90 text-center leading-tight">count</div>
+                                                </div>
+
+                                                <!-- Images Panel (right side, wraps) -->
+                                                <div class="flex-1 flex flex-wrap gap-1 items-start">
+                                                    ${images.map(img => `
+                                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdown(${img.id})">
+                                                            <div
+                                                                class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
+                                                                style="height: ${imageSize}px; border: 3px solid ${bgColor};"
+                                                            >
+                                                                <img
+                                                                    src="${img.url}"
+                                                                    alt="Image"
+                                                                    class="h-full w-auto object-cover"
+                                                                    style="height: ${imageSize}px;"
+                                                                />
+                                                                <div class="absolute top-1 left-1">
+                                                                    <div class="rounded-full flex items-center justify-center font-bold shadow-lg w-7 h-7 text-white text-xs" style="background-color: ${bgColor};">
+                                                                        ${count}
+                                                                    </div>
+                                                                </div>
+                                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                                    ${img.averageScore}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    `).join('')}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-12">
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3>
+                                    <p class="text-gray-600">No images have received the selected score(s).</p>
+                                </div>
+                            `}
+                        ` : state.resultsView === 'byVoter' ? `
                             ${voterStats && voterStats.length > 0 ? `
                                 <div class="mb-4 flex justify-center">
                                     <div class="flex items-center gap-2">
