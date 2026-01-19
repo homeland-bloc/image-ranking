@@ -728,7 +728,7 @@
             votingMode: 'multi',  // 'single' or 'multi' - voting view mode (default: multi)
             selectedScore: null,  // Currently selected score in multi-mode voting (1-5 or null)
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (20-200%)
-            multiModeFilter: null,  // Filter for multi-mode voting: null, 1-5, or 'non-voted'
+            multiModeFilter: [],  // Filter for multi-mode voting: array of scores (1-5) or 'non-voted'
             multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
             showUnifiedCreateModal: false,  // Show unified creation modal
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
@@ -7095,11 +7095,12 @@
         }
 
         function setMultiModeFilter(filter) {
-            // Toggle filter: if same filter is selected, clear it
-            if (state.multiModeFilter === filter) {
-                state.multiModeFilter = null;
+            // Toggle filter: if filter is in array, remove it; otherwise add it
+            const index = state.multiModeFilter.indexOf(filter);
+            if (index > -1) {
+                state.multiModeFilter.splice(index, 1);
             } else {
-                state.multiModeFilter = filter;
+                state.multiModeFilter.push(filter);
             }
             render();
         }
@@ -11926,7 +11927,7 @@
                                     <label class="text-sm font-medium text-gray-700 mb-2 block">Filter by Score</label>
                                     <div class="flex gap-1.5 flex-wrap">
                                         ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
-                                            const isSelected = state.multiModeFilter === filter;
+                                            const isSelected = state.multiModeFilter.includes(filter);
                                             const label = filter === 'non-voted' ? '?' : filter;
                                             const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
                                             return `
@@ -11964,12 +11965,16 @@
                                 ${(() => {
                                     // Apply filtering
                                     let filteredImages = state.shuffledImages;
-                                    if (state.multiModeFilter !== null) {
-                                        if (state.multiModeFilter === 'non-voted') {
-                                            filteredImages = filteredImages.filter(img => !state.votes[img.id]);
-                                        } else {
-                                            filteredImages = filteredImages.filter(img => state.votes[img.id] === state.multiModeFilter);
-                                        }
+                                    if (state.multiModeFilter.length > 0) {
+                                        filteredImages = filteredImages.filter(img => {
+                                            const vote = state.votes[img.id];
+                                            // Check if non-voted filter is selected and image has no vote
+                                            if (state.multiModeFilter.includes('non-voted') && !vote) {
+                                                return true;
+                                            }
+                                            // Check if image's vote matches any selected score filter
+                                            return vote && state.multiModeFilter.includes(vote);
+                                        });
                                     }
 
                                     // Apply sorting
