@@ -41,6 +41,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
+            darkMode: ['class', '.dark-theme'],
             theme: {
                 extend: {
                     colors: {
@@ -452,6 +453,17 @@
         body.dark-theme .modal-content .text-gray-600,
         body.dark-theme .modal-content .text-blue-800 {
             color: revert !important;
+        }
+
+        /* Override Tailwind dark: variants to only respond to app theme toggle, not OS preference */
+        /* Force dark blue text in light mode (consistent across mobile and PC) */
+        body:not(.dark-theme) .bg-blue-50 .text-blue-800 {
+            color: #1e40af !important; /* blue-800 - matches PC behavior */
+        }
+
+        /* Make tip message text readable in dark theme (multi-mode voting) */
+        body.dark-theme .bg-blue-50 .text-blue-800 {
+            color: #bfdbfe !important; /* blue-200 */
         }
 
         /* Make voter stats usernames more readable in dark theme (but exclude modal content) */
@@ -12728,7 +12740,7 @@
                                             return `
                                                 <button
                                                     onclick="toggleCountScore(${score})"
-                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-60 hover:opacity-100'}"
+                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-30 hover:opacity-100'}"
                                                     style="background-color: ${colorStyle};"
                                                     title="${isSelected ? 'Click to deselect' : 'Click to select'}"
                                                 >
@@ -12941,7 +12953,7 @@
                                 ` : `
                                     <div class="text-6xl mb-4">📭</div>
                                     <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
-                                    <p class="text-gray-600">This user hasn't voted on this contest yet.</p>
+                                    <p class="text-gray-600">This user hasn't voted on any images here yet.</p>
                                 `}
                             </div>
                         ` : sortedKeys.map(key => {
@@ -14191,7 +14203,7 @@
                 return `
                     <div class="text-center py-8 text-gray-500">
                         <div class="text-6xl mb-3">📭</div>
-                        <p>This user hasn't voted on this shortcake yet.</p>
+                        <p>This user hasn't voted on any images here yet.</p>
                     </div>
                 `;
             }
@@ -14593,7 +14605,7 @@
                                             return `
                                                 <button
                                                     onclick="toggleCountScore(${score})"
-                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-60 hover:opacity-100'}"
+                                                    class="px-4 py-2 rounded-lg font-bold text-white transition-all ${isSelected ? 'ring-4 ring-offset-2 ring-mauve-400 scale-110' : 'opacity-30 hover:opacity-100'}"
                                                     style="background-color: ${colorStyle};"
                                                     title="${isSelected ? 'Click to deselect' : 'Click to select'}"
                                                 >
@@ -14786,9 +14798,15 @@
                             `}
                         ` : state.resultsView === 'userVotes' && (!displayResults || displayResults.length === 0) ? `
                             <div class="text-center py-12">
-                                <div class="text-6xl mb-4">📭</div>
-                                <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
-                                <p class="text-gray-600">This user hasn't voted on any images in these contests.</p>
+                                ${!state.selectedVoterUserId ? `
+                                    <div class="text-6xl mb-4">👆</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">Select a User</h3>
+                                    <p class="text-gray-600">Please select a user from the dropdown above to view their votes.</p>
+                                ` : `
+                                    <div class="text-6xl mb-4">📭</div>
+                                    <h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3>
+                                    <p class="text-gray-600">This user hasn't voted on any images here yet.</p>
+                                `}
                             </div>
                         ` : sortedKeys.map(key => {
                             const group = grouped[key];
@@ -15043,6 +15061,7 @@
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
         window.setResultsView = setResultsView;
         window.setVoterSortBy = setVoterSortBy;
+        window.toggleCountScore = toggleCountScore;
         window.toggleMergedContestsDropdown = toggleMergedContestsDropdown;
         window.openCreateMergerModal = openCreateMergerModal;
         window.closeCreateMergerModal = closeCreateMergerModal;
@@ -15060,6 +15079,7 @@
         window.showMergerVoteModal = showMergerVoteModal;
         window.shareMerger = shareMerger;
         window.revoteMerge = revoteMerge;
+        window.startRevoteFromHomeMerger = startRevoteFromHomeMerger;
         window.confirmRevoteAll = confirmRevoteAll;
         window.confirmVoteMissingOnly = confirmVoteMissingOnly;
         window.showContestVoteModal = showContestVoteModal;
