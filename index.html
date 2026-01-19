@@ -4755,37 +4755,6 @@
                     votesByUserContest.get(key).push(vote);
                 });
 
-                // For each user-contest combination, check if there are votes BEFORE the date range
-                // This tells us if the first portion in the date range is truly the first, or a continuation
-                const userContestCombinations = Array.from(votesByUserContest.keys());
-                const hasEarlierVotesMap = new Map();
-
-                // Efficient check: only query if votes exist before date range (lightweight query with limit 1)
-                for (const key of userContestCombinations) {
-                    const [userId, contestId] = key.split('-');
-                    try {
-                        const earlierVotesResponse = await fetch(
-                            `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&contest_id=eq.${contestId}&created_at=lt.${weekStartISO}&select=created_at&limit=1`,
-                            {
-                                headers: {
-                                    'apikey': SUPABASE_ANON_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                    'Cache-Control': 'no-cache'
-                                }
-                            }
-                        );
-                        if (earlierVotesResponse.ok) {
-                            const earlierVotes = await earlierVotesResponse.json();
-                            hasEarlierVotesMap.set(key, earlierVotes.length > 0);
-                        } else {
-                            hasEarlierVotesMap.set(key, false);
-                        }
-                    } catch (error) {
-                        console.error(`Error checking earlier votes for ${key}:`, error);
-                        hasEarlierVotesMap.set(key, false); // Default to false on error
-                    }
-                }
-
                 // Analyze each user-contest combination to determine voting portions
                 votesByUserContest.forEach((userVotes, key) => {
                     // Sort votes by timestamp
@@ -4795,10 +4764,7 @@
                     const contest = state.contests.find(c => c.id === userVotes[0].contest_id);
                     const totalImages = contest?.images?.length || 0;
 
-                    // Check if there are earlier votes outside the date range
-                    const hasEarlierVotes = hasEarlierVotesMap.get(key) || false;
-
-                    // Group votes in date range into portions based on time gaps (> 1 hour = new portion)
+                    // Group votes into portions based on time gaps (> 1 hour = new portion)
                     const portions = [];
                     let currentPortion = [userVotes[0]];
 
@@ -4817,12 +4783,11 @@
                     }
                     portions.push(currentPortion); // Add last portion
 
-                    // For each portion in the date range, determine type
-                    // If there are earlier votes, all portions are "completed"
-                    // If no earlier votes, first portion is "vote", rest are "completed"
+                    // For each portion, create an activity entry
+                    // First portion is always "voted on", subsequent portions are "completed voting on"
                     portions.forEach((portion, portionIndex) => {
+                        const isFirstPortion = portionIndex === 0;
                         const latestVoteInPortion = portion[portion.length - 1];
-                        const isFirstPortion = !hasEarlierVotes && portionIndex === 0;
                         const activityKey = `vote-${key}-${portionIndex}`;
 
                         activityMap.set(activityKey, {
@@ -13255,7 +13220,7 @@
                                         type="date"
                                         id="activityStartDate"
                                         value="${startDateInput}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 dark:text-gray-900 focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
                                         onchange="setActivityStartDate(this.value)"
                                     />
                                 </div>
@@ -13265,7 +13230,7 @@
                                         type="date"
                                         id="activityEndDate"
                                         value="${endDateInput}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 dark:text-gray-900 focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-mauve-400 focus:border-mauve-400"
                                         onchange="setActivityEndDate(this.value)"
                                     />
                                 </div>
@@ -13374,13 +13339,7 @@
 
                                         // Filter by action type
                                         if (state.activityFilterAction) {
-                                            filteredLogs = filteredLogs.filter(log => {
-                                                // "Created" filter should include contests, mergers, and extracts
-                                                if (state.activityFilterAction === 'contest') {
-                                                    return log.type === 'contest' || log.type === 'merger' || log.type === 'extract';
-                                                }
-                                                return log.type === state.activityFilterAction;
-                                            });
+                                            filteredLogs = filteredLogs.filter(log => log.type === state.activityFilterAction);
                                         }
 
                                         if (filteredLogs.length === 0) {
