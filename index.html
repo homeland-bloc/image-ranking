@@ -3993,10 +3993,12 @@
 
         function setActivityStartDate(value) {
             state.activityDateStart = value;
+            render();
         }
 
         function setActivityEndDate(value) {
             state.activityDateEnd = value;
+            render();
         }
 
         function setActivityFilterUser(userId) {
@@ -9327,15 +9329,15 @@
                                 const badgeColor = isComplete ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800';
 
                                 return `
-                                    <div class="mb-6 p-4 bg-gray-50 rounded-lg">
-                                        <h3 class="font-semibold text-gray-800 mb-2">Your Voting Progress</h3>
+                                    <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                                        <h3 class="font-semibold text-gray-800 dark:text-gray-100 mb-2">Your Voting Progress</h3>
                                         <div class="flex items-center justify-between">
-                                            <div class="text-sm text-gray-700">
+                                            <div class="text-sm text-gray-700 dark:text-gray-300">
                                                 <span class="font-medium">Images completed voting on:</span>
                                             </div>
                                             <div class="flex items-center gap-2">
                                                 <span class="text-sm font-semibold px-2 py-1 ${badgeColor} rounded">${votedImageCount}/${totalImageCount}</span>
-                                                <span class="text-sm text-gray-600">(${completionRate}%)</span>
+                                                <span class="text-sm text-gray-600 dark:text-gray-400">(${completionRate}%)</span>
                                             </div>
                                         </div>
                                     </div>
@@ -9343,8 +9345,8 @@
                             })() : ''}
 
                             <!-- Actions Section (visible to all) -->
-                            <div class="mb-6 p-4 bg-gray-50 rounded-lg">
-                                <h3 class="font-semibold text-gray-800 mb-3">Actions</h3>
+                            <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                                <h3 class="font-semibold text-gray-800 dark:text-gray-100 mb-3">Actions</h3>
                                 <button
                                     onclick="shareContestFromModal()"
                                     class="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition shadow-md flex items-center justify-center gap-2"
@@ -10312,25 +10314,25 @@
                             💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
                         </p>
                     </div>
-                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
+                    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header with progress -->
-                        <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                        <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
                             <div class="flex justify-between items-center mb-2">
-                                <h2 class="text-lg font-bold text-gray-800">${votingTitle}</h2>
-                                <span class="text-gray-600 font-medium text-sm">${votedCount}/${totalCount} voted</span>
+                                <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100">${votingTitle}</h2>
+                                <span class="text-gray-600 dark:text-gray-400 font-medium text-sm">${votedCount}/${totalCount} voted</span>
                             </div>
                             <!-- Progress bar -->
-                            <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                                 <div class="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-300" style="width: ${(votedCount / totalCount * 100).toFixed(1)}%"></div>
                             </div>
 
                             <!-- Image Scale Slider -->
                             <div class="mt-3">
-                                <label class="text-sm font-medium text-gray-700 mb-2 block">Image Scale</label>
+                                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Image Scale</label>
                                 <div class="flex items-center gap-2">
                                     <button
                                         onclick="adjustMultiVotingImageScale(-1)"
-                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 transition"
                                         title="Decrease scale by 1%"
                                     >−</button>
                                     <input
@@ -10339,14 +10341,14 @@
                                         max="200"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
-                                        class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                                        class="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
                                     />
                                     <button
                                         onclick="adjustMultiVotingImageScale(1)"
-                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 transition"
                                         title="Increase scale by 1%"
                                     >+</button>
-                                    <span class="text-sm font-medium text-gray-700 w-12">${imageScale}%</span>
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 w-12">${imageScale}%</span>
                                 </div>
                             </div>
 
@@ -10354,7 +10356,7 @@
                             <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <!-- Filter by Score -->
                                 <div>
-                                    <label class="text-sm font-medium text-gray-700 mb-2 block">Filter by Score</label>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Filter by Score</label>
                                     <div class="flex gap-1.5 flex-wrap">
                                         ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
                                             const isSelected = state.multiModeFilter.includes(filter);
@@ -10376,10 +10378,10 @@
 
                                 <!-- Sort -->
                                 <div>
-                                    <label class="text-sm font-medium text-gray-700 mb-2 block">Sort</label>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Sort</label>
                                     <select
                                         onchange="setMultiModeSort(this.value)"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
                                     >
                                         <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default Order</option>
                                         <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>Highest to Lowest</option>
@@ -10640,11 +10642,11 @@
                                     onload="this.parentElement.classList.remove('image-loading')"
                                 />
                                 ${currentVote ? `
-                                    <div class="absolute top-2 right-2 bg-white rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
-                                        <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <div class="absolute top-2 right-2 bg-white dark:bg-gray-800 rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
+                                        <svg class="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                                         </svg>
-                                        <span class="font-semibold">Voted: ${currentVote}</span>
+                                        <span class="font-semibold text-gray-800 dark:text-gray-200">Voted: ${currentVote}</span>
                                     </div>
                                 ` : ''}
                             </div>
