@@ -674,7 +674,6 @@
             bannedUsers: [], // Array of user IDs who are banned from app
             allUsers: [], // Track all users who have logged in
             uploadProgress: null, // Upload progress tracking: { files: [{name, status, error, progress}], completed: false }
-            compressionProgress: null, // Compression progress: { files: [{name, status, originalSize, compressedSize, progress, error, canCompressMore, file, previewUrl, currentQuality, currentMaxDimension}], allComplete: false }
             showUserList: false, // Show user list modal (admin only)
             showAdminDashboard: false, // Show admin dashboard modal
             showAppSettingsModal: false, // Show app settings modal (admin only)
@@ -2068,183 +2067,13 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
-        // Comprehensive image compression targeting 1000 KB
-        async function compressImage(file, maxSizeKB = 1000, progressCallback = null, currentQuality = null, currentMaxDimension = null) {
-            const maxSizeBytes = maxSizeKB * 1024; // 1000 KB = 1024000 bytes
-
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-
-                reader.onload = (e) => {
-                    const img = new Image();
-
-                    img.onload = async () => {
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-
-                        // Preserve original file type (important for PNG transparency)
-                        const outputType = file.type || 'image/jpeg';
-                        const supportsQuality = outputType === 'image/jpeg' || outputType === 'image/webp';
-
-                        // Helper to resize and draw
-                        const drawResized = (maxSize) => {
-                            let w = img.width;
-                            let h = img.height;
-
-                            if (maxSize && (w > maxSize || h > maxSize)) {
-                                if (w > h) {
-                                    h = (h * maxSize) / w;
-                                    w = maxSize;
-                                } else {
-                                    w = (w * maxSize) / h;
-                                    h = maxSize;
-                                }
-                            }
-
-                            canvas.width = w;
-                            canvas.height = h;
-                            ctx.drawImage(img, 0, 0, w, h);
-                            return { w, h };
-                        };
-
-                        // Helper to try compression with specific quality and size
-                        const tryCompress = (quality, maxDimension) => {
-                            return new Promise((res) => {
-                                drawResized(maxDimension);
-                                // Only use quality parameter for formats that support it
-                                const blobOptions = supportsQuality ? quality : undefined;
-                                canvas.toBlob((blob) => {
-                                    if (blob) {
-                                        res({ blob, quality, maxDimension });
-                                    } else {
-                                        res(null);
-                                    }
-                                }, outputType, blobOptions);
-                            });
-                        };
-
-                        let result = null;
-                        let finalQuality = currentQuality || 0.8;
-                        let finalMaxDimension = currentMaxDimension || null;
-
-                        // Check if original file is already under the limit
-                        if (file.size <= maxSizeBytes && currentQuality === null && currentMaxDimension === null) {
-                            // File already meets size requirements, no compression needed
-                            resolve({
-                                file: file,
-                                originalSize: file.size,
-                                compressedSize: file.size,
-                                savingsPercent: 0,
-                                currentQuality: null,
-                                currentMaxDimension: null,
-                                success: true
-                            });
-                            return;
-                        }
-
-                        // If specific parameters provided (for "Compress More"), use them
-                        if (currentQuality !== null || currentMaxDimension !== null) {
-                            result = await tryCompress(finalQuality, finalMaxDimension);
-                            // Ensure compression actually made it smaller
-                            if (result && result.blob.size >= file.size) {
-                                // Compression made it larger or same size - reject
-                                reject({
-                                    message: `Compression would increase file size. Original: ${formatFileSize(file.size)}, Compressed: ${formatFileSize(result.blob.size)}`,
-                                    file: file,
-                                    originalSize: file.size,
-                                    compressedSize: result.blob.size,
-                                    success: false,
-                                    currentQuality: finalQuality,
-                                    currentMaxDimension: finalMaxDimension
-                                });
-                                return;
-                            }
-                        } else {
-                            // Apply strongest reasonable compression by default (quality 0.4, 1000px max)
-                            if (progressCallback) progressCallback(50);
-                            result = await tryCompress(0.4, 1000);
-
-                            if (result && result.blob.size <= maxSizeBytes) {
-                                finalQuality = 0.4;
-                                finalMaxDimension = 1000;
-                            }
-                        }
-
-                        if (progressCallback) progressCallback(100);
-
-                        // Check final result
-                        if (result && result.blob.size <= maxSizeBytes) {
-                            // Ensure compression actually made it smaller
-                            if (result.blob.size >= file.size) {
-                                // Compression made it larger - use original if it's under the limit
-                                if (file.size <= maxSizeBytes) {
-                                    resolve({
-                                        file: file,
-                                        originalSize: file.size,
-                                        compressedSize: file.size,
-                                        savingsPercent: 0,
-                                        currentQuality: null,
-                                        currentMaxDimension: null,
-                                        success: true
-                                    });
-                                } else {
-                                    reject({
-                                        message: `Compression would increase file size. Original: ${formatFileSize(file.size)}, Compressed: ${formatFileSize(result.blob.size)}`,
-                                        file: file,
-                                        originalSize: file.size,
-                                        compressedSize: result.blob.size,
-                                        success: false,
-                                        currentQuality: finalQuality,
-                                        currentMaxDimension: finalMaxDimension
-                                    });
-                                }
-                                return;
-                            }
-
-                            const compressedFile = new File([result.blob], file.name, {
-                                type: outputType,
-                                lastModified: Date.now()
-                            });
-                            const savingsPercent = Math.round((1 - result.blob.size / file.size) * 100);
-                            resolve({
-                                file: compressedFile,
-                                originalSize: file.size,
-                                compressedSize: result.blob.size,
-                                savingsPercent,
-                                currentQuality: finalQuality,
-                                currentMaxDimension: finalMaxDimension,
-                                success: true
-                            });
-                        } else {
-                            // Failed to compress under limit
-                            const finalSize = result ? result.blob.size : file.size;
-                            reject({
-                                message: `${file.name}: ${formatFileSize(finalSize)} - too large even after compression (max ${maxSizeKB} KB)`,
-                                file: result ? new File([result.blob], file.name, { type: outputType, lastModified: Date.now() }) : file,
-                                originalSize: file.size,
-                                compressedSize: finalSize,
-                                success: false,
-                                currentQuality: finalQuality,
-                                currentMaxDimension: finalMaxDimension
-                            });
-                        }
-                    };
-
-                    img.onerror = () => reject({ message: 'Failed to load image for compression', success: false });
-                    img.src = e.target.result;
-                };
-
-                reader.onerror = () => reject({ message: 'Failed to read image file', success: false });
-                reader.readAsDataURL(file);
-            });
-        }
 
         async function handleFileSelect(fileInput) {
             const files = Array.from(fileInput.files);
             if (files.length === 0) return;
 
             const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-            const maxSizeBeforeCompression = 500 * 1024 * 1024; // 500MB - reject if too large even before compression
+            const maxSizeBytes = 1000 * 1024; // 1MB = 1000KB
 
             // Validate file types
             const invalidTypeFiles = files.filter(file => !validTypes.includes(file.type));
@@ -2254,10 +2083,13 @@
                 return;
             }
 
-            // Check for files that are too large even before compression
-            const tooLargeFiles = files.filter(file => file.size > maxSizeBeforeCompression);
-            if (tooLargeFiles.length > 0) {
-                showAlert(`${tooLargeFiles.length} file(s) exceed 500MB. Please use smaller images.`, '❌');
+            // Check for files that exceed 1MB
+            const oversizedFiles = files.filter(file => file.size > maxSizeBytes);
+            if (oversizedFiles.length > 0) {
+                const fileDetails = oversizedFiles.map(file =>
+                    `${file.name} (${formatFileSize(file.size)})`
+                ).join(', ');
+                showAlert(`Image(s) too large: ${fileDetails}. Maximum size is 1MB.`, '❌');
                 fileInput.value = '';
                 return;
             }
@@ -2279,74 +2111,32 @@
 
             fileInput.value = '';
 
-            // Initialize compression progress state
-            state.compressionProgress = {
-                files: files.map(file => ({
-                    name: file.name,
-                    status: 'compressing', // 'compressing', 'complete', 'failed'
-                    originalSize: file.size,
-                    compressedSize: null,
-                    progress: 0,
-                    error: null,
-                    canCompressMore: false,
-                    file: null,
-                    previewUrl: null,
-                    savingsPercent: 0,
-                    currentQuality: null,
-                    currentMaxDimension: null,
-                    originalFile: file
-                })),
-                allComplete: false
-            };
-
-            render();
-
-            // Compress all files
+            // Add images directly to contest
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                const fileState = state.compressionProgress.files[i];
+                const imageCount = state.newContest.images.length + 1;
+                const previewUrl = URL.createObjectURL(file);
 
-                try {
-                    const result = await compressImage(file, 1000, (progress) => {
-                        fileState.progress = progress;
-                        render();
-                    });
+                const newImage = {
+                    id: Date.now() + Math.random() + i,
+                    url: previewUrl,
+                    localFile: file,
+                    isLocalFile: true,
+                    author: null,
+                    isFileUpload: true,
+                    label: `${imageCount}`,
+                    fileSize: file.size
+                };
 
-                    // Success
-                    fileState.status = 'complete';
-                    fileState.compressedSize = result.compressedSize;
-                    fileState.file = result.file;
-                    fileState.previewUrl = URL.createObjectURL(result.file);
-                    fileState.savingsPercent = result.savingsPercent;
-                    fileState.currentQuality = result.currentQuality;
-                    fileState.currentMaxDimension = result.currentMaxDimension;
-                    fileState.canCompressMore = result.currentQuality > 0.3 || result.currentMaxDimension === null || result.currentMaxDimension > 1000;
-                    fileState.progress = 100;
-                } catch (error) {
-                    // Failed
-                    fileState.status = 'failed';
-                    fileState.error = error.message || 'Compression failed';
-                    fileState.compressedSize = error.compressedSize || file.size;
-                    fileState.currentQuality = error.currentQuality;
-                    fileState.currentMaxDimension = error.currentMaxDimension;
-                    // Store the best attempt even if it failed
-                    if (error.file) {
-                        fileState.file = error.file;
-                        fileState.previewUrl = URL.createObjectURL(error.file);
-                    }
-                    fileState.progress = 100;
-                }
-
-                render();
+                state.newContest.images.push(newImage);
             }
 
-            // All files processed
-            state.compressionProgress.allComplete = true;
             render();
+            showToast(`${files.length} image${files.length > 1 ? 's' : ''} added to contest!`, '✅');
         }
 
         async function uploadImageFile(file, progressCallback) {
-            // Always use .jpg extension for compressed images
+            // Always use .jpg extension for uploaded images
             const fileExt = 'jpg';
 
             // Generate unique filename
@@ -2481,21 +2271,8 @@
             render();
 
             try {
-                // Re-compress if needed (using original file)
-                if (fileData.needsCompression) {
-                    fileData.status = 'compressing';
-                    fileData.progress = 5;
-                    render();
-
-                    const compressed = await compressImage(fileData.originalFile);
-                    fileData.file = compressed.file;
-                    fileData.compressedSize = compressed.compressedSize;
-                    fileData.progress = 10;
-                    render();
-                } else {
-                    fileData.file = fileData.originalFile;
-                    fileData.compressedSize = fileData.originalFile.size;
-                }
+                // Use original file
+                fileData.file = fileData.originalFile;
 
                 // Upload the file
                 fileData.status = 'uploading';
@@ -2543,180 +2320,6 @@
             return errorMsg;
         }
 
-        // Compression modal helper functions
-        function closeCompressionModal() {
-            if (!state.compressionProgress || !state.compressionProgress.allComplete) return;
-
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const maxSizeBytes = 1000 * 1024; // 1000 KB limit
-
-            // Check if any non-admin files exceed the limit (e.g., after "Reset to Original")
-            if (!isAdmin) {
-                const oversizedFiles = state.compressionProgress.files.filter(f =>
-                    (f.status === 'complete' && f.compressedSize > maxSizeBytes)
-                );
-
-                if (oversizedFiles.length > 0) {
-                    const fileNames = oversizedFiles.map(f => `${f.name} (${formatFileSize(f.compressedSize)})`).join(', ');
-                    showAlert(`Cannot add ${oversizedFiles.length} image(s) exceeding 1000 KB limit: ${fileNames}. Please compress further or remove these images.`, '⚠️');
-                    return;
-                }
-            }
-
-            // Add successfully compressed images to contest
-            state.compressionProgress.files.forEach((fileState, index) => {
-                if (fileState.status === 'complete' || (fileState.status === 'failed' && isAdmin && fileState.adminBypass)) {
-                    const imageCount = state.newContest.images.length + 1;
-                    const newImage = {
-                        id: Date.now() + Math.random() + index,
-                        url: fileState.previewUrl,
-                        localFile: fileState.file,
-                        isLocalFile: true,
-                        author: null,
-                        isFileUpload: true,
-                        label: `${imageCount}`,
-                        compressedSize: fileState.compressedSize
-                    };
-
-                    state.newContest.images.push(newImage);
-                }
-            });
-
-            const successCount = state.compressionProgress.files.filter(f =>
-                f.status === 'complete' || (f.status === 'failed' && f.adminBypass)
-            ).length;
-
-            state.compressionProgress = null;
-            render();
-
-            if (successCount > 0) {
-                showToast(`${successCount} image${successCount > 1 ? 's' : ''} added to contest!`, '✅');
-            }
-        }
-
-        async function compressMoreImage(fileIndex) {
-            const fileState = state.compressionProgress.files[fileIndex];
-            if (!fileState || !fileState.originalFile) return;
-
-            // Determine next compression level
-            let newQuality = fileState.currentQuality;
-            let newMaxDimension = fileState.currentMaxDimension;
-
-            if (newQuality > 0.3) {
-                // Try lower quality
-                newQuality = Math.max(0.3, newQuality - 0.1);
-            } else if (newMaxDimension === null || newMaxDimension > 1000) {
-                // Start resizing or go smaller
-                if (newMaxDimension === null) {
-                    newMaxDimension = 2000;
-                } else if (newMaxDimension > 1500) {
-                    newMaxDimension = 1500;
-                } else if (newMaxDimension > 1200) {
-                    newMaxDimension = 1200;
-                } else {
-                    newMaxDimension = 1000;
-                }
-                newQuality = 0.4;
-            } else {
-                // Already at minimum
-                showToast('Already at minimum compression settings', 'info');
-                return;
-            }
-
-            // Reset state for recompression
-            fileState.status = 'compressing';
-            fileState.progress = 0;
-            render();
-
-            try {
-                const result = await compressImage(fileState.originalFile, 1000, (progress) => {
-                    fileState.progress = progress;
-                    render();
-                }, newQuality, newMaxDimension);
-
-                // Success
-                fileState.status = 'complete';
-                fileState.compressedSize = result.compressedSize;
-                fileState.file = result.file;
-                if (fileState.previewUrl) URL.revokeObjectURL(fileState.previewUrl);
-                fileState.previewUrl = URL.createObjectURL(result.file);
-                fileState.savingsPercent = result.savingsPercent;
-                fileState.currentQuality = result.currentQuality;
-                fileState.currentMaxDimension = result.currentMaxDimension;
-                fileState.canCompressMore = result.currentQuality > 0.3 || result.currentMaxDimension === null || result.currentMaxDimension > 1000;
-                fileState.progress = 100;
-            } catch (error) {
-                // Failed
-                fileState.status = 'failed';
-                fileState.error = error.message || 'Compression failed';
-                fileState.compressedSize = error.compressedSize || fileState.originalFile.size;
-                fileState.currentQuality = error.currentQuality;
-                fileState.currentMaxDimension = error.currentMaxDimension;
-                if (error.file) {
-                    if (fileState.previewUrl) URL.revokeObjectURL(fileState.previewUrl);
-                    fileState.file = error.file;
-                    fileState.previewUrl = URL.createObjectURL(error.file);
-                }
-                fileState.progress = 100;
-            }
-
-            render();
-        }
-
-        function resetToOriginalImage(fileIndex) {
-            const fileState = state.compressionProgress.files[fileIndex];
-            if (!fileState || !fileState.originalFile) return;
-
-            // Reset to original file
-            fileState.file = fileState.originalFile;
-            fileState.compressedSize = fileState.originalSize;
-            fileState.savingsPercent = 0;
-            fileState.currentQuality = null;
-            fileState.currentMaxDimension = null;
-            fileState.canCompressMore = true;
-
-            // Update preview URL
-            if (fileState.previewUrl) {
-                URL.revokeObjectURL(fileState.previewUrl);
-            }
-            fileState.previewUrl = URL.createObjectURL(fileState.originalFile);
-
-            render();
-        }
-
-        function cancelCompressionImage(fileIndex) {
-            if (!state.compressionProgress) return;
-
-            // Remove the file from compression progress
-            state.compressionProgress.files.splice(fileIndex, 1);
-
-            // Check if all remaining files are complete
-            if (state.compressionProgress.files.length === 0) {
-                state.compressionProgress = null;
-            } else {
-                state.compressionProgress.allComplete = state.compressionProgress.files.every(
-                    f => f.status === 'complete' || f.status === 'failed'
-                );
-            }
-
-            render();
-        }
-
-        function addOversizedImageAnyway(fileIndex) {
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (!isAdmin || !state.compressionProgress) return;
-
-            const fileState = state.compressionProgress.files[fileIndex];
-            if (!fileState || fileState.status !== 'failed') return;
-
-            // Mark as admin bypass
-            fileState.adminBypass = true;
-
-            // Show notification to admin
-            showToast(`Admin: Bypassing 1000 KB size limit for ${fileState.name}`, 'info');
-
-            render();
-        }
 
         function handleDragOver(event) {
             event.preventDefault();
@@ -3554,7 +3157,6 @@
                         const img = localFilesToUpload[i];
                         setLoading(`Uploading images (${i + 1}/${localFilesToUpload.length})...`);
 
-                        // Images are already compressed during upload phase
                         // Upload to storage
                         const uploadedUrl = await uploadImageFile(img.localFile);
                         uploadedUrls.push(uploadedUrl);
@@ -8736,7 +8338,7 @@
             const allCompleted = state.uploadProgress.files.every(f => f.status === 'success' || f.status === 'failed');
             const successCount = state.uploadProgress.files.filter(f => f.status === 'success').length;
             const failedCount = state.uploadProgress.files.filter(f => f.status === 'failed').length;
-            const uploadingCount = state.uploadProgress.files.filter(f => f.status === 'uploading' || f.status === 'compressing').length;
+            const uploadingCount = state.uploadProgress.files.filter(f => f.status === 'uploading').length;
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4">
@@ -8771,17 +8373,8 @@
                                             <p class="font-medium text-gray-800 truncate" title="${file.name}">
                                                 ${file.name}
                                             </p>
-                                            ${file.needsCompression ? `
-                                                <p class="text-xs text-gray-600 mt-1">
-                                                    ${file.compressedSize && file.compressedSize < file.originalSize ? `Original: ${(file.originalSize / 1024).toFixed(0)}KB → Compressed: ${(file.compressedSize / 1024).toFixed(0)}KB (${Math.round((1 - file.compressedSize / file.originalSize) * 100)}% smaller)` :
-                                                      file.compressedSize ? `${(file.originalSize / 1024).toFixed(0)}KB (no compression needed)` :
-                                                      `Original: ${(file.originalSize / 1024).toFixed(0)}KB → Compressing...`}
-                                                </p>
-                                            ` : file.originalSize ? `
+                                            ${file.originalSize ? `
                                                 <p class="text-xs text-gray-600 mt-1">${(file.originalSize / 1024).toFixed(0)}KB</p>
-                                            ` : ''}
-                                            ${file.status === 'compressing' ? `
-                                                <p class="text-xs text-blue-600 mt-1">🔄 Compressing...</p>
                                             ` : ''}
                                             ${file.error ? `
                                                 <p class="text-xs text-red-600 mt-1">${file.error}</p>
@@ -8790,19 +8383,18 @@
                                         <div class="ml-3 text-2xl flex-shrink-0">
                                             ${file.status === 'success' ? '✅' :
                                               file.status === 'failed' ? '❌' :
-                                              file.status === 'compressing' ? '🔄' :
                                               file.status === 'uploading' ? '⏳' : '⏱️'}
                                         </div>
                                     </div>
 
                                     <!-- Progress Bar -->
-                                    ${file.status === 'uploading' || file.status === 'compressing' || file.status === 'pending' ? `
+                                    ${file.status === 'uploading' || file.status === 'pending' ? `
                                         <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
                                             <div class="bg-blue-500 h-2 rounded-full transition-all duration-300"
                                                  style="width: ${file.progress || 0}%"></div>
                                         </div>
                                         <p class="text-xs text-gray-600">
-                                            ${file.status === 'compressing' ? 'Compressing...' : `${file.progress || 0}%`}
+                                            ${file.progress || 0}%
                                         </p>
                                     ` : ''}
 
@@ -8836,131 +8428,6 @@
             `;
         }
 
-        function renderCompressionModal() {
-            if (!state.compressionProgress) return '';
-
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const allCompleted = state.compressionProgress.allComplete;
-            const completeCount = state.compressionProgress.files.filter(f => f.status === 'complete').length;
-            const failedCount = state.compressionProgress.files.filter(f => f.status === 'failed' && !f.adminBypass).length;
-            const compressingCount = state.compressionProgress.files.filter(f => f.status === 'compressing').length;
-
-            return `
-                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[60] p-4">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] flex flex-col modal-content" onclick="event.stopPropagation()">
-                        <!-- Header -->
-                        <div class="p-6 border-b border-gray-200">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <h3 class="text-xl font-bold text-gray-800">
-                                        ${allCompleted ? 'Compression Complete' : 'Compressing Images...'}
-                                    </h3>
-                                    <p class="text-sm text-gray-600 mt-1">
-                                        ${completeCount} completed, ${failedCount} failed, ${compressingCount} in progress
-                                    </p>
-                                </div>
-                                <div class="text-3xl">
-                                    ${allCompleted ? (failedCount > 0 ? '⚠️' : '✅') : '🔄'}
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- File List -->
-                        <div class="flex-1 overflow-y-auto p-6 space-y-4">
-                            ${state.compressionProgress.files.map((fileState, index) => {
-                                const isOversized = fileState.status === 'failed' && fileState.compressedSize > 1000 * 1024;
-                                const bgColor = fileState.status === 'complete' || fileState.adminBypass ? 'bg-green-50 border-green-200' :
-                                                fileState.status === 'failed' ? 'bg-red-50 border-red-200' :
-                                                'bg-blue-50 border-blue-200';
-
-                                return `
-                                    <div class="border border-gray-200 rounded-lg p-4 ${bgColor}">
-                                        <div class="flex items-start justify-between mb-2">
-                                            <div class="flex-1 min-w-0">
-                                                <p class="font-medium text-gray-800 truncate" title="${fileState.name}">
-                                                    ${fileState.name}
-                                                </p>
-                                                <div class="flex flex-wrap gap-3 mt-2 text-xs text-gray-600">
-                                                    ${fileState.savingsPercent > 0 ? `
-                                                        <span><strong>Original:</strong> ${formatFileSize(fileState.originalSize)}</span>
-                                                        <span><strong>Compressed:</strong> ${formatFileSize(fileState.compressedSize)}</span>
-                                                        <span class="text-green-600 font-semibold">Saved ${fileState.savingsPercent}%</span>
-                                                    ` : `
-                                                        <span><strong>Original:</strong> ${formatFileSize(fileState.originalSize)}</span>
-                                                    `}
-                                                </div>
-                                                ${fileState.status === 'compressing' ? `
-                                                    <p class="text-xs text-blue-600 mt-1">🔄 Compressing...</p>
-                                                ` : ''}
-                                                ${fileState.status === 'complete' ? `
-                                                    <p class="text-xs text-green-600 mt-1">✅ Complete</p>
-                                                ` : ''}
-                                                ${fileState.status === 'failed' && !fileState.adminBypass ? `
-                                                    <p class="text-xs text-red-600 mt-1">❌ ${fileState.error}</p>
-                                                ` : ''}
-                                                ${fileState.adminBypass ? `
-                                                    <p class="text-xs text-orange-600 mt-1 font-semibold">⚠️ Admin override: Adding image exceeding 1000 KB limit</p>
-                                                ` : ''}
-                                            </div>
-                                            <div class="ml-3 text-2xl flex-shrink-0">
-                                                ${fileState.status === 'complete' || fileState.adminBypass ? '✅' :
-                                                  fileState.status === 'failed' ? '❌' :
-                                                  '🔄'}
-                                            </div>
-                                        </div>
-
-                                        <!-- Progress Bar -->
-                                        ${fileState.status === 'compressing' ? `
-                                            <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
-                                                <div class="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                                                     style="width: ${fileState.progress || 0}%"></div>
-                                            </div>
-                                            <p class="text-xs text-gray-600">${fileState.progress || 0}%</p>
-                                        ` : ''}
-
-                                        <!-- Action Buttons -->
-                                        <div class="flex gap-2 mt-3">
-                                            ${fileState.status === 'complete' && fileState.savingsPercent > 0 && isAdmin ? `
-                                                <button onclick="resetToOriginalImage(${index})"
-                                                        class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition font-medium">
-                                                    ↺ Reset to Original
-                                                </button>
-                                            ` : ''}
-                                            ${fileState.status === 'failed' && isAdmin && isOversized && !fileState.adminBypass ? `
-                                                <button onclick="addOversizedImageAnyway(${index})"
-                                                        class="px-3 py-1.5 text-xs bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition font-medium">
-                                                    ⚠️ Add Anyway
-                                                </button>
-                                            ` : ''}
-                                            ${(fileState.status === 'complete' || fileState.status === 'failed') && !fileState.adminBypass ? `
-                                                <button onclick="cancelCompressionImage(${index})"
-                                                        class="px-3 py-1.5 text-xs bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition font-medium">
-                                                    ✖ Cancel Image
-                                                </button>
-                                            ` : ''}
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-
-                        <!-- Footer -->
-                        <div class="p-6 border-t border-gray-200">
-                            ${allCompleted ? `
-                                <button onclick="closeCompressionModal()"
-                                        class="w-full px-5 py-3 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-green-500 to-green-700 text-white hover:from-green-600 hover:to-green-800">
-                                    Done (${completeCount + (isAdmin ? state.compressionProgress.files.filter(f => f.adminBypass).length : 0)} images will be added)
-                                </button>
-                            ` : `
-                                <p class="text-sm text-gray-600 text-center">
-                                    Please wait for compression to complete...
-                                </p>
-                            `}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
 
         function renderLoadingOverlay() {
             if (!state.isLoading) return '';
@@ -10722,10 +10189,10 @@
                                 📱 <strong>Mobile:</strong> Open image → Share → Copy link → Paste below
                             </p>
                             <p class="text-xs text-blue-800 mb-1">
-                                📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 10MB each, multiple files supported)
+                                📁 <strong>Or:</strong> Click "Upload Image Files" or drag & drop files (max 1MB each, multiple files supported)
                             </p>
-                            <p class="text-xs text-green-800 font-semibold">
-                                ⚡ Uploaded files are automatically compressed to 1000 KB max to optimize loading speed
+                            <p class="text-xs text-yellow-800 font-semibold">
+                                ⚠️ Images must be under 1MB. Files exceeding this limit will be rejected.
                             </p>
                         </div>
 
@@ -10794,9 +10261,9 @@
                                             ×
                                         </button>
                                     `}
-                                    ${img.compressedSize ? `
+                                    ${img.fileSize ? `
                                         <div class="text-xs text-center text-gray-600 mt-1 font-medium">
-                                            ${formatFileSize(img.compressedSize)}
+                                            ${formatFileSize(img.fileSize)}
                                         </div>
                                     ` : ''}
                                 </div>
@@ -13045,7 +12512,7 @@
             const app = document.getElementById('app');
 
             if (!state.isLoggedIn) {
-                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderCompressionModal() + renderUploadProgressModal() + renderToast() + renderLoadingOverlay() + renderLogoutConfirmModal();
+                app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderUploadProgressModal() + renderToast() + renderLoadingOverlay() + renderLogoutConfirmModal();
                 return;
             }
 
@@ -13076,7 +12543,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderCompressionModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
         }
 
         window.login = login;
@@ -13135,11 +12602,6 @@
         window.closeUploadProgress = closeUploadProgress;
         window.retryUpload = retryUpload;
         window.cancelAllUploads = cancelAllUploads;
-        window.closeCompressionModal = closeCompressionModal;
-        window.compressMoreImage = compressMoreImage;
-        window.resetToOriginalImage = resetToOriginalImage;
-        window.cancelCompressionImage = cancelCompressionImage;
-        window.addOversizedImageAnyway = addOversizedImageAnyway;
         window.updateScale = updateScale;
         window.adjustScale = adjustScale;
         window.confirmSubmitVotes = confirmSubmitVotes;
