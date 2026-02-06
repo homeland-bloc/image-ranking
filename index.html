@@ -752,7 +752,6 @@
             divisiveAvgMin: 1.0,  // Divisive tab avg score range slider min
             divisiveAvgMax: 5.0,  // Divisive tab avg score range slider max
             comparisonView: null,  // null, 'table', or 'detail' for By User comparison
-            comparisonUserId: null,  // User being compared in By User tab
             comparisonDetailUserId: null,  // User whose detail comparison is being viewed
             comparisonDetailView: 'match',  // 'match' or 'relative' toggle in comparison detail
             comparisonDetailCollapsed: {}  // Collapsed state for comparison detail categories
@@ -1253,8 +1252,8 @@
                 if (!imageResult.breakdown) return;
 
                 imageResult.breakdown.forEach(vote => {
-                    // Skip blocked votes
-                    if (vote.isBlocked) return;
+                    // Skip blocked and banned votes
+                    if (vote.isBlocked || vote.isBanned) return;
 
                     if (!voterVotes[vote.userId]) {
                         voterVotes[vote.userId] = {
@@ -6382,6 +6381,16 @@
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
             state.contestVoters = [];
+            // Reset results tab enhancement state
+            state.userFilterSelectedUsers = null;
+            state.userFilterDropdownOpen = false;
+            state.countMode = 'images';
+            state.divisiveAvgMin = 1.0;
+            state.divisiveAvgMax = 5.0;
+            state.comparisonView = null;
+            state.comparisonDetailUserId = null;
+            state.comparisonDetailCollapsed = {};
+            state.collapsedSections = {};
 
             // Clear URL hash
             window.location.hash = '';
@@ -6405,6 +6414,16 @@
             state.resultsView = 'average';
             state.selectedVoterUserId = null;
             state.contestVoters = [];
+            // Reset results tab enhancement state
+            state.userFilterSelectedUsers = null;
+            state.userFilterDropdownOpen = false;
+            state.countMode = 'images';
+            state.divisiveAvgMin = 1.0;
+            state.divisiveAvgMax = 5.0;
+            state.comparisonView = null;
+            state.comparisonDetailUserId = null;
+            state.comparisonDetailCollapsed = {};
+            state.collapsedSections = {};
 
             // Clear URL hash
             window.location.hash = '';
@@ -6526,9 +6545,9 @@
 
             state.results.forEach(imageResult => {
                 let count = 0;
-                imageResult.breakdown.forEach(vote => {
-                    // Only count non-blocked votes
-                    if (!vote.isBlocked && state.countSelectedScores.includes(vote.score)) {
+                (imageResult.breakdown || []).forEach(vote => {
+                    // Only count non-blocked, non-banned votes
+                    if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
                         count++;
                     }
                 });
@@ -6653,14 +6672,13 @@
             if (filterIds === null) return state.results; // No filter active
 
             return state.results.map(img => {
-                const filteredBreakdown = img.breakdown.filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
+                const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
                 const scores = filteredBreakdown.map(v => v.score);
                 const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
                 return {
                     ...img,
                     averageScore: avg,
-                    totalVotes: scores.length,
-                    _filteredBreakdown: filteredBreakdown
+                    totalVotes: scores.length
                 };
             });
         }
@@ -6719,7 +6737,7 @@
             const allImages = state.results
                 .filter(img => img.totalVotes >= 2)
                 .map(img => {
-                    const scores = img.breakdown.filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
+                    const scores = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
                     const sd = calculateSD(scores);
                     const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
                     return { ...img, sd: parseFloat(sd.toFixed(2)), averageScore: avg };
@@ -6763,7 +6781,7 @@
             const userCounts = {};
 
             state.results.forEach(imageResult => {
-                imageResult.breakdown.forEach(vote => {
+                (imageResult.breakdown || []).forEach(vote => {
                     if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
                         if (!userCounts[vote.userId]) {
                             userCounts[vote.userId] = { userId: vote.userId, username: vote.username, avatar: vote.avatar, count: 0 };
@@ -6794,7 +6812,7 @@
 
             state.results.forEach(imageResult => {
                 let count = 0;
-                imageResult.breakdown.forEach(vote => {
+                (imageResult.breakdown || []).forEach(vote => {
                     if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
                         if (filterIds === null || filterIds.has(vote.userId)) {
                             count++;
@@ -6874,14 +6892,14 @@
             // Build map of selected user's votes
             const selectedUserVotes = {};
             state.results.forEach(img => {
-                const vote = img.breakdown.find(v => v.userId === selectedUserId && !v.isBlocked);
+                const vote = (img.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
                 if (vote) selectedUserVotes[img.id] = vote.score;
             });
 
             // Build map of all other voters
             const voterMap = {};
             state.results.forEach(img => {
-                img.breakdown.forEach(vote => {
+                (img.breakdown || []).forEach(vote => {
                     if (vote.userId === selectedUserId || vote.isBlocked || vote.isBanned) return;
                     if (!voterMap[vote.userId]) {
                         voterMap[vote.userId] = { userId: vote.userId, username: vote.username, avatar: vote.avatar, comparisons: [] };
@@ -6900,17 +6918,6 @@
                 const total = voter.comparisons.length;
                 if (total === 0) return null;
                 let exact = 0, close = 0, above = 0, below = 0, wide = 0;
-                voter.comparisons.forEach(c => {
-                    const diff = c.otherScore - c.selectedScore;
-                    if (diff === 0) exact++;
-                    else if (Math.abs(diff) === 1) close++;
-                    else if (diff > 1) above++;
-                    else if (diff < -1) below++;
-                    if (Math.abs(diff) >= 2) wide++;
-                });
-                // close match includes ±1, above/below only for diff >= 2
-                // Recalculate: exact=0, close=±1, above= +2 or more, below= -2 or more, wide=|diff|>=2
-                exact = 0; close = 0; above = 0; below = 0; wide = 0;
                 voter.comparisons.forEach(c => {
                     const diff = c.otherScore - c.selectedScore;
                     if (diff === 0) exact++;
@@ -6938,7 +6945,7 @@
             // Build user votes map
             const userVotes = {};
             state.results.forEach(img => {
-                const vote = img.breakdown.find(v => v.userId === selectedUserId && !v.isBlocked);
+                const vote = (img.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
                 if (vote) userVotes[img.id] = vote.score;
             });
 
@@ -6969,12 +6976,12 @@
                     { key: 'cmp_close_below', label: 'Moderately below average', range: '-0.51 to -1.00', color: '#f59e0b', items: [] }
                 ]},
                 { key: 'cmp_above_avg', label: 'Above Average', range: '1.01-1.99', color: '#93c5fd', subcategories: [
-                    { key: 'cmp_above_1_0', label: 'By 1.0-1.49 points above', range: '+1.00 to +1.49', color: '#bfdbfe', items: [] },
-                    { key: 'cmp_above_1_5', label: 'By 1.5-1.99 points above', range: '+1.50 to +1.99', color: '#60a5fa', items: [] }
+                    { key: 'cmp_above_1_0', label: 'By 1.01-1.49 points above', range: '+1.01 to +1.49', color: '#bfdbfe', items: [] },
+                    { key: 'cmp_above_1_5', label: 'By 1.50-1.99 points above', range: '+1.50 to +1.99', color: '#60a5fa', items: [] }
                 ]},
                 { key: 'cmp_below_avg', label: 'Below Average', range: '1.01-1.99', color: '#fdba74', subcategories: [
-                    { key: 'cmp_below_1_0', label: 'By 1.0-1.49 points below', range: '-1.00 to -1.49', color: '#fed7aa', items: [] },
-                    { key: 'cmp_below_1_5', label: 'By 1.5-1.99 points below', range: '-1.50 to -1.99', color: '#f97316', items: [] }
+                    { key: 'cmp_below_1_0', label: 'By 1.01-1.49 points below', range: '-1.01 to -1.49', color: '#fed7aa', items: [] },
+                    { key: 'cmp_below_1_5', label: 'By 1.50-1.99 points below', range: '-1.50 to -1.99', color: '#f97316', items: [] }
                 ]},
                 { key: 'cmp_wide', label: 'Wide Gap', range: '2.00+', color: '#fca5a5', subcategories: [
                     { key: 'cmp_wide_2_0_above', label: 'By 2.0-2.49 points above', range: '+2.00 to +2.49', color: '#fecaca', items: [] },
@@ -7020,8 +7027,8 @@
             const selectedVotes = {};
             const targetVotes = {};
             state.results.forEach(img => {
-                const sv = img.breakdown.find(v => v.userId === selectedUserId && !v.isBlocked);
-                const tv = img.breakdown.find(v => v.userId === targetUserId && !v.isBlocked);
+                const sv = (img.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
+                const tv = (img.breakdown || []).find(v => v.userId === targetUserId && !v.isBlocked && !v.isBanned);
                 if (sv) selectedVotes[img.id] = sv.score;
                 if (tv) targetVotes[img.id] = tv.score;
             });
@@ -11679,7 +11686,7 @@
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                     ${(() => {
                         let totalVotes = 0, totalScore = 0;
-                        state.results.forEach(img => { img.breakdown.forEach(vote => { if (!vote.isBlocked) { totalVotes++; totalScore += vote.score; } }); });
+                        state.results.forEach(img => { (img.breakdown || []).forEach(vote => { if (!vote.isBlocked && !vote.isBanned) { totalVotes++; totalScore += vote.score; } }); });
                         const contestAverage = totalVotes > 0 ? (totalScore / totalVotes).toFixed(2) : 0;
                         return `
                             <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
@@ -12726,13 +12733,6 @@
 
             // === DIVISIVE VIEW (merged) ===
             if (state.resultsView === 'divisive') {
-                // For merged results, temporarily set state.results so generateDivisiveData works
-                const origResults = state.results;
-                state.results = mergedResultsData;
-                // Fall through to render using the same renderResults pattern but with divisive
-                // We'll render inline since merged results has its own render path
-                state.results = origResults;
-                // Show basic divisive view
                 displayResults = mergedResultsData.filter(img => img.totalVotes >= 2).map(img => {
                     const scores = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
                     const sd = calculateSD(scores);
@@ -12747,8 +12747,8 @@
                 mergedResultsData.forEach(imageResult => {
                     let count = 0;
                     (imageResult.breakdown || []).forEach(vote => {
-                        // Only count non-blocked votes
-                        if (!vote.isBlocked && state.countSelectedScores.includes(vote.score)) {
+                        // Only count non-blocked, non-banned votes
+                        if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
                             count++;
                         }
                     });
@@ -12794,7 +12794,7 @@
                 const voterMap = {};
                 mergedResultsData.forEach(imageResult => {
                     (imageResult.breakdown || []).forEach(vote => {
-                        if (!vote.isBlocked) {
+                        if (!vote.isBlocked && !vote.isBanned) {
                             if (!voterMap[vote.userId]) {
                                 voterMap[vote.userId] = {
                                     userId: vote.userId,
@@ -12837,7 +12837,7 @@
                 const voterSetTemp = new Set();
                 mergedResultsData.forEach(img => {
                     (img.breakdown || []).forEach(vote => {
-                        if (!vote.isBlocked) {
+                        if (!vote.isBlocked && !vote.isBanned) {
                             voterSetTemp.add(JSON.stringify({ userId: vote.userId, username: vote.username, avatar: vote.avatar }));
                         }
                     });
@@ -12851,7 +12851,7 @@
 
                 const userVotesMap = {};
                 mergedResultsData.forEach(imageResult => {
-                    const userVote = (imageResult.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked);
+                    const userVote = (imageResult.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
                     if (userVote) {
                         userVotesMap[imageResult.id] = userVote.score;
                     }
@@ -12881,7 +12881,7 @@
             const voterSet = new Set();
             mergedResultsData.forEach(img => {
                 (img.breakdown || []).forEach(vote => {
-                    if (!vote.isBlocked) {
+                    if (!vote.isBlocked && !vote.isBanned) {
                         voterSet.add(JSON.stringify({ userId: vote.userId, username: vote.username, avatar: vote.avatar }));
                     }
                 });
@@ -13076,7 +13076,7 @@
                                                 <!-- Images Panel (right side, wraps) -->
                                                 <div class="flex-1 flex flex-wrap gap-1 items-start">
                                                     ${images.map(img => `
-                                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdown(${img.id})">
+                                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdownMerged(${img.id})">
                                                             <div
                                                                 class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
                                                                 style="height: ${imageSize}px; border: 3px solid ${bgColor};"
@@ -13127,7 +13127,7 @@
                                         let totalScore = 0;
                                         mergedResultsData.forEach(img => {
                                             (img.breakdown || []).forEach(vote => {
-                                                if (!vote.isBlocked) {
+                                                if (!vote.isBlocked && !vote.isBanned) {
                                                     totalVotes++;
                                                     totalScore += vote.score;
                                                 }
