@@ -6679,7 +6679,7 @@
 
         function renderCollapseArrow(sectionKey) {
             const collapsed = isSectionCollapsed(sectionKey);
-            return `<span class="inline-block cursor-pointer select-none transition-transform duration-200 ${collapsed ? '' : 'rotate-90'}" style="font-size: 0.7em;" onclick="event.stopPropagation(); toggleSection('${sectionKey}')">&#9654;</span>`;
+            return `<svg class="inline-block cursor-pointer select-none transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" onclick="event.stopPropagation(); toggleSection('${sectionKey}')"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>`;
         }
 
         // ==================== USER FILTER ====================
@@ -6862,36 +6862,23 @@
 
             return `
                 <div class="mb-2 max-w-md mx-auto relative">
-                    <div class="flex items-center justify-center gap-2">
-                        <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-3 py-1 rounded-lg border-2 ${isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-sm font-medium hover:border-mauve-400 transition">
+                    <div class="flex items-center justify-center gap-2 flex-wrap">
+                        <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-3 py-1 rounded-lg border-2 ${state.imageFilterDropdownOpen ? 'border-mauve-400 bg-mauve-100 ring-2 ring-mauve-300' : isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-sm font-medium hover:border-mauve-400 transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            Image Filter
+                            Image Filter${state.imageFilterDropdownOpen ? ' (editing)' : ''}
                         </button>
                         ${isActive ? `<span class="text-xs font-medium text-mauve-600">Showing: ${selectedCount}/${totalCount} images</span>` : ''}
+                        ${state.imageFilterDropdownOpen ? `
+                            <button onclick="selectAllFilterImages()" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
+                            <button onclick="unselectAllFilterImages()" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
+                        ` : ''}
                     </div>
-                    ${state.imageFilterDropdownOpen ? `
-                        <div class="absolute z-40 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 max-h-80 overflow-y-auto image-filter-dropdown" style="left: 50%; transform: translateX(-50%); width: min(90vw, 600px);">
-                            <div class="sticky top-0 bg-white border-b border-gray-200 p-2 flex gap-2 z-10">
-                                <button onclick="selectAllFilterImages()" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
-                                <button onclick="unselectAllFilterImages()" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
-                            </div>
-                            <div class="p-2 flex flex-wrap gap-1">
-                                ${allImages.map(img => {
-                                    const isVisible = state.imageFilterSelectedImages === null || state.imageFilterSelectedImages.has(img.id);
-                                    return `
-                                        <div class="relative cursor-pointer rounded-lg overflow-hidden border-3 ${isVisible ? 'border-green-400 opacity-100' : 'border-red-400 opacity-40'}" style="height: 60px; border-width: 3px;" onclick="toggleImageFilterImage(${img.id})">
-                                            <img src="${img.url}" alt="" class="h-full w-auto object-cover" style="height: 60px;" />
-                                            <div class="absolute top-1 left-1 w-5 h-5 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}">
-                                                ${isVisible ? '✓' : '✕'}
-                                            </div>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
                 </div>
             `;
+        }
+
+        function isImageVisibleInFilter(imageId) {
+            return state.imageFilterSelectedImages === null || state.imageFilterSelectedImages.has(imageId);
         }
 
         // ==================== DIVISIVE TAB HELPERS ====================
@@ -6941,13 +6928,15 @@
         function updateDivisiveAvgMin(value) {
             state.divisiveAvgMin = parseFloat(value);
             if (state.divisiveAvgMin > state.divisiveAvgMax) state.divisiveAvgMax = state.divisiveAvgMin;
-            render();
+            clearTimeout(state.divisiveSliderTimeout);
+            state.divisiveSliderTimeout = setTimeout(() => { render(); }, 150);
         }
 
         function updateDivisiveAvgMax(value) {
             state.divisiveAvgMax = parseFloat(value);
             if (state.divisiveAvgMax < state.divisiveAvgMin) state.divisiveAvgMin = state.divisiveAvgMax;
-            render();
+            clearTimeout(state.divisiveSliderTimeout);
+            state.divisiveSliderTimeout = setTimeout(() => { render(); }, 150);
         }
 
         function adjustDivisiveAvgMin(delta) {
@@ -7082,16 +7071,15 @@
         }
 
         function toggleComparisonTableSort(key) {
-            const existing = state.comparisonTableSortKeys.findIndex(s => s.key === key);
-            if (existing >= 0) {
-                const current = state.comparisonTableSortKeys[existing];
-                if (current.direction === 'desc') {
-                    current.direction = 'asc';
+            const existing = state.comparisonTableSortKeys.find(s => s.key === key);
+            if (existing) {
+                if (existing.direction === 'desc') {
+                    state.comparisonTableSortKeys = [{ key, direction: 'asc' }];
                 } else {
-                    state.comparisonTableSortKeys.splice(existing, 1);
+                    state.comparisonTableSortKeys = [];
                 }
             } else {
-                state.comparisonTableSortKeys.push({ key, direction: 'desc' });
+                state.comparisonTableSortKeys = [{ key, direction: 'desc' }];
             }
             render();
         }
@@ -11492,7 +11480,7 @@
                             </div>
                             <div class="mt-3 flex flex-col items-center justify-center gap-2 mb-4">
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap opacity-50">
-                                    ${['Total','Divisive','Count','By User','Average'].map(t => `<button class="px-2 sm:px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed text-xs sm:text-sm" disabled>${t}</button>`).join('')}
+                                    ${['Total','Divisive','Count','By User','Average'].map(t => `<button class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-gray-200 cursor-not-allowed text-sm sm:text-base font-medium" disabled>${t}</button>`).join('')}
                                 </div>
                             </div>
                             <div class="text-center py-16">
@@ -11562,7 +11550,7 @@
                                     ${tabs.map(tab => `
                                         <button
                                             ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                            class="px-2 sm:px-3 py-1 rounded-lg text-xs sm:text-sm ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
+                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
                                         >${tab.label}</button>
                                     `).join('')}
                                 </div>
@@ -11608,8 +11596,8 @@
                         <label class="text-xs font-medium text-gray-700">Average Score Range: ${state.divisiveAvgMin.toFixed(1)} - ${state.divisiveAvgMax.toFixed(1)}</label>
                         <div class="flex items-center gap-2 mt-1">
                             <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
-                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
-                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
+                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
                             <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
                         </div>
                     </div>
@@ -11676,6 +11664,19 @@
         }
 
         // ==================== TAB 1: TOTAL ====================
+        function getResultsWithoutImageFilter() {
+            if (!state.results) return [];
+            let results = state.results;
+            const filterIds = getFilteredUserIds();
+            if (filterIds === null) return results;
+            return results.map(img => {
+                const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
+                const scores = filteredBreakdown.map(v => v.score);
+                const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
+                return { ...img, averageScore: avg, totalVotes: scores.length };
+            });
+        }
+
         function renderTotalTab(imageSize, fontSize) {
             const filteredResults = getFilteredResults();
             const grouped = groupByScoreRange(filteredResults);
@@ -11684,14 +11685,39 @@
                 const bMin = grouped[b].min;
                 return bMin - aMin;
             });
+            const scoreLabelColor = isUserFilterActive() ? 'color: #ffb6c1;' : 'color: white;';
+            const imageFilterIds = getFilteredImageIds();
+            let allGrouped = null;
+            if (imageFilterIds !== null) {
+                allGrouped = groupByScoreRange(getResultsWithoutImageFilter());
+            }
 
             if (sortedKeys.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No voting data available.</p></div>`;
             }
 
-            return sortedKeys.map(key => {
+            // When image filter editing is open, show all images with checkboxes
+            const isFilterEditing = state.imageFilterDropdownOpen;
+
+            // Collect all keys from both filtered and unfiltered
+            const sourceGrouped = isFilterEditing && allGrouped ? allGrouped : grouped;
+            const allKeys = allGrouped ? [...new Set([...sortedKeys, ...Object.keys(allGrouped)])] : sortedKeys;
+            allKeys.sort((a, b) => {
+                const aMin = (grouped[a] || allGrouped[a]).min;
+                const bMin = (grouped[b] || allGrouped[b]).min;
+                return bMin - aMin;
+            });
+
+            return allKeys.map(key => {
                 const group = grouped[key];
-                const colorStyle = getCategoryColor(group.min, group.isMissing);
+                const allGroup = allGrouped ? allGrouped[key] : null;
+                const displayGroup = isFilterEditing ? (allGroup || group) : group;
+                const visibleCount = group ? group.items.length : 0;
+                const totalCount = allGroup ? allGroup.items.length : visibleCount;
+                const hiddenCount = totalCount - visibleCount;
+                if (!displayGroup || displayGroup.items.length === 0) return '';
+                const refGroup = group || allGroup;
+                const colorStyle = getCategoryColor(refGroup.min, refGroup.isMissing);
                 const sectionKey = `total_${key}`;
                 const collapsed = isSectionCollapsed(sectionKey);
 
@@ -11699,19 +11725,27 @@
                     <div class="mb-4">
                         <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full flex items-center cursor-pointer select-none" onclick="toggleSection('${sectionKey}')">
                             ${renderCollapseArrow(sectionKey)}
-                            ${getCategoryLabel(group.min, group.max, group.isMissing)}
-                            <span class="text-xs font-normal ml-auto">Count: ${group.items.length}</span>
+                            ${getCategoryLabel(refGroup.min, refGroup.max, refGroup.isMissing)}
+                            <span class="text-xs font-normal ml-auto">Count: ${visibleCount}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
-                        ${!collapsed ? `
+                        ${!collapsed && displayGroup ? `
                             <div class="flex flex-wrap gap-1">
-                                ${group.items.map(item => `
-                                    <div onclick="showBreakdown(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                ${displayGroup.items.map(item => {
+                                    const isVisible = isImageVisibleInFilter(item.id);
+                                    if (!isFilterEditing && !isVisible) return '';
+                                    return `
+                                    <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:scale-105'} transition-transform rounded-lg overflow-hidden shadow-lg" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${item.id})` : `showBreakdown(${item.id})`}">
                                         <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                        <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                        <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; ${scoreLabelColor}">
                                             ${item.averageScore}
                                         </div>
-                                    </div>
-                                `).join('')}
+                                        ${isFilterEditing ? `
+                                            <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                ${isVisible ? '✓' : '✕'}
+                                            </div>
+                                        ` : ''}
+                                    </div>`;
+                                }).join('')}
                             </div>
                         ` : ''}
                     </div>
@@ -11770,15 +11804,31 @@
 
             // Images mode with user filter
             const countData = isUserFilterActive() ? generateCountDataFiltered() : generateCountData();
+            const scoreLabelColor = isUserFilterActive() ? 'color: #ffb6c1;' : 'color: white;';
+
+            // Calculate hidden counts per count level for image filter
+            const imageFilterIds = getFilteredImageIds();
+            let allCountData = null;
+            if (imageFilterIds !== null) {
+                allCountData = generateCountData();
+            }
 
             if (!countData || countData.sortedCounts.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No images have received the selected score(s).</p></div>`;
             }
 
+            const isFilterEditing = state.imageFilterDropdownOpen;
+            const allCounts = allCountData ? [...new Set([...countData.sortedCounts, ...allCountData.sortedCounts])].sort((a, b) => b - a) : countData.sortedCounts;
+            const effectiveMaxCount = allCountData ? Math.max(countData.maxCount, allCountData.maxCount) : countData.maxCount;
+
             return `<div class="space-y-3">
-                ${countData.sortedCounts.map(count => {
-                    const images = countData.grouped[count];
-                    const ratio = count / countData.maxCount;
+                ${allCounts.map(count => {
+                    const images = countData.grouped[count] || [];
+                    const allImagesForCount = allCountData ? (allCountData.grouped[count] || []) : images;
+                    const displayImages = isFilterEditing ? allImagesForCount : images;
+                    const hiddenCount = allImagesForCount.length - images.length;
+                    if (displayImages.length === 0) return '';
+                    const ratio = count / effectiveMaxCount;
                     const baseHue = 270 + (ratio * 330);
                     const hue = baseHue % 360;
                     const bgColor = `hsl(${hue}, 70%, 45%)`;
@@ -11791,18 +11841,27 @@
                                 ${renderCollapseArrow(sectionKey)}
                                 <div class="text-xl">${count}</div>
                             </div>
-                            ${!collapsed ? `
+                            ${!collapsed && displayImages.length > 0 ? `
                                 <div class="flex-1 flex flex-wrap gap-1 items-start">
-                                    ${images.map(img => `
-                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdown(${img.id})">
+                                    ${!isFilterEditing && hiddenCount > 0 ? `<div class="text-xs text-gray-500 w-full opacity-70">(${hiddenCount} more hidden)</div>` : ''}
+                                    ${displayImages.map(img => {
+                                        const isVisible = isImageVisibleInFilter(img.id);
+                                        if (!isFilterEditing && !isVisible) return '';
+                                        return `
+                                        <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : `showBreakdown(${img.id})`}">
                                             <div class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full" style="height: ${imageSize}px; border: 3px solid ${bgColor};">
                                                 <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">${img.averageScore}</div>
+                                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; ${scoreLabelColor}">${img.averageScore}</div>
                                             </div>
-                                        </div>
-                                    `).join('')}
+                                            ${isFilterEditing ? `
+                                                <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                    ${isVisible ? '✓' : '✕'}
+                                                </div>
+                                            ` : ''}
+                                        </div>`;
+                                    }).join('')}
                                 </div>
-                            ` : '<div class="flex-1"></div>'}
+                            ` : `<div class="flex-1 flex items-center"><span class="text-xs text-gray-500">${!isFilterEditing && hiddenCount > 0 ? `(${hiddenCount} hidden)` : ''}</span></div>`}
                         </div>
                     `;
                 }).join('')}
@@ -11842,7 +11901,6 @@
                                         <div class="flex items-center gap-2 bg-white rounded-lg shadow border border-gray-200 cursor-pointer hover:shadow-md transition" style="padding: ${Math.round(8 * cardScale)}px ${Math.round(12 * cardScale)}px;" onclick="viewUserProfile('${u.userId}')">
                                             <img src="${u.avatar}" class="rounded-full" style="width: ${avatarSize}px; height: ${avatarSize}px;" />
                                             <span class="font-medium" style="font-size: ${cardFontSize}px;">${u.username}</span>
-                                            <span class="text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full" style="font-size: ${Math.max(9, cardFontSize - 2)}px;">${u.count}x</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -11966,7 +12024,38 @@
             const selectedName = selectedVoter ? selectedVoter.username : 'Unknown';
             const isMatch = state.comparisonTableView === 'match';
 
-            // Apply multi-sort
+            // Compute contest average percentages
+            const contestAvgPcts = (() => {
+                if (!state.results || !state.selectedVoterUserId) return {};
+                const userVotes = {};
+                state.results.forEach(img => {
+                    const vote = (img.breakdown || []).find(v => v.userId === state.selectedVoterUserId && !v.isBlocked && !v.isBanned);
+                    if (vote) userVotes[img.id] = vote.score;
+                });
+                let total = 0, exact = 0, close = 0, wide = 0, above = 0, below = 0;
+                state.results.forEach(img => {
+                    if (userVotes[img.id] === undefined || img.averageScore === 0) return;
+                    total++;
+                    const diff = userVotes[img.id] - img.averageScore;
+                    const absDiff = Math.abs(diff);
+                    if (absDiff <= 0.50) exact++;
+                    else if (absDiff <= 1.00) close++;
+                    else wide++;
+                    if (diff > 0.005) above++;
+                    if (diff < -0.005) below++;
+                });
+                if (total === 0) return {};
+                const exactRel = total > 0 ? Math.round((state.results.filter(img => userVotes[img.id] !== undefined && img.averageScore !== 0 && Math.abs(userVotes[img.id] - img.averageScore) <= 0.005).length / total) * 100) : 0;
+                return {
+                    exactPct: ((exact / total) * 100).toFixed(0),
+                    closePct: ((close / total) * 100).toFixed(0),
+                    widePct: ((wide / total) * 100).toFixed(0),
+                    abovePct: ((above / total) * 100).toFixed(0),
+                    belowPct: ((below / total) * 100).toFixed(0)
+                };
+            })();
+
+            // Apply sort
             if (state.comparisonTableSortKeys.length > 0) {
                 comparisonData = [...comparisonData].sort((a, b) => {
                     for (const sortKey of state.comparisonTableSortKeys) {
@@ -11988,8 +12077,7 @@
             const getSortIndicator = (key) => {
                 const sort = state.comparisonTableSortKeys.find(s => s.key === key);
                 if (!sort) return '';
-                const idx = state.comparisonTableSortKeys.indexOf(sort);
-                return ` ${sort.direction === 'desc' ? '▼' : '▲'}${state.comparisonTableSortKeys.length > 1 ? '<sub>' + (idx + 1) + '</sub>' : ''}`;
+                return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
             };
 
             const matchColumns = [
@@ -12032,11 +12120,18 @@
                                 </thead>
                                 <tbody>
                                     <tr class="border-b border-gray-100 bg-yellow-50 cursor-pointer hover:bg-yellow-100 transition" onclick="showComparisonDetail('__contest_average__')">
-                                        <td class="py-2 px-2 flex items-center gap-2">
-                                            <span class="text-lg">📊</span>
-                                            <span class="font-medium text-yellow-800">Contest Average</span>
+                                        <td class="py-2 px-2">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-lg">📊</span>
+                                                <div>
+                                                    <span class="font-medium text-yellow-800">Contest Average</span>
+                                                    <div class="text-xs text-gray-500">Click to view detailed comparison</div>
+                                                </div>
+                                            </div>
                                         </td>
-                                        <td class="text-center py-2 px-1" colspan="${columns.length}"><span class="text-xs text-gray-500">Click to view detailed comparison</span></td>
+                                        ${columns.map(col => `
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${contestAvgPcts[col.key] || 0}%</span></td>
+                                        `).join('')}
                                     </tr>
                                     ${comparisonData.map(voter => `
                                         <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showComparisonDetail('${voter.userId}')">
@@ -12134,8 +12229,8 @@
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
-                            ${collapsed ? '&#9654;' : '&#9660;'} ${cat.label} <span class="text-xs font-normal">(${cat.range})</span>
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label} <span class="text-xs font-normal">(${cat.range})</span>
                             <span class="text-xs font-normal ml-auto">Count: ${totalItems}</span>
                         </h3>
                         ${!collapsed ? cat.subcategories.map(sc => {
@@ -12143,8 +12238,8 @@
                             const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
                             return `
                                 <div class="ml-4 mb-2">
-                                    <h4 class="text-xs font-semibold mb-1 px-2 py-1 rounded flex items-center cursor-pointer select-none comparison-cat-header" style="background-color: ${sc.color};" onclick="toggleComparisonDetailSection('${sc.key}')">
-                                        ${scCollapsed ? '&#9654;' : '&#9660;'} ${sc.label} <span class="font-normal">(${sc.range})</span>
+                                    <h4 class="text-xs font-semibold mb-1 px-2 py-1 rounded flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${sc.color};" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                        <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${sc.label} <span class="font-normal">(${sc.range})</span>
                                         <span class="font-normal ml-auto">Count: ${sc.items.length}</span>
                                     </h4>
                                     ${!scCollapsed ? `
@@ -12174,8 +12269,8 @@
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
-                            ${collapsed ? '&#9654;' : '&#9660;'} ${cat.label}
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}
                             <span class="text-xs font-normal ml-auto">Count: ${cat.items.length}</span>
                         </h3>
                         ${!collapsed ? `
@@ -13243,7 +13338,7 @@
                                     mtabs.forEach(function(tab) {
                                         const ac = state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200';
                                         const clk = canSwitchTabs ? 'onclick="setResultsView(\'' + tab.key + '\')"' : 'disabled';
-                                        tabsHtml += '<button ' + clk + ' class="px-2 sm:px-3 py-1 rounded-lg text-xs sm:text-sm ' + ac + ' ' + disabledClass + '">' + tab.label + '</button>';
+                                        tabsHtml += '<button ' + clk + ' class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ' + ac + ' ' + disabledClass + '">' + tab.label + '</button>';
                                     });
                                     tabsHtml += '</div>';
                                     return tabsHtml;
@@ -13255,8 +13350,8 @@
                                         <label class="text-xs font-medium text-gray-700">Average Score Range: ${state.divisiveAvgMin.toFixed(1)} - ${state.divisiveAvgMax.toFixed(1)}</label>
                                         <div class="flex items-center gap-2 mt-1">
                                             <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
-                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
-                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
+                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
                                             <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
                                         </div>
                                     </div>
