@@ -443,23 +443,31 @@
             background-color: #203a20 !important;
         }
 
-        /* Keep activity list backgrounds in their original colors */
-        body.dark-theme .modal-content .bg-yellow-50,
-        body.dark-theme .modal-content .bg-yellow-100,
-        body.dark-theme .modal-content .bg-green-100,
-        body.dark-theme .modal-content .bg-blue-100,
-        body.dark-theme .modal-content .bg-purple-100,
-        body.dark-theme .modal-content .bg-gray-50,
-        body.dark-theme .modal-content .bg-blue-50 {
-            background-color: revert !important;
+        /* Dark mode modal: lighten text for readability on dark backgrounds */
+        body.dark-theme .modal-content .text-gray-800 {
+            color: #f3f4f6 !important;
         }
-
-        /* Ensure text in modal content is readable on light backgrounds */
-        body.dark-theme .modal-content .text-gray-800,
-        body.dark-theme .modal-content .text-gray-700,
-        body.dark-theme .modal-content .text-gray-600,
+        body.dark-theme .modal-content .text-gray-700 {
+            color: #e5e7eb !important;
+        }
+        body.dark-theme .modal-content .text-gray-600 {
+            color: #d1d5db !important;
+        }
+        body.dark-theme .modal-content .text-gray-500 {
+            color: #9ca3af !important;
+        }
         body.dark-theme .modal-content .text-blue-800 {
-            color: revert !important;
+            color: #93c5fd !important;
+        }
+        /* Dark mode modal: darken section backgrounds */
+        body.dark-theme .modal-content .bg-gray-50 {
+            background-color: #2a2a3a !important;
+        }
+        body.dark-theme .modal-content .bg-gray-100 {
+            background-color: #252535 !important;
+        }
+        body.dark-theme .modal-content .bg-blue-50 {
+            background-color: #1e2a3a !important;
         }
 
         /* Override Tailwind dark: variants to only respond to app theme toggle, not OS preference */
