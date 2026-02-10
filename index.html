@@ -3130,8 +3130,8 @@
                 window.location.hash = '';
 
                 // Route user based on their voting status
-                if (hasVotedAll || isAdmin || isCreator) {
-                    // User has voted on all contests or is admin/creator -> show results
+                if (merger.isLocked || hasVotedAll || isAdmin || isCreator) {
+                    // Merger is locked, user has voted on all contests, or is admin/creator -> show results
                     await viewMergerResults(mergerId);
                 } else if (hasVotedSome) {
                     // User has voted on some contests -> show "Complete Voting" modal
@@ -3202,8 +3202,8 @@
                 const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
                 const isCreator = state.user && state.user.id === extract.createdBy;
 
-                if (hasVotedOnSource || isAdmin || isCreator) {
-                    // User has voted on source or is admin/creator -> show extract results
+                if (extract.isLocked || hasVotedOnSource || isAdmin || isCreator) {
+                    // Extract is locked, user has voted on source, or is admin/creator -> show extract results
                     await viewExtractResults(extractId);
                 } else {
                     // User hasn't voted on source -> show redirect modal
@@ -5151,6 +5151,11 @@
                 return;
             }
 
+            if (merger.isLocked) {
+                showToast('This merger is locked', 'error');
+                return;
+            }
+
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
 
@@ -5248,6 +5253,11 @@
             const merger = state.mergers.find(m => m.id === mergerId);
             if (!merger) {
                 showToast('Merger not found', 'error');
+                return;
+            }
+
+            if (merger.isLocked) {
+                showToast('This merger is locked', 'error');
                 return;
             }
 
@@ -5366,6 +5376,11 @@
                 return;
             }
 
+            if (contest.isLocked) {
+                showToast('This contest is locked', 'error');
+                return;
+            }
+
             // Get user's voted images for this contest
             const userVotes = state.userVotedContests[contest.id] || {};
             const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
@@ -5411,6 +5426,11 @@
             const contest = state.contests.find(c => c.id === contestId);
             if (!contest) {
                 showToast('Contest not found', 'error');
+                return;
+            }
+
+            if (contest.isLocked) {
+                showToast('This contest is locked', 'error');
                 return;
             }
 
@@ -5961,6 +5981,11 @@
             const extract = state.extracts.find(e => e.id === extractId);
             if (!extract) {
                 showToast('Extract not found', 'error');
+                return;
+            }
+
+            if (extract.isLocked) {
+                showToast('This extract is locked', 'error');
                 return;
             }
 
@@ -7216,6 +7241,48 @@
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((aboveAll / total) * 100).toFixed(0),
                     belowPct: ((belowAll / total) * 100).toFixed(0)
+                };
+            }).filter(Boolean).sort((a, b) => parseFloat(b.exactPct) - parseFloat(a.exactPct));
+        }
+
+        function generateContestAvgComparisonTable() {
+            if (!state.results) return [];
+            // Build per-voter contest average comparison percentages
+            const voterMap = {};
+            state.results.forEach(img => {
+                if (!img.averageScore || img.averageScore === 0) return;
+                (img.breakdown || []).forEach(vote => {
+                    if (vote.isBlocked || vote.isBanned) return;
+                    if (!voterMap[vote.userId]) {
+                        voterMap[vote.userId] = { userId: vote.userId, username: vote.username, avatar: vote.avatar, comparisons: [] };
+                    }
+                    voterMap[vote.userId].comparisons.push({
+                        userScore: vote.score,
+                        avgScore: img.averageScore,
+                        diff: vote.score - img.averageScore,
+                        absDiff: Math.abs(vote.score - img.averageScore)
+                    });
+                });
+            });
+            return Object.values(voterMap).map(voter => {
+                const total = voter.comparisons.length;
+                if (total === 0) return null;
+                let exact = 0, close = 0, wide = 0, above = 0, below = 0;
+                voter.comparisons.forEach(c => {
+                    if (c.absDiff <= 0.50) exact++;
+                    else if (c.absDiff <= 1.00) close++;
+                    else wide++;
+                    if (c.diff > 0.50) above++;
+                    if (c.diff < -0.50) below++;
+                });
+                return {
+                    ...voter,
+                    total,
+                    exactPct: ((exact / total) * 100).toFixed(0),
+                    closePct: ((close / total) * 100).toFixed(0),
+                    widePct: ((wide / total) * 100).toFixed(0),
+                    abovePct: ((above / total) * 100).toFixed(0),
+                    belowPct: ((below / total) * 100).toFixed(0)
                 };
             }).filter(Boolean).sort((a, b) => parseFloat(b.exactPct) - parseFloat(a.exactPct));
         }
@@ -9524,8 +9591,9 @@
                         // Identify contests and mergers where user has partial votes
                         const itemsToComplete = [];
 
-                        // Check contests for partial votes
+                        // Check contests for partial votes (skip locked)
                         filteredContests.forEach(contest => {
+                            if (contest.isLocked) return;
                             const userVotes = state.userVotedContests[contest.id];
                             if (userVotes && Object.keys(userVotes).length > 0) {
                                 const totalImages = contest.images.length;
@@ -9537,8 +9605,9 @@
                             }
                         });
 
-                        // Check mergers for partial votes
+                        // Check mergers for partial votes (skip locked)
                         filteredMergers.forEach(merger => {
+                            if (merger.isLocked) return;
                             const mergerContestIds = merger.contestIds || [];
                             let totalImages = 0;
                             let votedImages = 0;
@@ -9560,8 +9629,9 @@
                             }
                         });
 
-                        // Check extracts for partial votes
+                        // Check extracts for partial votes (skip locked)
                         filteredExtracts.forEach(extract => {
+                            if (extract.isLocked) return;
                             const extractImageIds = extract.imageIds || [];
                             const totalImages = extractImageIds.length;
 
@@ -10708,6 +10778,13 @@
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
+                        ` : merger.isLocked ? `
+                            <button
+                                onclick='viewMergerResults("${merger.id}")'
+                                class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
                         ` : hasVotedAll ? `
                             <button
                                 onclick='startRevoteFromHomeMerger(${safeStringify(merger)})'
@@ -10898,6 +10975,13 @@
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
+                        ` : extract.isLocked ? `
+                            <button
+                                onclick='viewExtractResults("${extract.id}")'
+                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
                         ` : sourceFullyVoted ? `
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
@@ -12088,9 +12172,48 @@
                 `;
             }
 
-            // Compare all mode: show voter list for selection
+            // Compare all mode: show comparison table with percentages
             if (state.averageTabCompareAll) {
-                const voterStats = generateVoterStats();
+                let comparisonData = generateContestAvgComparisonTable();
+                const isMatch = state.comparisonTableView === 'match';
+
+                const matchColumns = [
+                    { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
+                    { key: 'closePct', label: 'Close (±0.51-1.00)', bg: '#fef08a' },
+                    { key: 'widePct', label: 'Wide (±1.01+)', bg: '#fecaca' }
+                ];
+                const relativeColumns = [
+                    { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
+                    { key: 'abovePct', label: 'Above', bg: '#bfdbfe' },
+                    { key: 'belowPct', label: 'Below', bg: '#fed7aa' }
+                ];
+                const columns = isMatch ? matchColumns : relativeColumns;
+
+                const getSortIndicator = (key) => {
+                    const sort = state.comparisonTableSortKeys.find(s => s.key === key);
+                    if (!sort) return '';
+                    return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
+                };
+
+                // Apply sort
+                if (state.comparisonTableSortKeys.length > 0) {
+                    comparisonData = [...comparisonData].sort((a, b) => {
+                        for (const sortKey of state.comparisonTableSortKeys) {
+                            if (sortKey.key === 'username') {
+                                const cmp = a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+                                const diff = sortKey.direction === 'desc' ? -cmp : cmp;
+                                if (diff !== 0) return diff;
+                            } else {
+                                const aVal = parseFloat(a[sortKey.key] || 0);
+                                const bVal = parseFloat(b[sortKey.key] || 0);
+                                const diff = sortKey.direction === 'desc' ? bVal - aVal : aVal - bVal;
+                                if (diff !== 0) return diff;
+                            }
+                        }
+                        return 0;
+                    });
+                }
+
                 return `
                     <div class="flex items-center gap-3 mb-4 flex-wrap">
                         <button onclick="backFromAverageCompareAll()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
@@ -12098,16 +12221,39 @@
                         </button>
                         <h2 class="text-lg font-bold text-gray-800">Comparing: Contest Average</h2>
                     </div>
-                    <p class="text-sm text-gray-500 mb-4">Click a voter to see how they compare to the contest average.</p>
-                    <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
-                        ${voterStats.map(voter => `
-                            <div onclick="showAverageCompareUser('${voter.userId}')" class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg hover:border-blue-400 transition-all cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
-                                <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
-                                <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">${voter.username}</div>
-                                <div class="text-xl font-bold text-white score-text">${voter.averageScore}</div>
-                                <div class="text-xs text-gray-500">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
-                            </div>
-                        `).join('')}
+
+                    <div class="flex items-center gap-2 mb-4">
+                        <label class="text-xs font-medium text-gray-700">View:</label>
+                        <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
+                        <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-gray-200">
+                                    <th class="text-left py-2 px-2 cursor-pointer select-none" onclick="toggleComparisonTableSort('username')">User${getSortIndicator('username')}</th>
+                                    ${columns.map(col => `
+                                        <th class="text-center py-2 px-1 text-xs cursor-pointer select-none" onclick="toggleComparisonTableSort('${col.key}')">${col.label}${getSortIndicator(col.key)}</th>
+                                    `).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${comparisonData.map(voter => `
+                                    <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showAverageCompareUser('${voter.userId}')">
+                                        <td class="py-2 px-2">
+                                            <div class="flex items-center gap-2">
+                                                <img src="${voter.avatar}" class="w-6 h-6 rounded-full" />
+                                                <span class="font-medium truncate max-w-[120px]">${voter.username}</span>
+                                            </div>
+                                        </td>
+                                        ${columns.map(col => `
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${voter[col.key]}%</span></td>
+                                        `).join('')}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
                     </div>
                 `;
             }
@@ -12143,10 +12289,10 @@
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                     <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
                         <div class="text-2xl mb-1">🏆</div>
-                        <div class="text-xs font-semibold text-gray-800 text-center mb-1">Contest Average</div>
+                        <div class="text-xs font-semibold text-gray-800 text-center mb-1 leading-tight">Contest<br class="sm:hidden"> Average</div>
                         <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
                         <div class="text-xs text-gray-500 mb-1">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
-                        <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare all</button>
+                        <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
                     </div>
                     ${voterStats.map(voter => `
                         <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
@@ -12184,8 +12330,8 @@
                     if (absDiff <= 0.50) exact++;
                     else if (absDiff <= 1.00) close++;
                     else wide++;
-                    if (diff > 0.005) above++;
-                    if (diff < -0.005) below++;
+                    if (diff > 0.50) above++;
+                    if (diff < -0.50) below++;
                 });
                 if (total === 0) return {};
                 const exactRel = total > 0 ? Math.round((state.results.filter(img => userVotes[img.id] !== undefined && img.averageScore !== 0 && Math.abs(userVotes[img.id] - img.averageScore) <= 0.005).length / total) * 100) : 0;
@@ -12366,7 +12512,7 @@
             `;
         }
 
-        function renderContestAvgCategories(categories, imageSize, fontSize) {
+        function renderComparisonCategories(categories, imageSize, fontSize, showRange) {
             const imageFilterIds = getFilteredImageIds();
             return categories.map(cat => {
                 const allItems = cat.items || [];
@@ -12378,24 +12524,24 @@
                 return `
                     <div class="mb-4">
                         <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
-                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label} <span class="text-xs font-normal">(${cat.range})</span>
+                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}${showRange && cat.range ? ` <span class="text-xs font-normal">(${cat.range})</span>` : ''}
                             <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
                         ${!collapsed ? `
-                            <div class="flex gap-2 overflow-x-auto pb-1">
+                            <div class="space-y-2">
                                 ${(cat.subcategories || []).map(sc => {
                                     const scVisibleItems = imageFilterIds !== null ? sc.items.filter(item => imageFilterIds.has(item.imageId)) : sc.items;
                                     const scHidden = sc.items.length - scVisibleItems.length;
                                     if (scVisibleItems.length === 0 && scHidden === 0) return '';
                                     const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
                                     return `
-                                        <div class="flex-shrink-0" style="min-width: ${Math.max(80, imageSize + 8)}px;">
-                                            <div class="text-xs font-semibold mb-1 px-2 py-1 rounded text-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color}; opacity: 0.8;" onclick="toggleComparisonDetailSection('${sc.key}')">
-                                                <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                                                ${sc.label} <span class="font-normal">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span>
+                                        <div class="flex items-stretch gap-2">
+                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none" style="background-color: ${cat.color}; opacity: 0.85;" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                                <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3 mr-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                                <div class="text-center leading-tight">${sc.label}<br><span class="font-normal text-[10px]">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span></div>
                                             </div>
                                             ${!scCollapsed ? `
-                                                <div class="flex flex-col gap-1">
+                                                <div class="flex-1 flex flex-wrap gap-1 items-start">
                                                     ${scVisibleItems.map(item => `
                                                         <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
                                                             <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
@@ -12405,7 +12551,7 @@
                                                         </div>
                                                     `).join('')}
                                                 </div>
-                                            ` : ''}
+                                            ` : '<div class="flex-1"></div>'}
                                         </div>
                                     `;
                                 }).join('')}
@@ -12416,54 +12562,12 @@
             }).join('');
         }
 
-        function renderUserVsUserCategories(categories, imageSize, fontSize) {
-            const imageFilterIds = getFilteredImageIds();
-            return categories.map(cat => {
-                const allItems = cat.items || [];
-                const visibleItems = imageFilterIds !== null ? allItems.filter(item => imageFilterIds.has(item.imageId)) : allItems;
-                const hiddenCount = allItems.length - visibleItems.length;
-                if (visibleItems.length === 0 && hiddenCount === 0) return '';
-                const collapsed = !!state.comparisonDetailCollapsed[cat.key];
+        function renderContestAvgCategories(categories, imageSize, fontSize) {
+            return renderComparisonCategories(categories, imageSize, fontSize, true);
+        }
 
-                return `
-                    <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
-                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}
-                            <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
-                        </h3>
-                        ${!collapsed ? `
-                            <div class="flex gap-2 overflow-x-auto pb-1">
-                                ${(cat.subcategories || []).map(sc => {
-                                    const scVisibleItems = imageFilterIds !== null ? sc.items.filter(item => imageFilterIds.has(item.imageId)) : sc.items;
-                                    const scHidden = sc.items.length - scVisibleItems.length;
-                                    if (scVisibleItems.length === 0 && scHidden === 0) return '';
-                                    const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
-                                    return `
-                                        <div class="flex-shrink-0" style="min-width: ${Math.max(80, imageSize + 8)}px;">
-                                            <div class="text-xs font-semibold mb-1 px-2 py-1 rounded text-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color}; opacity: 0.8;" onclick="toggleComparisonDetailSection('${sc.key}')">
-                                                <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                                                ${sc.label} <span class="font-normal">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span>
-                                            </div>
-                                            ${!scCollapsed ? `
-                                                <div class="flex flex-col gap-1">
-                                                    ${scVisibleItems.map(item => `
-                                                        <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
-                                                            <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                            <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
-                                                                ${item.averageScore}
-                                                            </div>
-                                                        </div>
-                                                    `).join('')}
-                                                </div>
-                                            ` : ''}
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            }).join('');
+        function renderUserVsUserCategories(categories, imageSize, fontSize) {
+            return renderComparisonCategories(categories, imageSize, fontSize, false);
         }
 
         // ==================== DIVISIVE BREAKDOWN MODAL ====================
