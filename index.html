@@ -621,9 +621,9 @@
             color: #1f2937 !important;
         }
 
-        /* Dark mode: Comparison detail category headers */
+        /* Dark mode: Comparison detail category headers and subcategory bars - keep text dark for readability */
         body.dark-theme .comparison-cat-header {
-            color: #1f2937 !important;
+            color: #1a1a1a !important;
         }
 
         /* Dark mode: comparison table percentage badges - always dark text */
@@ -637,11 +637,6 @@
         }
         body.dark-theme tr.bg-yellow-50 .text-yellow-800 {
             color: #fcd34d !important;
-        }
-
-        /* Dark mode: comparison category headers - keep text dark for readability */
-        body.dark-theme .comparison-cat-header {
-            color: #1a1a1a !important;
         }
 
         /* Dark mode: multi mode voting view header labels */
@@ -12536,7 +12531,7 @@
                                     const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
                                     return `
                                         <div class="flex items-stretch gap-2">
-                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none" style="background-color: ${cat.color}; opacity: 0.85;" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color}; opacity: 0.85;" onclick="toggleComparisonDetailSection('${sc.key}')">
                                                 <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3 mr-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                                                 <div class="text-center leading-tight">${sc.label}<br><span class="font-normal text-[10px]">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span></div>
                                             </div>
