@@ -317,11 +317,16 @@
             color: #b0b0b0 !important;
         }
 
-        /* Keep text dark on gray backgrounds for readability */
-        body.dark-theme .bg-gray-50 .text-gray-800,
-        body.dark-theme .bg-gray-50 .text-gray-700,
-        body.dark-theme .bg-gray-50 .text-gray-600 {
+        /* Keep text dark on gray backgrounds for readability - but not when dark:bg is applied */
+        body.dark-theme .bg-gray-50:not(.dark\:bg-gray-800) .text-gray-800,
+        body.dark-theme .bg-gray-50:not(.dark\:bg-gray-800) .text-gray-700,
+        body.dark-theme .bg-gray-50:not(.dark\:bg-gray-800) .text-gray-600 {
             color: #374151 !important;
+        }
+        body.dark-theme .bg-gray-50.dark\:bg-gray-800 .text-gray-800,
+        body.dark-theme .bg-gray-50.dark\:bg-gray-800 .text-gray-700,
+        body.dark-theme .bg-gray-50.dark\:bg-gray-800 .text-gray-600 {
+            color: #e0e0e0 !important;
         }
 
         /* Keep text dark on buttons and controls with bg-gray-200 */
@@ -639,6 +644,38 @@
             color: #1a1a1a !important;
         }
 
+        /* Dark mode: multi mode voting view header labels */
+        body.dark-theme .dark\:text-gray-300 {
+            color: #d1d5db !important;
+        }
+        body.dark-theme .dark\:text-gray-400 {
+            color: #9ca3af !important;
+        }
+        body.dark-theme .dark\:text-gray-100 {
+            color: #f3f4f6 !important;
+        }
+        body.dark-theme .dark\:bg-gray-800 {
+            background-color: #1f2937 !important;
+        }
+        body.dark-theme .dark\:bg-gray-900 {
+            background-color: #111827 !important;
+        }
+        body.dark-theme .dark\:bg-gray-700 {
+            background-color: #374151 !important;
+        }
+        body.dark-theme .dark\:border-gray-700 {
+            border-color: #374151 !important;
+        }
+        body.dark-theme .dark\:border-gray-600 {
+            border-color: #4b5563 !important;
+        }
+        body.dark-theme .dark\:hover\:bg-gray-600:hover {
+            background-color: #4b5563 !important;
+        }
+        body.dark-theme .dark\:text-blue-200 {
+            color: #bfdbfe !important;
+        }
+
         /* Dark mode: user filter dropdown */
         body.dark-theme .image-filter-dropdown,
         body.dark-theme .user-filter-dropdown {
@@ -818,7 +855,9 @@
             comparisonAvgView: 'match',  // 'match' or 'relative' for contest average comparison
             imageFilterSelectedImages: null,  // null = all, Set of imageIds when filtered
             imageFilterDropdownOpen: false,  // Whether image filter dropdown is open
-            comparisonTableSortKeys: []  // Array of {key, direction} for multi-sort
+            comparisonTableSortKeys: [],  // Array of {key, direction} for multi-sort
+            averageTabCompareAll: false,  // Whether "Compare with all" mode is active on Average tab
+            averageTabCompareUserId: null  // User selected for contest average comparison in Average tab
         };
 
         function shuffleArray(array) {
@@ -934,7 +973,7 @@
             if (isMissing) return { color: 'text-black', bg: 'bg-gray-400', textColor: 'rgb(0, 0, 0)', bgColor: 'rgb(156, 163, 175)' };
 
             // Strong blue (4.5-5.0) - highest scores
-            if (min >= 4.5) return { color: 'text-blue-700', bg: 'bg-blue-100', textColor: 'rgb(29, 78, 216)', bgColor: 'rgb(219, 234, 254)' };
+            if (min >= 4.5) return { color: 'text-blue-900', bg: 'bg-blue-100', textColor: 'rgb(30, 58, 138)', bgColor: 'rgb(219, 234, 254)' };
             // Saturated cyan (4.0-4.49) - very good scores
             if (min >= 4.0) return { color: 'text-cyan-700', bg: 'bg-cyan-100', textColor: 'rgb(14, 116, 144)', bgColor: 'rgb(207, 250, 254)' };
             // Bright green (3.5-3.99) - good scores
@@ -1307,6 +1346,8 @@
         function generateVoterStats() {
             if (!state.results) return [];
 
+            const imageFilterIds = getFilteredImageIds();
+
             // Accumulator for voter data
             // Structure: { userId: { votes: [], totalScore: 0, totalImages: 0, username, avatar, etc. } }
             const voterVotes = {};
@@ -1314,6 +1355,8 @@
             // Collect votes from all images in loaded results
             state.results.forEach(imageResult => {
                 if (!imageResult.breakdown) return;
+                // Skip images excluded by image filter
+                if (imageFilterIds !== null && !imageFilterIds.has(imageResult.id)) return;
 
                 imageResult.breakdown.forEach(vote => {
                     // Skip blocked and banned votes
@@ -5600,7 +5643,7 @@
         }
 
         function adjustExtractImageScale(delta) {
-            const newScale = Math.max(40, Math.min(200, state.extractImageScale + delta));
+            const newScale = Math.max(20, Math.min(250, state.extractImageScale + delta));
             state.extractImageScale = newScale;
             render();
         }
@@ -6163,7 +6206,7 @@
         }
 
         function adjustMultiVotingImageScale(delta) {
-            const newScale = Math.max(20, Math.min(200, state.multiVotingImageScale + delta));
+            const newScale = Math.max(20, Math.min(250, state.multiVotingImageScale + delta));
             state.multiVotingImageScale = newScale;
             render();
         }
@@ -6583,6 +6626,8 @@
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.userFilterDropdownOpen = false;
+            state.averageTabCompareAll = false;
+            state.averageTabCompareUserId = null;
 
             // Reset selected voter when changing views
             if (view !== 'userVotes') {
@@ -6679,7 +6724,7 @@
 
         function renderCollapseArrow(sectionKey) {
             const collapsed = isSectionCollapsed(sectionKey);
-            return `<span class="inline-block cursor-pointer select-none transition-transform duration-200 ${collapsed ? '' : 'rotate-90'}" style="font-size: 0.7em;" onclick="event.stopPropagation(); toggleSection('${sectionKey}')">&#9654;</span>`;
+            return `<svg class="inline-block cursor-pointer select-none transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" onclick="event.stopPropagation(); toggleSection('${sectionKey}')"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>`;
         }
 
         // ==================== USER FILTER ====================
@@ -6862,36 +6907,23 @@
 
             return `
                 <div class="mb-2 max-w-md mx-auto relative">
-                    <div class="flex items-center justify-center gap-2">
-                        <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-3 py-1 rounded-lg border-2 ${isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-sm font-medium hover:border-mauve-400 transition">
+                    <div class="flex items-center justify-center gap-2 flex-wrap">
+                        <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-3 py-1 rounded-lg border-2 ${state.imageFilterDropdownOpen ? 'border-mauve-400 bg-mauve-100 ring-2 ring-mauve-300' : isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-sm font-medium hover:border-mauve-400 transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            Image Filter
+                            Image Filter${state.imageFilterDropdownOpen ? ' (editing)' : ''}
                         </button>
                         ${isActive ? `<span class="text-xs font-medium text-mauve-600">Showing: ${selectedCount}/${totalCount} images</span>` : ''}
+                        ${state.imageFilterDropdownOpen ? `
+                            <button onclick="selectAllFilterImages()" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
+                            <button onclick="unselectAllFilterImages()" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
+                        ` : ''}
                     </div>
-                    ${state.imageFilterDropdownOpen ? `
-                        <div class="absolute z-40 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 max-h-80 overflow-y-auto image-filter-dropdown" style="left: 50%; transform: translateX(-50%); width: min(90vw, 600px);">
-                            <div class="sticky top-0 bg-white border-b border-gray-200 p-2 flex gap-2 z-10">
-                                <button onclick="selectAllFilterImages()" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
-                                <button onclick="unselectAllFilterImages()" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
-                            </div>
-                            <div class="p-2 flex flex-wrap gap-1">
-                                ${allImages.map(img => {
-                                    const isVisible = state.imageFilterSelectedImages === null || state.imageFilterSelectedImages.has(img.id);
-                                    return `
-                                        <div class="relative cursor-pointer rounded-lg overflow-hidden border-3 ${isVisible ? 'border-green-400 opacity-100' : 'border-red-400 opacity-40'}" style="height: 60px; border-width: 3px;" onclick="toggleImageFilterImage(${img.id})">
-                                            <img src="${img.url}" alt="" class="h-full w-auto object-cover" style="height: 60px;" />
-                                            <div class="absolute top-1 left-1 w-5 h-5 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}">
-                                                ${isVisible ? '✓' : '✕'}
-                                            </div>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
                 </div>
             `;
+        }
+
+        function isImageVisibleInFilter(imageId) {
+            return state.imageFilterSelectedImages === null || state.imageFilterSelectedImages.has(imageId);
         }
 
         // ==================== DIVISIVE TAB HELPERS ====================
@@ -6941,13 +6973,15 @@
         function updateDivisiveAvgMin(value) {
             state.divisiveAvgMin = parseFloat(value);
             if (state.divisiveAvgMin > state.divisiveAvgMax) state.divisiveAvgMax = state.divisiveAvgMin;
-            render();
+            clearTimeout(state.divisiveSliderTimeout);
+            state.divisiveSliderTimeout = setTimeout(() => { render(); }, 150);
         }
 
         function updateDivisiveAvgMax(value) {
             state.divisiveAvgMax = parseFloat(value);
             if (state.divisiveAvgMax < state.divisiveAvgMin) state.divisiveAvgMin = state.divisiveAvgMax;
-            render();
+            clearTimeout(state.divisiveSliderTimeout);
+            state.divisiveSliderTimeout = setTimeout(() => { render(); }, 150);
         }
 
         function adjustDivisiveAvgMin(delta) {
@@ -7082,16 +7116,15 @@
         }
 
         function toggleComparisonTableSort(key) {
-            const existing = state.comparisonTableSortKeys.findIndex(s => s.key === key);
-            if (existing >= 0) {
-                const current = state.comparisonTableSortKeys[existing];
-                if (current.direction === 'desc') {
-                    current.direction = 'asc';
+            const existing = state.comparisonTableSortKeys.find(s => s.key === key);
+            if (existing) {
+                if (existing.direction === 'desc') {
+                    state.comparisonTableSortKeys = [{ key, direction: 'asc' }];
                 } else {
-                    state.comparisonTableSortKeys.splice(existing, 1);
+                    state.comparisonTableSortKeys = [];
                 }
             } else {
-                state.comparisonTableSortKeys.push({ key, direction: 'desc' });
+                state.comparisonTableSortKeys = [{ key, direction: 'desc' }];
             }
             render();
         }
@@ -7102,6 +7135,32 @@
             } else {
                 state.comparisonDetailCollapsed[key] = true;
             }
+            render();
+        }
+
+        function startAverageCompareAll() {
+            state.averageTabCompareAll = true;
+            state.averageTabCompareUserId = null;
+            state.comparisonAvgView = 'match';
+            state.comparisonDetailCollapsed = {};
+            render();
+        }
+
+        function backFromAverageCompareAll() {
+            state.averageTabCompareAll = false;
+            state.averageTabCompareUserId = null;
+            render();
+        }
+
+        function showAverageCompareUser(userId) {
+            state.averageTabCompareUserId = userId;
+            state.comparisonAvgView = 'match';
+            state.comparisonDetailCollapsed = {};
+            render();
+        }
+
+        function backFromAverageCompareUser() {
+            state.averageTabCompareUserId = null;
             render();
         }
 
@@ -7183,83 +7242,48 @@
                     url: img.url,
                     userScore: userVotes[img.id],
                     avgScore: img.averageScore,
+                    averageScore: img.averageScore,
                     diff: parseFloat(diff.toFixed(2)),
                     absDiff: parseFloat(Math.abs(diff).toFixed(2))
                 });
             });
 
-            // Categorize
-            const categories = [
-                { key: 'cmp_near_exact', label: 'Near Exact Match', range: '0.00-0.50', color: '#86efac', subcategories: [
-                    { key: 'cmp_near_exact_above', label: 'Slightly above average', range: '+0.01 to +0.50', color: '#bbf7d0', items: [] },
-                    { key: 'cmp_near_exact_exact', label: 'Exact match', range: '0.00', color: '#86efac', items: [] },
-                    { key: 'cmp_near_exact_below', label: 'Slightly below average', range: '-0.01 to -0.50', color: '#4ade80', items: [] }
-                ]},
-                { key: 'cmp_close', label: 'Close Match', range: '0.51-1.00', color: '#fcd34d', subcategories: [
-                    { key: 'cmp_close_above', label: 'Moderately above average', range: '+0.51 to +1.00', color: '#fde68a', items: [] },
-                    { key: 'cmp_close_below', label: 'Moderately below average', range: '-0.51 to -1.00', color: '#f59e0b', items: [] }
-                ]},
-                { key: 'cmp_above_avg', label: 'Above Average', range: '1.01-1.99', color: '#93c5fd', subcategories: [
-                    { key: 'cmp_above_1_0', label: 'By 1.01-1.49 points above', range: '+1.01 to +1.49', color: '#bfdbfe', items: [] },
-                    { key: 'cmp_above_1_5', label: 'By 1.50-1.99 points above', range: '+1.50 to +1.99', color: '#60a5fa', items: [] }
-                ]},
-                { key: 'cmp_below_avg', label: 'Below Average', range: '1.01-1.99', color: '#fdba74', subcategories: [
-                    { key: 'cmp_below_1_0', label: 'By 1.01-1.49 points below', range: '-1.01 to -1.49', color: '#fed7aa', items: [] },
-                    { key: 'cmp_below_1_5', label: 'By 1.50-1.99 points below', range: '-1.50 to -1.99', color: '#f97316', items: [] }
-                ]},
-                { key: 'cmp_wide', label: 'Wide Gap', range: '2.00+', color: '#fca5a5', subcategories: [
-                    { key: 'cmp_wide_2_0_above', label: 'By 2.0-2.49 points above', range: '+2.00 to +2.49', color: '#fecaca', items: [] },
-                    { key: 'cmp_wide_2_5_above', label: 'By 2.5-2.99 points above', range: '+2.50 to +2.99', color: '#f87171', items: [] },
-                    { key: 'cmp_wide_3_0_above', label: 'By 3.0-3.49 points above', range: '+3.00 to +3.49', color: '#ef4444', items: [] },
-                    { key: 'cmp_wide_3_5_above', label: 'By 3.5-4.0 points above', range: '+3.50 to +4.00', color: '#dc2626', items: [] },
-                    { key: 'cmp_wide_2_0_below', label: 'By 2.0-2.49 points below', range: '-2.00 to -2.49', color: '#fecaca', items: [] },
-                    { key: 'cmp_wide_2_5_below', label: 'By 2.5-2.99 points below', range: '-2.50 to -2.99', color: '#f87171', items: [] },
-                    { key: 'cmp_wide_3_0_below', label: 'By 3.0-3.49 points below', range: '-3.00 to -3.49', color: '#ef4444', items: [] },
-                    { key: 'cmp_wide_3_5_below', label: 'By 3.5-4.0 points below', range: '-3.50 to -4.00', color: '#dc2626', items: [] }
-                ]}
-            ];
-
-            comparisons.forEach(c => {
-                const d = c.diff;
-                const ad = c.absDiff;
-                if (ad <= 0.005) { categories[0].subcategories[1].items.push(c); }
-                else if (d > 0 && d <= 0.50) { categories[0].subcategories[0].items.push(c); }
-                else if (d < 0 && ad <= 0.50) { categories[0].subcategories[2].items.push(c); }
-                else if (d > 0.50 && d <= 1.00) { categories[1].subcategories[0].items.push(c); }
-                else if (d < -0.50 && d >= -1.00) { categories[1].subcategories[1].items.push(c); }
-                else if (d > 1.00 && d < 1.50) { categories[2].subcategories[0].items.push(c); }
-                else if (d >= 1.50 && d < 2.00) { categories[2].subcategories[1].items.push(c); }
-                else if (d < -1.00 && d > -1.50) { categories[3].subcategories[0].items.push(c); }
-                else if (d <= -1.50 && d > -2.00) { categories[3].subcategories[1].items.push(c); }
-                else if (d >= 2.00 && d < 2.50) { categories[4].subcategories[0].items.push(c); }
-                else if (d >= 2.50 && d < 3.00) { categories[4].subcategories[1].items.push(c); }
-                else if (d >= 3.00 && d < 3.50) { categories[4].subcategories[2].items.push(c); }
-                else if (d >= 3.50) { categories[4].subcategories[3].items.push(c); }
-                else if (d <= -2.00 && d > -2.50) { categories[4].subcategories[4].items.push(c); }
-                else if (d <= -2.50 && d > -3.00) { categories[4].subcategories[5].items.push(c); }
-                else if (d <= -3.00 && d > -3.50) { categories[4].subcategories[6].items.push(c); }
-                else if (d <= -3.50) { categories[4].subcategories[7].items.push(c); }
-            });
+            // Build user-score-based subcategories
+            function buildUserScoreSubs(items, keyPrefix) {
+                const scoreMap = {};
+                items.forEach(c => {
+                    const s = c.userScore;
+                    if (!scoreMap[s]) scoreMap[s] = [];
+                    scoreMap[s].push(c);
+                });
+                return Object.keys(scoreMap).sort((a, b) => b - a).map(s => ({
+                    key: `${keyPrefix}_s${s}`,
+                    label: `Score ${s}`,
+                    items: scoreMap[s]
+                }));
+            }
 
             if (viewMode === 'relative') {
-                // Relative view: Exact + Above + Below = 100%
-                const exact = comparisons.filter(c => c.absDiff <= 0.005);
-                const above = comparisons.filter(c => c.diff > 0.005).sort((a, b) => b.diff - a.diff);
-                const below = comparisons.filter(c => c.diff < -0.005).sort((a, b) => a.diff - b.diff);
+                // Relative: Near Exact (±0.50), Above Average, Below Average
+                const nearExact = comparisons.filter(c => c.absDiff <= 0.50);
+                const above = comparisons.filter(c => c.diff > 0.50).sort((a, b) => b.diff - a.diff);
+                const below = comparisons.filter(c => c.diff < -0.50).sort((a, b) => a.diff - b.diff);
                 return [
-                    { key: 'cmp_rel_exact', label: 'Exact Match', range: '0.00', color: '#86efac', subcategories: [
-                        { key: 'cmp_rel_exact_items', label: 'Exact', range: '0.00', color: '#86efac', items: exact }
-                    ]},
-                    { key: 'cmp_rel_above', label: 'Above Average', range: 'Your score > average', color: '#93c5fd', subcategories: [
-                        { key: 'cmp_rel_above_items', label: 'Above average', range: 'positive difference', color: '#bfdbfe', items: above }
-                    ]},
-                    { key: 'cmp_rel_below', label: 'Below Average', range: 'Your score < average', color: '#fdba74', subcategories: [
-                        { key: 'cmp_rel_below_items', label: 'Below average', range: 'negative difference', color: '#fed7aa', items: below }
-                    ]}
+                    { key: 'cmp_rel_near', label: 'Near Exact', range: '±0.50', color: '#86efac', items: nearExact, subcategories: buildUserScoreSubs(nearExact, 'cmp_rel_near') },
+                    { key: 'cmp_rel_above', label: 'Above Average', range: 'Difference > +0.50', color: '#93c5fd', items: above, subcategories: buildUserScoreSubs(above, 'cmp_rel_above') },
+                    { key: 'cmp_rel_below', label: 'Below Average', range: 'Difference < -0.50', color: '#fdba74', items: below, subcategories: buildUserScoreSubs(below, 'cmp_rel_below') }
                 ];
             }
 
-            return categories;
+            // Match-based: Near Exact (±0.50), Close (±0.51-1.00), Wide Gap (1.01+)
+            const nearExact = comparisons.filter(c => c.absDiff <= 0.50);
+            const close = comparisons.filter(c => c.absDiff > 0.50 && c.absDiff <= 1.00);
+            const wide = comparisons.filter(c => c.absDiff > 1.00);
+            return [
+                { key: 'cmp_near_exact', label: 'Near Exact', range: '±0.50', color: '#86efac', items: nearExact, subcategories: buildUserScoreSubs(nearExact, 'cmp_near_exact') },
+                { key: 'cmp_close', label: 'Close', range: '±0.51–1.00', color: '#fcd34d', items: close, subcategories: buildUserScoreSubs(close, 'cmp_close') },
+                { key: 'cmp_wide', label: 'Wide Gap', range: '±1.01+', color: '#fca5a5', items: wide, subcategories: buildUserScoreSubs(wide, 'cmp_wide') }
+            ];
         }
 
         function generateUserVsUserComparison(targetUserId) {
@@ -7283,23 +7307,48 @@
                         imageId: img.id, url: img.url,
                         selectedScore: selectedVotes[img.id],
                         targetScore: targetVotes[img.id],
+                        averageScore: img.averageScore,
                         diff, absDiff: Math.abs(diff)
                     });
                 }
             });
 
+            // Build subcategories by score pairs
+            function buildScorePairSubs(items, keyPrefix) {
+                const pairMap = {};
+                items.forEach(c => {
+                    const pairKey = `${c.selectedScore} vs ${c.targetScore}`;
+                    if (!pairMap[pairKey]) pairMap[pairKey] = { items: [], selected: c.selectedScore, target: c.targetScore };
+                    pairMap[pairKey].items.push(c);
+                });
+                return Object.keys(pairMap).sort((a, b) => {
+                    const pa = pairMap[a], pb = pairMap[b];
+                    return pb.selected - pa.selected || pb.target - pa.target;
+                }).map(pk => ({
+                    key: `${keyPrefix}_${pk.replace(/ /g, '')}`,
+                    label: pk,
+                    items: pairMap[pk].items
+                }));
+            }
+
             // Match-based view
+            const exactItems = comparisons.filter(c => c.diff === 0);
+            const closeItems = comparisons.filter(c => c.absDiff === 1);
+            const wideItems = comparisons.filter(c => c.absDiff >= 2);
             const matchBased = [
-                { key: 'uvu_exact', label: 'Exact Match', color: '#86efac', items: comparisons.filter(c => c.diff === 0) },
-                { key: 'uvu_close', label: 'Close Match (±1)', color: '#fcd34d', items: comparisons.filter(c => c.absDiff === 1) },
-                { key: 'uvu_wide', label: 'Wide Gap (±2+)', color: '#fca5a5', items: comparisons.filter(c => c.absDiff >= 2) }
+                { key: 'uvu_exact', label: 'Exact Match', color: '#86efac', items: exactItems, subcategories: buildScorePairSubs(exactItems, 'uvu_exact') },
+                { key: 'uvu_close', label: 'Close Match (±1)', color: '#fcd34d', items: closeItems, subcategories: buildScorePairSubs(closeItems, 'uvu_close') },
+                { key: 'uvu_wide', label: 'Wide Gap (±2+)', color: '#fca5a5', items: wideItems, subcategories: buildScorePairSubs(wideItems, 'uvu_wide') }
             ];
 
             // Relative view
+            const exactRelItems = comparisons.filter(c => c.diff === 0);
+            const aboveItems = comparisons.filter(c => c.diff > 0);
+            const belowItems = comparisons.filter(c => c.diff < 0);
             const relativeBased = [
-                { key: 'uvu_exact_r', label: 'Exact Match', color: '#86efac', items: comparisons.filter(c => c.diff === 0) },
-                { key: 'uvu_above', label: 'Above Yours', color: '#93c5fd', items: comparisons.filter(c => c.diff > 0) },
-                { key: 'uvu_below', label: 'Below Yours', color: '#fdba74', items: comparisons.filter(c => c.diff < 0) }
+                { key: 'uvu_exact_r', label: 'Exact Match', color: '#86efac', items: exactRelItems, subcategories: buildScorePairSubs(exactRelItems, 'uvu_exact_r') },
+                { key: 'uvu_above', label: 'Above Yours', color: '#93c5fd', items: aboveItems, subcategories: buildScorePairSubs(aboveItems, 'uvu_above') },
+                { key: 'uvu_below', label: 'Below Yours', color: '#fdba74', items: belowItems, subcategories: buildScorePairSubs(belowItems, 'uvu_below') }
             ];
 
             return { matchBased, relativeBased };
@@ -7314,7 +7363,7 @@
         }
 
         function adjustScale(delta) {
-            const newScale = Math.max(40, Math.min(200, state.imageScale + delta));
+            const newScale = Math.max(20, Math.min(250, state.imageScale + delta));
             state.imageScale = newScale;
             render();
         }
@@ -8189,9 +8238,11 @@
 
                 // Store unique contest IDs this user has voted on
                 state.userProfileVotedContests = [...new Set(userVotes.map(v => v.contest_id))];
+                state.userProfileTotalVotes = userVotes.length;
             } catch (error) {
                 console.error('Error loading user voting history:', error);
                 state.userProfileVotedContests = [];
+                state.userProfileTotalVotes = 0;
             }
 
             render();
@@ -8702,8 +8753,8 @@
                                     >−</button>
                                     <input
                                         type="range"
-                                        min="40"
-                                        max="200"
+                                        min="20"
+                                        max="250"
                                         value="${imageScale}"
                                         oninput="updateExtractImageScale(this.value)"
                                         class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
@@ -8829,8 +8880,8 @@
                                     >−</button>
                                     <input
                                         type="range"
-                                        min="40"
-                                        max="200"
+                                        min="20"
+                                        max="250"
                                         value="${imageScale}"
                                         oninput="updateExtractImageScale(this.value)"
                                         class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
@@ -9295,7 +9346,7 @@
                                                     🔧 App Settings
                                                 </button>
                                             ` : ''}
-                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between ${isAdmin ? 'border-t border-gray-200' : ''}">
+                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''} flex items-center justify-between">
                                                 <span>🌙 Dark Theme</span>
                                                 <div class="relative inline-block w-10 h-5 transition duration-200 ease-in-out rounded-full ${state.darkTheme ? 'bg-purple-500' : 'bg-gray-300'}">
                                                     <span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 ease-in-out ${state.darkTheme ? 'translate-x-5' : 'translate-x-0'}"></span>
@@ -10371,7 +10422,8 @@
                                     <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
                                     <p class="text-sm text-gray-500 mt-1">
                                         Created ${allCreatedItems.length} ${allCreatedItems.length === 1 ? 'item' : 'items'} •
-                                        Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'}
+                                        Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'} •
+                                        ${state.userProfileTotalVotes || 0} image${(state.userProfileTotalVotes || 0) !== 1 ? 's' : ''} voted on
                                     </p>
                                 </div>
                             </div>
@@ -11093,7 +11145,7 @@
                                     <input
                                         type="range"
                                         min="20"
-                                        max="200"
+                                        max="250"
                                         value="${imageScale}"
                                         oninput="updateMultiVotingImageScale(this.value)"
                                         class="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
@@ -11492,7 +11544,7 @@
                             </div>
                             <div class="mt-3 flex flex-col items-center justify-center gap-2 mb-4">
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap opacity-50">
-                                    ${['Total','Divisive','Count','By User','Average'].map(t => `<button class="px-2 sm:px-3 py-1 rounded-lg bg-gray-200 cursor-not-allowed text-xs sm:text-sm" disabled>${t}</button>`).join('')}
+                                    ${['Total','Divisive','Count','By User','Average'].map(t => `<button class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-gray-200 cursor-not-allowed text-sm sm:text-base font-medium" disabled>${t}</button>`).join('')}
                                 </div>
                             </div>
                             <div class="text-center py-16">
@@ -11507,10 +11559,10 @@
 
             // Handle comparison views for By User tab
             if (state.resultsView === 'userVotes' && state.comparisonView === 'table') {
-                return renderComparisonTable();
+                return renderComparisonTable() + (state.showBreakdownModal ? renderBreakdownModal() : '');
             }
             if (state.resultsView === 'userVotes' && state.comparisonView === 'detail') {
-                return renderComparisonDetail();
+                return renderComparisonDetail() + (state.showBreakdownModal ? renderBreakdownModal() : '');
             }
 
             const baseSize = 150;
@@ -11562,7 +11614,7 @@
                                     ${tabs.map(tab => `
                                         <button
                                             ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                            class="px-2 sm:px-3 py-1 rounded-lg text-xs sm:text-sm ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
+                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
                                         >${tab.label}</button>
                                     `).join('')}
                                 </div>
@@ -11608,8 +11660,8 @@
                         <label class="text-xs font-medium text-gray-700">Average Score Range: ${state.divisiveAvgMin.toFixed(1)} - ${state.divisiveAvgMax.toFixed(1)}</label>
                         <div class="flex items-center gap-2 mt-1">
                             <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
-                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
-                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
+                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
                             <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
                         </div>
                     </div>
@@ -11642,7 +11694,10 @@
         }
 
         function renderTabScaleSlider() {
-            if (state.resultsView === 'byVoter') return '';
+            if (state.resultsView === 'byVoter') {
+                // Average tab: show image filter only (no scale slider)
+                return renderImageFilterDropdown();
+            }
 
             let filterHtml = '';
             // User filter + Image filter for Total and Count (images mode) tabs
@@ -11656,7 +11711,7 @@
                     <div class="flex items-center gap-2">
                         <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
                         <button onclick="adjustScale(-1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition" title="Decrease scale">−</button>
-                        <input type="range" id="scaleSlider" min="40" max="200" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                        <input type="range" id="scaleSlider" min="20" max="250" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
                         <button onclick="adjustScale(1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition" title="Increase scale">+</button>
                         <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
                     </div>
@@ -11676,6 +11731,19 @@
         }
 
         // ==================== TAB 1: TOTAL ====================
+        function getResultsWithoutImageFilter() {
+            if (!state.results) return [];
+            let results = state.results;
+            const filterIds = getFilteredUserIds();
+            if (filterIds === null) return results;
+            return results.map(img => {
+                const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
+                const scores = filteredBreakdown.map(v => v.score);
+                const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
+                return { ...img, averageScore: avg, totalVotes: scores.length };
+            });
+        }
+
         function renderTotalTab(imageSize, fontSize) {
             const filteredResults = getFilteredResults();
             const grouped = groupByScoreRange(filteredResults);
@@ -11684,14 +11752,39 @@
                 const bMin = grouped[b].min;
                 return bMin - aMin;
             });
+            const scoreLabelColor = isUserFilterActive() ? 'color: #ffb6c1;' : 'color: white;';
+            const imageFilterIds = getFilteredImageIds();
+            let allGrouped = null;
+            if (imageFilterIds !== null) {
+                allGrouped = groupByScoreRange(getResultsWithoutImageFilter());
+            }
 
             if (sortedKeys.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No voting data available.</p></div>`;
             }
 
-            return sortedKeys.map(key => {
+            // When image filter editing is open, show all images with checkboxes
+            const isFilterEditing = state.imageFilterDropdownOpen;
+
+            // Collect all keys from both filtered and unfiltered
+            const sourceGrouped = isFilterEditing && allGrouped ? allGrouped : grouped;
+            const allKeys = allGrouped ? [...new Set([...sortedKeys, ...Object.keys(allGrouped)])] : sortedKeys;
+            allKeys.sort((a, b) => {
+                const aMin = (grouped[a] || allGrouped[a]).min;
+                const bMin = (grouped[b] || allGrouped[b]).min;
+                return bMin - aMin;
+            });
+
+            return allKeys.map(key => {
                 const group = grouped[key];
-                const colorStyle = getCategoryColor(group.min, group.isMissing);
+                const allGroup = allGrouped ? allGrouped[key] : null;
+                const displayGroup = isFilterEditing ? (allGroup || group) : group;
+                const visibleCount = group ? group.items.length : 0;
+                const totalCount = allGroup ? allGroup.items.length : visibleCount;
+                const hiddenCount = totalCount - visibleCount;
+                if (!displayGroup || displayGroup.items.length === 0) return '';
+                const refGroup = group || allGroup;
+                const colorStyle = getCategoryColor(refGroup.min, refGroup.isMissing);
                 const sectionKey = `total_${key}`;
                 const collapsed = isSectionCollapsed(sectionKey);
 
@@ -11699,19 +11792,27 @@
                     <div class="mb-4">
                         <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${colorStyle.color} ${colorStyle.bg} w-full flex items-center cursor-pointer select-none" onclick="toggleSection('${sectionKey}')">
                             ${renderCollapseArrow(sectionKey)}
-                            ${getCategoryLabel(group.min, group.max, group.isMissing)}
-                            <span class="text-xs font-normal ml-auto">Count: ${group.items.length}</span>
+                            ${getCategoryLabel(refGroup.min, refGroup.max, refGroup.isMissing)}
+                            <span class="text-xs font-normal ml-auto">Count: ${visibleCount}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
-                        ${!collapsed ? `
+                        ${!collapsed && displayGroup ? `
                             <div class="flex flex-wrap gap-1">
-                                ${group.items.map(item => `
-                                    <div onclick="showBreakdown(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                ${displayGroup.items.map(item => {
+                                    const isVisible = isImageVisibleInFilter(item.id);
+                                    if (!isFilterEditing && !isVisible) return '';
+                                    return `
+                                    <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:scale-105'} transition-transform rounded-lg overflow-hidden shadow-lg" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${item.id})` : `showBreakdown(${item.id})`}">
                                         <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                        <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">
+                                        <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; ${scoreLabelColor}">
                                             ${item.averageScore}
                                         </div>
-                                    </div>
-                                `).join('')}
+                                        ${isFilterEditing ? `
+                                            <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                ${isVisible ? '✓' : '✕'}
+                                            </div>
+                                        ` : ''}
+                                    </div>`;
+                                }).join('')}
                             </div>
                         ` : ''}
                     </div>
@@ -11770,15 +11871,31 @@
 
             // Images mode with user filter
             const countData = isUserFilterActive() ? generateCountDataFiltered() : generateCountData();
+            const scoreLabelColor = isUserFilterActive() ? 'color: #ffb6c1;' : 'color: white;';
+
+            // Calculate hidden counts per count level for image filter
+            const imageFilterIds = getFilteredImageIds();
+            let allCountData = null;
+            if (imageFilterIds !== null) {
+                allCountData = generateCountData();
+            }
 
             if (!countData || countData.sortedCounts.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No images have received the selected score(s).</p></div>`;
             }
 
+            const isFilterEditing = state.imageFilterDropdownOpen;
+            const allCounts = allCountData ? [...new Set([...countData.sortedCounts, ...allCountData.sortedCounts])].sort((a, b) => b - a) : countData.sortedCounts;
+            const effectiveMaxCount = allCountData ? Math.max(countData.maxCount, allCountData.maxCount) : countData.maxCount;
+
             return `<div class="space-y-3">
-                ${countData.sortedCounts.map(count => {
-                    const images = countData.grouped[count];
-                    const ratio = count / countData.maxCount;
+                ${allCounts.map(count => {
+                    const images = countData.grouped[count] || [];
+                    const allImagesForCount = allCountData ? (allCountData.grouped[count] || []) : images;
+                    const displayImages = isFilterEditing ? allImagesForCount : images;
+                    const hiddenCount = allImagesForCount.length - images.length;
+                    if (displayImages.length === 0) return '';
+                    const ratio = count / effectiveMaxCount;
                     const baseHue = 270 + (ratio * 330);
                     const hue = baseHue % 360;
                     const bgColor = `hsl(${hue}, 70%, 45%)`;
@@ -11791,18 +11908,27 @@
                                 ${renderCollapseArrow(sectionKey)}
                                 <div class="text-xl">${count}</div>
                             </div>
-                            ${!collapsed ? `
+                            ${!collapsed && displayImages.length > 0 ? `
                                 <div class="flex-1 flex flex-wrap gap-1 items-start">
-                                    ${images.map(img => `
-                                        <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdown(${img.id})">
+                                    ${!isFilterEditing && hiddenCount > 0 ? `<div class="text-xs text-gray-500 w-full opacity-70">(${hiddenCount} more hidden)</div>` : ''}
+                                    ${displayImages.map(img => {
+                                        const isVisible = isImageVisibleInFilter(img.id);
+                                        if (!isFilterEditing && !isVisible) return '';
+                                        return `
+                                        <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : `showBreakdown(${img.id})`}">
                                             <div class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full" style="height: ${imageSize}px; border: 3px solid ${bgColor};">
                                                 <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-1 font-bold score-text" style="font-size: ${fontSize}px;">${img.averageScore}</div>
+                                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; ${scoreLabelColor}">${img.averageScore}</div>
                                             </div>
-                                        </div>
-                                    `).join('')}
+                                            ${isFilterEditing ? `
+                                                <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                    ${isVisible ? '✓' : '✕'}
+                                                </div>
+                                            ` : ''}
+                                        </div>`;
+                                    }).join('')}
                                 </div>
-                            ` : '<div class="flex-1"></div>'}
+                            ` : `<div class="flex-1 flex items-center"><span class="text-xs text-gray-500">${!isFilterEditing && hiddenCount > 0 ? `(${hiddenCount} hidden)` : ''}</span></div>`}
                         </div>
                     `;
                 }).join('')}
@@ -11842,7 +11968,6 @@
                                         <div class="flex items-center gap-2 bg-white rounded-lg shadow border border-gray-200 cursor-pointer hover:shadow-md transition" style="padding: ${Math.round(8 * cardScale)}px ${Math.round(12 * cardScale)}px;" onclick="viewUserProfile('${u.userId}')">
                                             <img src="${u.avatar}" class="rounded-full" style="width: ${avatarSize}px; height: ${avatarSize}px;" />
                                             <span class="font-medium" style="font-size: ${cardFontSize}px;">${u.username}</span>
-                                            <span class="text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full" style="font-size: ${Math.max(9, cardFontSize - 2)}px;">${u.count}x</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -11915,11 +12040,93 @@
 
         // ==================== TAB 5: AVERAGE (byVoter) ====================
         function renderAverageTab() {
+            // Detail comparison view: user vs contest average
+            if (state.averageTabCompareAll && state.averageTabCompareUserId) {
+                const baseSize = 150;
+                const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
+                const baseFontSize = 12;
+                const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
+
+                // Temporarily set selectedVoterUserId for generateContestAverageComparison
+                const prevSelectedVoter = state.selectedVoterUserId;
+                state.selectedVoterUserId = state.averageTabCompareUserId;
+                const categories = generateContestAverageComparison(state.comparisonAvgView);
+                state.selectedVoterUserId = prevSelectedVoter;
+
+                const voter = state.contestVoters.find(v => v.userId === state.averageTabCompareUserId);
+                const voterName = voter ? voter.username : 'Unknown';
+
+                return `
+                    <div class="flex items-center gap-3 mb-4 flex-wrap">
+                        <button onclick="backFromAverageCompareUser()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
+                            <span>←</span> Back
+                        </button>
+                        <h2 class="text-lg font-bold text-gray-800">${voterName} vs Contest Average</h2>
+                    </div>
+
+                    <div class="flex items-center gap-2 mb-4">
+                        <label class="text-xs font-medium text-gray-700">View:</label>
+                        <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
+                        <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                    </div>
+
+                    <div class="mb-4 max-w-md">
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                            <button onclick="adjustScale(-1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">−</button>
+                            <input type="range" min="20" max="250" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                            <button onclick="adjustScale(1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">+</button>
+                            <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                        </div>
+                    </div>
+
+                    ${renderImageFilterDropdown()}
+
+                    <div style="overflow-y: auto;">
+                        ${renderContestAvgCategories(categories, imageSize, fontSize)}
+                    </div>
+                `;
+            }
+
+            // Compare all mode: show voter list for selection
+            if (state.averageTabCompareAll) {
+                const voterStats = generateVoterStats();
+                return `
+                    <div class="flex items-center gap-3 mb-4 flex-wrap">
+                        <button onclick="backFromAverageCompareAll()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
+                            <span>←</span> Back
+                        </button>
+                        <h2 class="text-lg font-bold text-gray-800">Comparing: Contest Average</h2>
+                    </div>
+                    <p class="text-sm text-gray-500 mb-4">Click a voter to see how they compare to the contest average.</p>
+                    <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                        ${voterStats.map(voter => `
+                            <div onclick="showAverageCompareUser('${voter.userId}')" class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg hover:border-blue-400 transition-all cursor-pointer border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
+                                <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2" />
+                                <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1" title="${voter.username}">${voter.username}</div>
+                                <div class="text-xl font-bold text-white score-text">${voter.averageScore}</div>
+                                <div class="text-xs text-gray-500">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            // Normal Average tab view
             const voterStats = generateVoterStats();
 
             if (!voterStats || voterStats.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">👥</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Voters Yet</h3><p class="text-gray-600">No voting data available for this contest.</p></div>`;
             }
+
+            // Compute contest average respecting image filter
+            const imageFilterIds = getFilteredImageIds();
+            let totalVotes = 0, totalScore = 0;
+            state.results.forEach(img => {
+                if (imageFilterIds !== null && !imageFilterIds.has(img.id)) return;
+                (img.breakdown || []).forEach(vote => { if (!vote.isBlocked && !vote.isBanned) { totalVotes++; totalScore += vote.score; } });
+            });
+            const contestAverage = totalVotes > 0 ? (totalScore / totalVotes).toFixed(2) : 0;
 
             return `
                 <div class="mb-4 flex justify-center">
@@ -11934,19 +12141,13 @@
                     </div>
                 </div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
-                    ${(() => {
-                        let totalVotes = 0, totalScore = 0;
-                        state.results.forEach(img => { (img.breakdown || []).forEach(vote => { if (!vote.isBlocked && !vote.isBanned) { totalVotes++; totalScore += vote.score; } }); });
-                        const contestAverage = totalVotes > 0 ? (totalScore / totalVotes).toFixed(2) : 0;
-                        return `
-                            <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
-                                <div class="text-2xl mb-2">🏆</div>
-                                <div class="text-xs font-semibold text-gray-800 text-center mb-1">Contest Average</div>
-                                <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
-                                <div class="text-xs text-gray-500">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
-                            </div>
-                        `;
-                    })()}
+                    <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
+                        <div class="text-2xl mb-1">🏆</div>
+                        <div class="text-xs font-semibold text-gray-800 text-center mb-1">Contest Average</div>
+                        <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
+                        <div class="text-xs text-gray-500 mb-1">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
+                        <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare all</button>
+                    </div>
                     ${voterStats.map(voter => `
                         <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
                             <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
@@ -11966,7 +12167,38 @@
             const selectedName = selectedVoter ? selectedVoter.username : 'Unknown';
             const isMatch = state.comparisonTableView === 'match';
 
-            // Apply multi-sort
+            // Compute contest average percentages
+            const contestAvgPcts = (() => {
+                if (!state.results || !state.selectedVoterUserId) return {};
+                const userVotes = {};
+                state.results.forEach(img => {
+                    const vote = (img.breakdown || []).find(v => v.userId === state.selectedVoterUserId && !v.isBlocked && !v.isBanned);
+                    if (vote) userVotes[img.id] = vote.score;
+                });
+                let total = 0, exact = 0, close = 0, wide = 0, above = 0, below = 0;
+                state.results.forEach(img => {
+                    if (userVotes[img.id] === undefined || img.averageScore === 0) return;
+                    total++;
+                    const diff = userVotes[img.id] - img.averageScore;
+                    const absDiff = Math.abs(diff);
+                    if (absDiff <= 0.50) exact++;
+                    else if (absDiff <= 1.00) close++;
+                    else wide++;
+                    if (diff > 0.005) above++;
+                    if (diff < -0.005) below++;
+                });
+                if (total === 0) return {};
+                const exactRel = total > 0 ? Math.round((state.results.filter(img => userVotes[img.id] !== undefined && img.averageScore !== 0 && Math.abs(userVotes[img.id] - img.averageScore) <= 0.005).length / total) * 100) : 0;
+                return {
+                    exactPct: ((exact / total) * 100).toFixed(0),
+                    closePct: ((close / total) * 100).toFixed(0),
+                    widePct: ((wide / total) * 100).toFixed(0),
+                    abovePct: ((above / total) * 100).toFixed(0),
+                    belowPct: ((below / total) * 100).toFixed(0)
+                };
+            })();
+
+            // Apply sort
             if (state.comparisonTableSortKeys.length > 0) {
                 comparisonData = [...comparisonData].sort((a, b) => {
                     for (const sortKey of state.comparisonTableSortKeys) {
@@ -11988,8 +12220,7 @@
             const getSortIndicator = (key) => {
                 const sort = state.comparisonTableSortKeys.find(s => s.key === key);
                 if (!sort) return '';
-                const idx = state.comparisonTableSortKeys.indexOf(sort);
-                return ` ${sort.direction === 'desc' ? '▼' : '▲'}${state.comparisonTableSortKeys.length > 1 ? '<sub>' + (idx + 1) + '</sub>' : ''}`;
+                return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
             };
 
             const matchColumns = [
@@ -12032,11 +12263,18 @@
                                 </thead>
                                 <tbody>
                                     <tr class="border-b border-gray-100 bg-yellow-50 cursor-pointer hover:bg-yellow-100 transition" onclick="showComparisonDetail('__contest_average__')">
-                                        <td class="py-2 px-2 flex items-center gap-2">
-                                            <span class="text-lg">📊</span>
-                                            <span class="font-medium text-yellow-800">Contest Average</span>
+                                        <td class="py-2 px-2">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-lg">📊</span>
+                                                <div>
+                                                    <span class="font-medium text-yellow-800">Contest Average</span>
+                                                    <div class="text-xs text-gray-500">Click to view detailed comparison</div>
+                                                </div>
+                                            </div>
                                         </td>
-                                        <td class="text-center py-2 px-1" colspan="${columns.length}"><span class="text-xs text-gray-500">Click to view detailed comparison</span></td>
+                                        ${columns.map(col => `
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${contestAvgPcts[col.key] || 0}%</span></td>
+                                        `).join('')}
                                     </tr>
                                     ${comparisonData.map(voter => `
                                         <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showComparisonDetail('${voter.userId}')">
@@ -12112,11 +12350,13 @@
                             <div class="flex items-center gap-2">
                                 <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
                                 <button onclick="adjustScale(-1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">−</button>
-                                <input type="range" min="40" max="200" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                                <input type="range" min="20" max="250" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
                                 <button onclick="adjustScale(1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">+</button>
                                 <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
                             </div>
                         </div>
+
+                        ${renderImageFilterDropdown()}
 
                         <div style="overflow-y: auto;">
                             ${isContestAvg ? renderContestAvgCategories(categories, imageSize, fontSize) : renderUserVsUserCategories(categories, imageSize, fontSize)}
@@ -12127,67 +12367,98 @@
         }
 
         function renderContestAvgCategories(categories, imageSize, fontSize) {
+            const imageFilterIds = getFilteredImageIds();
             return categories.map(cat => {
-                const totalItems = cat.subcategories.reduce((sum, sc) => sum + sc.items.length, 0);
-                if (totalItems === 0) return '';
+                const allItems = cat.items || [];
+                const visibleItems = imageFilterIds !== null ? allItems.filter(item => imageFilterIds.has(item.imageId)) : allItems;
+                const hiddenCount = allItems.length - visibleItems.length;
+                if (visibleItems.length === 0 && hiddenCount === 0) return '';
                 const collapsed = !!state.comparisonDetailCollapsed[cat.key];
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
-                            ${collapsed ? '&#9654;' : '&#9660;'} ${cat.label} <span class="text-xs font-normal">(${cat.range})</span>
-                            <span class="text-xs font-normal ml-auto">Count: ${totalItems}</span>
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label} <span class="text-xs font-normal">(${cat.range})</span>
+                            <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
-                        ${!collapsed ? cat.subcategories.map(sc => {
-                            if (sc.items.length === 0) return '';
-                            const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
-                            return `
-                                <div class="ml-4 mb-2">
-                                    <h4 class="text-xs font-semibold mb-1 px-2 py-1 rounded flex items-center cursor-pointer select-none comparison-cat-header" style="background-color: ${sc.color};" onclick="toggleComparisonDetailSection('${sc.key}')">
-                                        ${scCollapsed ? '&#9654;' : '&#9660;'} ${sc.label} <span class="font-normal">(${sc.range})</span>
-                                        <span class="font-normal ml-auto">Count: ${sc.items.length}</span>
-                                    </h4>
-                                    ${!scCollapsed ? `
-                                        <div class="flex flex-wrap gap-1">
-                                            ${sc.items.map(item => `
-                                                <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
-                                                    <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                    <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
-                                                        You: ${item.userScore} | Avg: ${item.avgScore}
-                                                    </div>
+                        ${!collapsed ? `
+                            <div class="flex gap-2 overflow-x-auto pb-1">
+                                ${(cat.subcategories || []).map(sc => {
+                                    const scVisibleItems = imageFilterIds !== null ? sc.items.filter(item => imageFilterIds.has(item.imageId)) : sc.items;
+                                    const scHidden = sc.items.length - scVisibleItems.length;
+                                    if (scVisibleItems.length === 0 && scHidden === 0) return '';
+                                    const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
+                                    return `
+                                        <div class="flex-shrink-0" style="min-width: ${Math.max(80, imageSize + 8)}px;">
+                                            <div class="text-xs font-semibold mb-1 px-2 py-1 rounded text-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color}; opacity: 0.8;" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                                <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                                ${sc.label} <span class="font-normal">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span>
+                                            </div>
+                                            ${!scCollapsed ? `
+                                                <div class="flex flex-col gap-1">
+                                                    ${scVisibleItems.map(item => `
+                                                        <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                                            <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                                                            <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                                ${item.averageScore}
+                                                            </div>
+                                                        </div>
+                                                    `).join('')}
                                                 </div>
-                                            `).join('')}
+                                            ` : ''}
                                         </div>
-                                    ` : ''}
-                                </div>
-                            `;
-                        }).join('') : ''}
+                                    `;
+                                }).join('')}
+                            </div>
+                        ` : ''}
                     </div>
                 `;
             }).join('');
         }
 
         function renderUserVsUserCategories(categories, imageSize, fontSize) {
+            const imageFilterIds = getFilteredImageIds();
             return categories.map(cat => {
-                if (cat.items.length === 0) return '';
+                const allItems = cat.items || [];
+                const visibleItems = imageFilterIds !== null ? allItems.filter(item => imageFilterIds.has(item.imageId)) : allItems;
+                const hiddenCount = allItems.length - visibleItems.length;
+                if (visibleItems.length === 0 && hiddenCount === 0) return '';
                 const collapsed = !!state.comparisonDetailCollapsed[cat.key];
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
-                            ${collapsed ? '&#9654;' : '&#9660;'} ${cat.label}
-                            <span class="text-xs font-normal ml-auto">Count: ${cat.items.length}</span>
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}
+                            <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
                         ${!collapsed ? `
-                            <div class="flex flex-wrap gap-1">
-                                ${cat.items.map(item => `
-                                    <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
-                                        <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                        <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
-                                            ${item.selectedScore} | ${item.targetScore}
+                            <div class="flex gap-2 overflow-x-auto pb-1">
+                                ${(cat.subcategories || []).map(sc => {
+                                    const scVisibleItems = imageFilterIds !== null ? sc.items.filter(item => imageFilterIds.has(item.imageId)) : sc.items;
+                                    const scHidden = sc.items.length - scVisibleItems.length;
+                                    if (scVisibleItems.length === 0 && scHidden === 0) return '';
+                                    const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
+                                    return `
+                                        <div class="flex-shrink-0" style="min-width: ${Math.max(80, imageSize + 8)}px;">
+                                            <div class="text-xs font-semibold mb-1 px-2 py-1 rounded text-center cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color}; opacity: 0.8;" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                                <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                                ${sc.label} <span class="font-normal">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span>
+                                            </div>
+                                            ${!scCollapsed ? `
+                                                <div class="flex flex-col gap-1">
+                                                    ${scVisibleItems.map(item => `
+                                                        <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                                            <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                                                            <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
+                                                                ${item.averageScore}
+                                                            </div>
+                                                        </div>
+                                                    `).join('')}
+                                                </div>
+                                            ` : ''}
                                         </div>
-                                    </div>
-                                `).join('')}
+                                    `;
+                                }).join('')}
                             </div>
                         ` : ''}
                     </div>
@@ -12201,6 +12472,69 @@
             if (!item) return '';
 
             const scores = item.breakdown.filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
+            const sd = calculateSD(scores);
+            const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0;
+
+            const voteCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+            scores.forEach(s => { voteCounts[s]++; });
+            const maxVotes = Math.max(...Object.values(voteCounts), 1);
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown</h3>
+                                <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-y-auto flex-1 p-4">
+                            <div class="mb-3 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100" style="max-height: 300px;">
+                                <img src="${item.url}" alt="Image" class="max-w-full max-h-[300px] object-contain" />
+                            </div>
+                            <div class="bg-gray-50 rounded-lg p-3 mb-3">
+                                <div class="flex justify-center gap-6">
+                                    <div class="text-center">
+                                        <div class="text-2xl font-bold text-gray-800">${avg}</div>
+                                        <div class="text-xs text-gray-600">Average Score</div>
+                                    </div>
+                                    <div class="text-center">
+                                        <div class="text-2xl font-bold" style="color: ${sd >= 1.5 ? '#ef4444' : sd >= 1.0 ? '#eab308' : '#22c55e'};">${sd.toFixed(2)}</div>
+                                        <div class="text-xs text-gray-600">Std Deviation</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="space-y-2">
+                                ${[5, 4, 3, 2, 1].map(score => {
+                                    const count = voteCounts[score];
+                                    const width = maxVotes > 0 ? (count / maxVotes) * 100 : 0;
+                                    const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
+                                    return `
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-sm w-20 text-right" style="color: ${getScoreColor(score)};">${stars}</span>
+                                            <div class="flex-1 bg-gray-200 rounded-full h-5 relative">
+                                                <div class="h-5 rounded-full transition-all" style="width: ${width}%; background-color: ${getScoreColor(score)};"></div>
+                                            </div>
+                                            <span class="text-sm font-bold w-8 text-gray-700">${count}</span>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                            <div class="mt-3 text-center text-xs text-gray-500">${scores.length} total votes</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDivisiveBreakdownModalMerged() {
+            if (!state.mergedResults || !state.mergedResults.images) return '';
+            const item = state.mergedResults.images.find(img => img.id === state.showBreakdownModal);
+            if (!item) return '';
+
+            const scores = (item.voteBreakdown || []).filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
             const sd = calculateSD(scores);
             const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0;
 
@@ -13243,7 +13577,7 @@
                                     mtabs.forEach(function(tab) {
                                         const ac = state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200';
                                         const clk = canSwitchTabs ? 'onclick="setResultsView(\'' + tab.key + '\')"' : 'disabled';
-                                        tabsHtml += '<button ' + clk + ' class="px-2 sm:px-3 py-1 rounded-lg text-xs sm:text-sm ' + ac + ' ' + disabledClass + '">' + tab.label + '</button>';
+                                        tabsHtml += '<button ' + clk + ' class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ' + ac + ' ' + disabledClass + '">' + tab.label + '</button>';
                                     });
                                     tabsHtml += '</div>';
                                     return tabsHtml;
@@ -13255,8 +13589,8 @@
                                         <label class="text-xs font-medium text-gray-700">Average Score Range: ${state.divisiveAvgMin.toFixed(1)} - ${state.divisiveAvgMax.toFixed(1)}</label>
                                         <div class="flex items-center gap-2 mt-1">
                                             <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
-                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
-                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
+                                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
                                             <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
                                         </div>
                                     </div>
@@ -13291,7 +13625,7 @@
                                 ` : ''}
                                 <!-- User selector dropdown for User Votes view -->
                                 ${state.resultsView === 'userVotes' && mergedVoters.length > 0 ? `
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex justify-center items-center gap-2 flex-wrap">
                                         <label class="text-xs font-medium text-gray-700">Select User:</label>
                                         <select
                                             onchange="setResultsView('userVotes', this.value)"
@@ -13308,6 +13642,7 @@
                                                 `;
                                             }).join('')}
                                         </select>
+                                        <button onclick="startComparison()" class="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare with others</button>
                                     </div>
                                 ` : ''}
                             </div>
@@ -13325,8 +13660,8 @@
                                     <input
                                         type="range"
                                         id="scaleSlider"
-                                        min="40"
-                                        max="200"
+                                        min="20"
+                                        max="250"
                                         value="${state.imageScale}"
                                         oninput="updateScale(this.value)"
                                         class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer"
@@ -13580,7 +13915,7 @@
                         }).join('')}
                     </div>
 
-                    ${state.showBreakdownModal ? renderBreakdownModalMerged() : ''}
+                    ${state.showBreakdownModal ? (state.resultsView === 'divisive' ? renderDivisiveBreakdownModalMerged() : renderBreakdownModalMerged()) : ''}
                 </div>
             `;
         }
@@ -13797,6 +14132,7 @@
         window.setExtractName = setExtractName;
         window.updateExtractNameOnBlur = updateExtractNameOnBlur;
         window.updateExtractImageScale = updateExtractImageScale;
+        window.adjustExtractImageScale = adjustExtractImageScale;
         window.saveExtract = saveExtract;
         window.openEditExtractModal = openEditExtractModal;
         window.closeEditExtractModal = closeEditExtractModal;
@@ -13852,6 +14188,10 @@
         window.setComparisonAvgView = setComparisonAvgView;
         window.toggleComparisonTableSort = toggleComparisonTableSort;
         window.toggleComparisonDetailSection = toggleComparisonDetailSection;
+        window.startAverageCompareAll = startAverageCompareAll;
+        window.backFromAverageCompareAll = backFromAverageCompareAll;
+        window.showAverageCompareUser = showAverageCompareUser;
+        window.backFromAverageCompareUser = backFromAverageCompareUser;
 
         // Initialize app
         // Check for existing session on load
