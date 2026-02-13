@@ -1349,8 +1349,6 @@
         function generateVoterStats() {
             if (!state.results) return [];
 
-            const imageFilterIds = getFilteredImageIds();
-
             // Accumulator for voter data
             // Structure: { userId: { votes: [], totalScore: 0, totalImages: 0, username, avatar, etc. } }
             const voterVotes = {};
@@ -1358,8 +1356,6 @@
             // Collect votes from all images in loaded results
             state.results.forEach(imageResult => {
                 if (!imageResult.breakdown) return;
-                // Skip images excluded by image filter
-                if (imageFilterIds !== null && !imageFilterIds.has(imageResult.id)) return;
 
                 imageResult.breakdown.forEach(vote => {
                     // Skip blocked and banned votes
@@ -11781,10 +11777,7 @@
         }
 
         function renderTabScaleSlider() {
-            if (state.resultsView === 'byVoter') {
-                // Average tab: show image filter only (no scale slider)
-                return renderImageFilterDropdown();
-            }
+            if (state.resultsView === 'byVoter') return '';
 
             let filterHtml = '';
             // User filter + Image filter for Total and Count (images mode) tabs
@@ -12166,8 +12159,6 @@
                             <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
                         </div>
                     </div>
-
-                    ${renderImageFilterDropdown()}
 
                     <div style="overflow-y: auto;">
                         ${renderContestAvgCategories(categories, imageSize, fontSize)}
