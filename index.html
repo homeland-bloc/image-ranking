@@ -147,22 +147,22 @@
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 20px;
-            height: 20px;
+            width: 26px;
+            height: 26px;
             border-radius: 50%;
-            background: white;
-            border: 3px solid rgb(180, 90, 145);
+            background: #ec4899;
+            border: 3px solid #f472b6;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
         input[type="range"]::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
+            width: 26px;
+            height: 26px;
             border-radius: 50%;
-            background: white;
-            border: 3px solid rgb(180, 90, 145);
+            background: #ec4899;
+            border: 3px solid #f472b6;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
         .upload-area {
             border: 3px dashed #C77BA6;
@@ -766,6 +766,9 @@
         body.dark-theme .bg-lime-100 {
             background-color: #2a3a1a !important;
         }
+        body.dark-theme .bg-cyan-100 {
+            background-color: #1a2a3a !important;
+        }
         body.dark-theme .bg-emerald-100 {
             background-color: #1a3a2a !important;
         }
@@ -777,6 +780,9 @@
         }
         body.dark-theme .bg-yellow-200 {
             background-color: #4a4020 !important;
+        }
+        body.dark-theme .bg-purple-200 {
+            background-color: #3a1a3a !important;
         }
 
         /* Dark mode: colored text in divisive categories and badges */
@@ -795,6 +801,15 @@
         body.dark-theme .text-lime-800 {
             color: #bef264 !important;
         }
+        body.dark-theme .text-lime-700 {
+            color: #d9f99d !important;
+        }
+        body.dark-theme .text-cyan-700 {
+            color: #67e8f9 !important;
+        }
+        body.dark-theme .text-purple-800 {
+            color: #d8b4fe !important;
+        }
         body.dark-theme .text-green-800 {
             color: #86efac !important;
         }
@@ -809,6 +824,16 @@
         }
         body.dark-theme .text-red-600 {
             color: #fca5a5 !important;
+        }
+
+        /* Dark theme for merged results contest list */
+        body.dark-theme .contest-list-dropdown {
+            background-color: #2a2a3a !important;
+            border-color: #4a4a5a !important;
+        }
+
+        body.dark-theme .contest-list-item {
+            color: #e5e7eb !important;
         }
     </style>
 </head>
@@ -3993,6 +4018,7 @@
 
                 if (state.activityDateStart && state.activityDateEnd) {
                     weekStart = new Date(state.activityDateStart);
+                    weekStart.setHours(0, 0, 0, 0); // Start of day
                     weekEnd = new Date(state.activityDateEnd);
                     weekEnd.setHours(23, 59, 59, 999); // End of day
                 } else {
@@ -6786,6 +6812,11 @@
             state.averageTabCompareAll = false;
             state.averageTabCompareUserId = null;
 
+            // Auto-exit image filter editing mode when switching away from Total tab
+            if (view !== 'total' && state.imageFilterDropdownOpen) {
+                state.imageFilterDropdownOpen = false;
+            }
+
             // Reset selected voter when changing views
             if (view !== 'userVotes') {
                 state.selectedVoterUserId = null;
@@ -7011,7 +7042,13 @@
         // ==================== IMAGE FILTER ====================
         function toggleImageFilterDropdown() {
             state.imageFilterDropdownOpen = !state.imageFilterDropdownOpen;
-            if (state.imageFilterDropdownOpen) state.userFilterDropdownOpen = false;
+            if (state.imageFilterDropdownOpen) {
+                state.userFilterDropdownOpen = false;
+                // Auto-switch to Total tab when entering editing mode
+                if (state.resultsView !== 'total') {
+                    state.resultsView = 'total';
+                }
+            }
             render();
         }
 
@@ -7064,12 +7101,12 @@
                 <div class="relative inline-flex items-center gap-1">
                     <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 ${state.imageFilterDropdownOpen ? 'border-mauve-400 bg-mauve-100 ring-2 ring-mauve-300' : isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-xs font-medium hover:border-mauve-400 transition">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        Image${state.imageFilterDropdownOpen ? ' (editing)' : ''}
+                        Images
                     </button>
                     ${isActive ? `<span class="text-xs font-medium text-mauve-600">${selectedCount}/${totalCount}</span>` : ''}
                     ${state.imageFilterDropdownOpen ? `
-                        <button onclick="selectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">All</button>
-                        <button onclick="unselectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">None</button>
+                        <button onclick="selectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
+                        <button onclick="unselectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
                     ` : ''}
                 </div>
             `;
@@ -7085,6 +7122,7 @@
             if (!userFilter && !imageFilter) return '';
             return `
                 <div class="flex items-center justify-center gap-2 flex-wrap mb-2">
+                    <span class="text-xs font-semibold text-gray-700">Filter:</span>
                     ${userFilter}
                     ${imageFilter}
                 </div>
@@ -7501,9 +7539,9 @@
                 const above = comparisons.filter(c => c.diff > 0.50).sort((a, b) => b.diff - a.diff);
                 const below = comparisons.filter(c => c.diff < -0.50).sort((a, b) => a.diff - b.diff);
                 return [
-                    { key: 'cmp_rel_near', label: 'Near Exact', range: '±0.50', color: '#86efac', items: nearExact, subcategories: buildUserScoreSubs(nearExact, 'cmp_rel_near') },
-                    { key: 'cmp_rel_above', label: 'Above Average', range: 'Difference > +0.50', color: '#93c5fd', items: above, subcategories: buildUserScoreSubs(above, 'cmp_rel_above') },
-                    { key: 'cmp_rel_below', label: 'Below Average', range: 'Difference < -0.50', color: '#fdba74', items: below, subcategories: buildUserScoreSubs(below, 'cmp_rel_below') }
+                    { key: 'cmp_rel_near', label: 'Near Exact', range: '±0.50', color: '#86efac', darkColor: '#1a4a1a', items: nearExact, subcategories: buildUserScoreSubs(nearExact, 'cmp_rel_near') },
+                    { key: 'cmp_rel_above', label: 'Above Average', range: 'Difference > +0.50', color: '#93c5fd', darkColor: '#1a3a5a', items: above, subcategories: buildUserScoreSubs(above, 'cmp_rel_above') },
+                    { key: 'cmp_rel_below', label: 'Below Average', range: 'Difference < -0.50', color: '#fdba74', darkColor: '#4a3a1a', items: below, subcategories: buildUserScoreSubs(below, 'cmp_rel_below') }
                 ];
             }
 
@@ -7512,9 +7550,9 @@
             const close = comparisons.filter(c => c.absDiff > 0.50 && c.absDiff <= 1.00);
             const wide = comparisons.filter(c => c.absDiff > 1.00);
             return [
-                { key: 'cmp_near_exact', label: 'Near Exact', range: '±0.50', color: '#86efac', items: nearExact, subcategories: buildUserScoreSubs(nearExact, 'cmp_near_exact') },
-                { key: 'cmp_close', label: 'Close', range: '±0.51–1.00', color: '#fcd34d', items: close, subcategories: buildUserScoreSubs(close, 'cmp_close') },
-                { key: 'cmp_wide', label: 'Wide Gap', range: '±1.01+', color: '#fca5a5', items: wide, subcategories: buildUserScoreSubs(wide, 'cmp_wide') }
+                { key: 'cmp_near_exact', label: 'Near Exact', range: '±0.50', color: '#86efac', darkColor: '#1a4a1a', items: nearExact, subcategories: buildUserScoreSubs(nearExact, 'cmp_near_exact') },
+                { key: 'cmp_close', label: 'Close', range: '±0.51–1.00', color: '#fcd34d', darkColor: '#4a4a1a', items: close, subcategories: buildUserScoreSubs(close, 'cmp_close') },
+                { key: 'cmp_wide', label: 'Wide Gap', range: '±1.01+', color: '#fca5a5', darkColor: '#4a1a1a', items: wide, subcategories: buildUserScoreSubs(wide, 'cmp_wide') }
             ];
         }
 
@@ -7569,9 +7607,9 @@
             const closeItems = comparisons.filter(c => c.absDiff === 1);
             const wideItems = comparisons.filter(c => c.absDiff >= 2);
             const matchBased = [
-                { key: 'uvu_exact', label: 'Exact Match', color: '#86efac', items: exactItems, subcategories: buildScorePairSubs(exactItems, 'uvu_exact') },
-                { key: 'uvu_close', label: 'Close Match (±1)', color: '#fcd34d', items: closeItems, subcategories: buildScorePairSubs(closeItems, 'uvu_close') },
-                { key: 'uvu_wide', label: 'Wide Gap (±2+)', color: '#fca5a5', items: wideItems, subcategories: buildScorePairSubs(wideItems, 'uvu_wide') }
+                { key: 'uvu_exact', label: 'Exact Match', color: '#86efac', darkColor: '#1a4a1a', items: exactItems, subcategories: buildScorePairSubs(exactItems, 'uvu_exact') },
+                { key: 'uvu_close', label: 'Close Match (±1)', color: '#fcd34d', darkColor: '#4a4a1a', items: closeItems, subcategories: buildScorePairSubs(closeItems, 'uvu_close') },
+                { key: 'uvu_wide', label: 'Wide Gap (±2+)', color: '#fca5a5', darkColor: '#4a1a1a', items: wideItems, subcategories: buildScorePairSubs(wideItems, 'uvu_wide') }
             ];
 
             // Relative view
@@ -7579,9 +7617,9 @@
             const aboveItems = comparisons.filter(c => c.diff > 0);
             const belowItems = comparisons.filter(c => c.diff < 0);
             const relativeBased = [
-                { key: 'uvu_exact_r', label: 'Exact Match', color: '#86efac', items: exactRelItems, subcategories: buildScorePairSubs(exactRelItems, 'uvu_exact_r') },
-                { key: 'uvu_above', label: 'Above Yours', color: '#93c5fd', items: aboveItems, subcategories: buildScorePairSubs(aboveItems, 'uvu_above') },
-                { key: 'uvu_below', label: 'Below Yours', color: '#fdba74', items: belowItems, subcategories: buildScorePairSubs(belowItems, 'uvu_below') }
+                { key: 'uvu_exact_r', label: 'Exact Match', color: '#86efac', darkColor: '#1a4a1a', items: exactRelItems, subcategories: buildScorePairSubs(exactRelItems, 'uvu_exact_r') },
+                { key: 'uvu_above', label: 'Above Yours', color: '#93c5fd', darkColor: '#1a3a5a', items: aboveItems, subcategories: buildScorePairSubs(aboveItems, 'uvu_above') },
+                { key: 'uvu_below', label: 'Below Yours', color: '#fdba74', darkColor: '#4a3a1a', items: belowItems, subcategories: buildScorePairSubs(belowItems, 'uvu_below') }
             ];
 
             return { matchBased, relativeBased };
@@ -11907,16 +11945,23 @@
             // Divisive tab: avg score range slider + SD explanation
             if (state.resultsView === 'divisive') {
                 html += `
-                    <div class="mt-3 max-w-sm mx-auto">
+                    <div class="mt-3 max-w-lg mx-auto">
                         <label class="text-xs font-medium text-gray-700">Average Score Range: ${state.divisiveAvgMin.toFixed(1)} - ${state.divisiveAvgMax.toFixed(1)}</label>
-                        <div class="flex items-center gap-2 mt-1">
-                            <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
-                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
-                            <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
-                            <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
+                        <p class="text-xs text-gray-500 mb-1">Filter images by their average score</p>
+                        <div class="flex items-center gap-3 mt-1">
+                            <div class="flex items-center gap-1 flex-1">
+                                <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
+                                <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
+                                <button onclick="adjustDivisiveAvgMin(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase min">+</button>
+                            </div>
+                            <div class="flex items-center gap-1 flex-1">
+                                <button onclick="adjustDivisiveAvgMax(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease max">−</button>
+                                <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
+                                <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="mt-2 max-w-sm mx-auto">
+                    <div class="mt-2 max-w-lg mx-auto">
                         <p class="text-xs text-gray-500 text-center">SD = Standard Deviation — measures how much voters disagree on an image's score</p>
                     </div>
                 `;
@@ -12004,6 +12049,11 @@
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No voting data available.</p></div>`;
             }
 
+            // Check if all images are hidden by filter
+            if (imageFilterIds !== null && imageFilterIds.size === 0) {
+                return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">All Images Hidden</h3><p class="text-gray-600">You've hidden all images using the image filter. Click the "Images" filter button above to show some images.</p></div>`;
+            }
+
             // When image filter editing is open, show all images with checkboxes
             const isFilterEditing = state.imageFilterDropdownOpen;
 
@@ -12064,6 +12114,12 @@
 
         // ==================== TAB 2: DIVISIVE ====================
         function renderDivisiveTab(imageSize, fontSize) {
+            const imageFilterIds = getFilteredImageIds();
+            // Check if all images are hidden by filter
+            if (imageFilterIds !== null && imageFilterIds.size === 0) {
+                return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">All Images Hidden</h3><p class="text-gray-600">You've hidden all images using the image filter. Click the "Images" filter button above to show some images.</p></div>`;
+            }
+
             const data = generateDivisiveData();
 
             if (data.allImages.length === 0) {
@@ -12078,7 +12134,7 @@
                     <div class="mb-4">
                         <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${cat.color} w-full flex items-center cursor-pointer select-none" onclick="toggleSection('${cat.key}')">
                             ${renderCollapseArrow(cat.key)}
-                            ${cat.label} <span class="text-xs font-normal">(${cat.sublabel})</span>
+                            ${cat.label} <span class="text-xs font-normal"> (${cat.sublabel})</span>
                             <span class="text-xs font-normal ml-auto">Count: ${cat.items.length}</span>
                         </h3>
                         ${!collapsed ? `
@@ -12103,6 +12159,12 @@
 
         // ==================== TAB 3: COUNT ====================
         function renderCountTab(imageSize, fontSize) {
+            const imageFilterIds = getFilteredImageIds();
+            // Check if all images are hidden by filter
+            if (imageFilterIds !== null && imageFilterIds.size === 0) {
+                return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">All Images Hidden</h3><p class="text-gray-600">You've hidden all images using the image filter. Click the "Images" filter button above to show some images.</p></div>`;
+            }
+
             if (state.countSelectedScores.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">👆</div><h3 class="text-xl font-bold text-gray-800 mb-2">Select Score(s)</h3><p class="text-gray-600">Please select one or more scores from the buttons above to see the count breakdown.</p></div>`;
             }
@@ -12140,7 +12202,8 @@
                     const ratio = count / effectiveMaxCount;
                     const baseHue = 270 + (ratio * 330);
                     const hue = baseHue % 360;
-                    const bgColor = `hsl(${hue}, 70%, 45%)`;
+                    const isDark = document.body.classList.contains('dark-theme');
+                    const bgColor = isDark ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`;
                     const sectionKey = `count_${count}`;
                     const collapsed = isSectionCollapsed(sectionKey);
 
@@ -12194,7 +12257,8 @@
                     const ratio = count / data.maxCount;
                     const baseHue = 270 + (ratio * 330);
                     const hue = baseHue % 360;
-                    const bgColor = `hsl(${hue}, 70%, 45%)`;
+                    const isDark = document.body.classList.contains('dark-theme');
+                    const bgColor = isDark ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`;
                     const sectionKey = `count_users_${count}`;
                     const collapsed = isSectionCollapsed(sectionKey);
 
@@ -12579,9 +12643,13 @@
                                                 </div>
                                             </div>
                                         </td>
-                                        ${columns.map(col => `
-                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${contestAvgPcts[col.key] || 0}%</span></td>
-                                        `).join('')}
+                                        ${columns.map(col => {
+                                            const isDark = document.body.classList.contains('dark-theme');
+                                            const bgColor = isDark ? col.darkBg : col.bg;
+                                            const textColor = isDark ? '#e5e7eb' : '#1f2937';
+                                            return `
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${bgColor}; color: ${textColor};">${contestAvgPcts[col.key] || 0}%</span></td>
+                                        `;}).join('')}
                                     </tr>
                                     ${comparisonData.map(voter => `
                                         <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showComparisonDetail('${voter.userId}')">
@@ -12591,9 +12659,13 @@
                                                     <span class="font-medium truncate max-w-[120px]">${voter.username}</span>
                                                 </div>
                                             </td>
-                                            ${columns.map(col => `
-                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${voter[col.key]}%</span></td>
-                                            `).join('')}
+                                            ${columns.map(col => {
+                                                const isDark = document.body.classList.contains('dark-theme');
+                                                const bgColor = isDark ? col.darkBg : col.bg;
+                                                const textColor = isDark ? '#e5e7eb' : '#1f2937';
+                                                return `
+                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${bgColor}; color: ${textColor};">${voter[col.key]}%</span></td>
+                                            `;}).join('')}
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -12676,29 +12748,35 @@
         function renderComparisonCategories(categories, imageSize, fontSize, showRange) {
             const imageFilterIds = getFilteredImageIds();
             const breakdownFn = state.currentMergerId ? 'showBreakdownMerged' : 'showBreakdown';
+            const isDark = document.body.classList.contains('dark-theme');
             return categories.map(cat => {
                 const allItems = cat.items || [];
                 const visibleItems = imageFilterIds !== null ? allItems.filter(item => imageFilterIds.has(item.imageId)) : allItems;
                 const hiddenCount = allItems.length - visibleItems.length;
                 if (visibleItems.length === 0 && hiddenCount === 0) return '';
                 const collapsed = !!state.comparisonDetailCollapsed[cat.key];
+                const catBgColor = isDark ? (cat.darkColor || cat.color) : cat.color;
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${catBgColor}; color: ${isDark ? '#e5e7eb' : '#1f2937'};" onclick="toggleComparisonDetailSection('${cat.key}')">
                             <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}${showRange && cat.range ? ` <span class="text-xs font-normal">(${cat.range})</span>` : ''}
                             <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
                         ${!collapsed ? `
                             <div class="space-y-2">
-                                ${(cat.subcategories || []).map(sc => {
+                                ${(cat.subcategories || []).map((sc, scIndex) => {
                                     const scVisibleItems = imageFilterIds !== null ? sc.items.filter(item => imageFilterIds.has(item.imageId)) : sc.items;
                                     const scHidden = sc.items.length - scVisibleItems.length;
                                     if (scVisibleItems.length === 0 && scHidden === 0) return '';
                                     const scCollapsed = !!state.comparisonDetailCollapsed[sc.key];
+                                    // Gradual shade variation: in dark theme, get lighter; in light theme, get darker
+                                    const totalSubs = cat.subcategories.length;
+                                    const shadeStep = totalSubs > 1 ? (scIndex / (totalSubs - 1)) * 0.15 : 0;
+                                    const subOpacity = isDark ? (0.85 + shadeStep) : (0.85 - shadeStep);
                                     return `
                                         <div class="flex items-stretch gap-2">
-                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="background-color: ${cat.color}; opacity: 0.85;" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="background-color: ${catBgColor}; opacity: ${subOpacity}; color: ${isDark ? '#e5e7eb' : '#1f2937'};" onclick="toggleComparisonDetailSection('${sc.key}')">
                                                 <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3 mr-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                                                 <div class="text-center leading-tight">${sc.label}<br><span class="font-normal text-[10px]">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span></div>
                                             </div>
@@ -13816,9 +13894,9 @@
                                     <span class="text-xs">${state.showMergedContestsDropdown ? '▲' : '▼'}</span>
                                 </button>
                                 ${state.showMergedContestsDropdown ? `
-                                    <div class="mt-2 bg-gray-50 border border-gray-300 rounded-lg px-4 py-2 text-left max-w-md mx-auto">
+                                    <div class="mt-2 bg-gray-50 border border-gray-300 rounded-lg px-4 py-2 text-left max-w-md mx-auto contest-list-dropdown">
                                         ${contestIds.map(id => `
-                                            <div class="text-sm text-gray-700 py-1">
+                                            <div class="text-sm text-gray-700 py-1 contest-list-item">
                                                 • ${contestTitles[id]}
                                             </div>
                                         `).join('')}
@@ -13827,6 +13905,7 @@
                             </div>
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
+                            ${state.comparisonView === null ? `
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <!-- First row: View tabs -->
                                 ${(() => {
@@ -13912,9 +13991,12 @@
                                     </div>
                                 ` : ''}
                             </div>
+                        ` : ''}
                         </div>
 
-                        ${state.resultsView !== 'byVoter' ? `
+                        ${state.comparisonView === null ? renderGlobalFilters() : ''}
+
+                        ${state.resultsView !== 'byVoter' && state.comparisonView === null ? `
                             <div class="mb-4 max-w-md mx-auto">
                                 <div class="flex items-center gap-2">
                                     <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
@@ -14068,9 +14150,10 @@
                                                 <div class="text-xl font-bold text-white score-text">
                                                     ${contestAverage}
                                                 </div>
-                                                <div class="text-xs text-gray-500">
+                                                <div class="text-xs text-gray-500 mb-1">
                                                     ${totalVotes} vote${totalVotes !== 1 ? 's' : ''}
                                                 </div>
+                                                <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
                                             </div>
                                         `;
                                     })()}
