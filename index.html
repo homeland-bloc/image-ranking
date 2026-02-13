@@ -12096,7 +12096,6 @@
             }
 
             // When image filter editing is open, show all images with checkboxes
-            const isFilterEditing = state.imageFilterDropdownOpen;
 
             // Collect all keys from both filtered and unfiltered
             const sourceGrouped = isFilterEditing && allGrouped ? allGrouped : grouped;
@@ -12230,7 +12229,6 @@
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No images have received the selected score(s).</p></div>`;
             }
 
-            const isFilterEditing = state.imageFilterDropdownOpen;
             const allCounts = allCountData ? [...new Set([...countData.sortedCounts, ...allCountData.sortedCounts])].sort((a, b) => b - a) : countData.sortedCounts;
             const effectiveMaxCount = allCountData ? Math.max(countData.maxCount, allCountData.maxCount) : countData.maxCount;
 
