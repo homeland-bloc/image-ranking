@@ -1329,25 +1329,36 @@
                     if (!imageScores[vote.image_id]) {
                         imageScores[vote.image_id] = {
                             scores: [],
-                            breakdown: []
+                            breakdown: [],
+                            userVotes: new Map() // Track votes by userId to prevent duplicates
                         };
                     }
 
                     const isBlocked = vote.is_blocked || false;
                     const voterIsBanned = vote.voter?.is_banned || false;
+                    const userId = vote.user_id;
+
+                    // Check if we already have a vote from this user for this image
+                    if (imageScores[vote.image_id].userVotes.has(userId)) {
+                        // Skip duplicate vote
+                        return;
+                    }
+
+                    // Mark this user as having voted
+                    imageScores[vote.image_id].userVotes.set(userId, true);
 
                     // Only include non-blocked AND non-banned votes in score calculations
                     if (!isBlocked && !voterIsBanned) {
                         imageScores[vote.image_id].scores.push(vote.score);
                     }
 
-                    // Include ALL votes in breakdown
+                    // Include ALL votes in breakdown (now deduplicated)
                     imageScores[vote.image_id].breakdown.push({
-                        userId: vote.user_id,
+                        userId: userId,
                         username: vote.voter.username,
                         avatar: vote.voter.avatar,
                         score: vote.score,
-                        isCurrentUser: vote.user_id === state.user?.id,
+                        isCurrentUser: userId === state.user?.id,
                         isBlocked: isBlocked,
                         isBanned: voterIsBanned
                     });
@@ -7102,6 +7113,10 @@
         function renderImageFilterDropdown() {
             const allImages = state.results || [];
             if (allImages.length === 0) return '';
+
+            // Hide image filter in comparison views
+            if (state.comparisonView !== null) return '';
+
             const selectedCount = state.imageFilterSelectedImages === null ? allImages.length : state.imageFilterSelectedImages.size;
             const totalCount = allImages.length;
             const isActive = isImageFilterActive();
@@ -13721,52 +13736,92 @@
             }
             // === COUNT VIEW ===
             else if (state.resultsView === 'count') {
-                // Count how many times each image received the selected scores
-                const countMap = {}; // { imageId: count }
+                // Check if users mode
+                if (state.countMode === 'users') {
+                    // Count how many times each user gave the selected scores
+                    const userCounts = {};
+                    mergedResultsData.forEach(imageResult => {
+                        (imageResult.breakdown || []).forEach(vote => {
+                            if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
+                                if (!userCounts[vote.userId]) {
+                                    userCounts[vote.userId] = {
+                                        userId: vote.userId,
+                                        username: vote.username,
+                                        avatar: vote.avatar,
+                                        count: 0
+                                    };
+                                }
+                                userCounts[vote.userId].count++;
+                            }
+                        });
+                    });
 
-                mergedResultsData.forEach(imageResult => {
-                    let count = 0;
-                    (imageResult.breakdown || []).forEach(vote => {
-                        // Only count non-blocked, non-banned votes
-                        if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
-                            count++;
+                    // Group users by count
+                    const grouped = {};
+                    Object.values(userCounts).forEach(user => {
+                        if (!grouped[user.count]) {
+                            grouped[user.count] = [];
+                        }
+                        grouped[user.count].push(user);
+                    });
+
+                    // Sort users within each count group by username
+                    Object.keys(grouped).forEach(count => {
+                        grouped[count].sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+                    });
+
+                    const sortedCounts = Object.keys(grouped).map(k => parseInt(k)).sort((a, b) => b - a);
+                    const maxCount = sortedCounts.length > 0 ? sortedCounts[0] : 0;
+                    countData = { grouped, sortedCounts, maxCount };
+                } else {
+                    // Images mode (original code)
+                    // Count how many times each image received the selected scores
+                    const countMap = {}; // { imageId: count }
+
+                    mergedResultsData.forEach(imageResult => {
+                        let count = 0;
+                        (imageResult.breakdown || []).forEach(vote => {
+                            // Only count non-blocked, non-banned votes
+                            if (!vote.isBlocked && !vote.isBanned && state.countSelectedScores.includes(vote.score)) {
+                                count++;
+                            }
+                        });
+
+                        if (count > 0) {
+                            countMap[imageResult.id] = count;
                         }
                     });
 
-                    if (count > 0) {
-                        countMap[imageResult.id] = count;
-                    }
-                });
+                    // Group images by count
+                    const grouped = {}; // { count: [imageResults] }
+                    const imagesWithCounts = mergedResultsData
+                        .filter(img => countMap[img.id] > 0)
+                        .map(img => ({
+                            ...img,
+                            count: countMap[img.id]
+                        }));
 
-                // Group images by count
-                const grouped = {}; // { count: [imageResults] }
-                const imagesWithCounts = mergedResultsData
-                    .filter(img => countMap[img.id] > 0)
-                    .map(img => ({
-                        ...img,
-                        count: countMap[img.id]
-                    }));
+                    imagesWithCounts.forEach(img => {
+                        if (!grouped[img.count]) {
+                            grouped[img.count] = [];
+                        }
+                        grouped[img.count].push(img);
+                    });
 
-                imagesWithCounts.forEach(img => {
-                    if (!grouped[img.count]) {
-                        grouped[img.count] = [];
-                    }
-                    grouped[img.count].push(img);
-                });
+                    // Sort images within each count group by average score (tie-breaker)
+                    Object.keys(grouped).forEach(count => {
+                        grouped[count].sort((a, b) => b.averageScore - a.averageScore);
+                    });
 
-                // Sort images within each count group by average score (tie-breaker)
-                Object.keys(grouped).forEach(count => {
-                    grouped[count].sort((a, b) => b.averageScore - a.averageScore);
-                });
+                    // Get sorted counts (highest to lowest)
+                    const sortedCounts = Object.keys(grouped)
+                        .map(k => parseInt(k))
+                        .sort((a, b) => b - a);
 
-                // Get sorted counts (highest to lowest)
-                const sortedCounts = Object.keys(grouped)
-                    .map(k => parseInt(k))
-                    .sort((a, b) => b - a);
+                    const maxCount = sortedCounts.length > 0 ? sortedCounts[0] : 0;
 
-                const maxCount = sortedCounts.length > 0 ? sortedCounts[0] : 0;
-
-                countData = { grouped, sortedCounts, maxCount };
+                    countData = { grouped, sortedCounts, maxCount };
+                }
             }
             // === BY VOTER VIEW ===
             else if (state.resultsView === 'byVoter') {
@@ -14072,12 +14127,14 @@
                             ` : countData && countData.sortedCounts.length > 0 ? `
                                 <div class="space-y-3">
                                     ${countData.sortedCounts.map(count => {
-                                        const images = countData.grouped[count];
+                                        const items = countData.grouped[count]; // Could be images or users
+                                        const isUsersMode = state.countMode === 'users';
                                         // Dynamic gradient: purple→red→orange→yellow→green→light blue→blue
                                         const ratio = count / countData.maxCount;
                                         const baseHue = 270 + (ratio * 330); // 270 (purple) + up to 330 degrees
                                         const hue = baseHue % 360;
-                                        const bgColor = `hsl(${hue}, 70%, 45%)`;
+                                        const isDark = document.body.classList.contains('dark-theme');
+                                        const bgColor = isDark ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`;
 
                                         const mSectionKey = 'm_count_' + count;
                                         const mCollapsed = isSectionCollapsed(mSectionKey);
@@ -14090,9 +14147,15 @@
                                                 </div>
 
                                                 ${!mCollapsed ? `
-                                                <!-- Images Panel (right side, wraps) -->
+                                                <!-- ${isUsersMode ? 'Users' : 'Images'} Panel (right side, wraps) -->
                                                 <div class="flex-1 flex flex-wrap gap-1 items-start">
-                                                    ${images.map(img => `
+                                                    ${isUsersMode ? items.map(user => `
+                                                        <div class="bg-white rounded-lg shadow-md p-2 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${user.userId === state.user?.id ? 'border-mauve-400' : 'border-transparent'}" style="width: 120px;">
+                                                            <img src="${user.avatar}" alt="${user.username}" class="w-12 h-12 rounded-full mb-1 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${user.userId}');" />
+                                                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center cursor-pointer hover:text-mauve-600 transition" title="${user.username}" onclick="event.stopPropagation(); viewUserProfile('${user.userId}');">${user.username}</div>
+                                                            <div class="text-xs text-gray-500 mt-0.5">${count} ${count === 1 ? 'vote' : 'votes'}</div>
+                                                        </div>
+                                                    `).join('') : items.map(img => `
                                                         <div class="relative cursor-pointer hover:opacity-90 transition" style="height: ${imageSize}px;" onclick="showBreakdownMerged(${img.id})">
                                                             <div
                                                                 class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full"
