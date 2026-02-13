@@ -266,6 +266,55 @@
             transform: translateX(24px);
         }
 
+        /* Range Slider Track Styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            background: #d1d5db;
+            border-radius: 3px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #8b5cf6;
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #8b5cf6;
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type="range"]::-moz-range-track {
+            height: 6px;
+            background: #d1d5db;
+            border-radius: 3px;
+        }
+        body.dark-theme input[type="range"] {
+            background: #4a4a5a;
+        }
+        body.dark-theme input[type="range"]::-webkit-slider-thumb {
+            background: #a78bfa;
+            border-color: #2a2a3a;
+        }
+        body.dark-theme input[type="range"]::-moz-range-thumb {
+            background: #a78bfa;
+            border-color: #2a2a3a;
+        }
+        body.dark-theme input[type="range"]::-moz-range-track {
+            background: #4a4a5a;
+        }
+
         /* Dark Theme Styles */
         body.dark-theme {
             background: linear-gradient(to bottom,
@@ -693,6 +742,73 @@
         body.dark-theme .image-filter-dropdown label:hover,
         body.dark-theme .user-filter-dropdown label:hover {
             background-color: #2a2a3a !important;
+        }
+
+        /* Dark mode: colored backgrounds for activity log and divisive categories */
+        body.dark-theme .bg-green-100 {
+            background-color: #1a3a1a !important;
+        }
+        body.dark-theme .bg-blue-100 {
+            background-color: #1a2a3a !important;
+        }
+        body.dark-theme .bg-yellow-100 {
+            background-color: #3a3520 !important;
+        }
+        body.dark-theme .bg-purple-100 {
+            background-color: #2a1a3a !important;
+        }
+        body.dark-theme .bg-red-100 {
+            background-color: #3a1a1a !important;
+        }
+        body.dark-theme .bg-orange-100 {
+            background-color: #3a2a1a !important;
+        }
+        body.dark-theme .bg-lime-100 {
+            background-color: #2a3a1a !important;
+        }
+        body.dark-theme .bg-emerald-100 {
+            background-color: #1a3a2a !important;
+        }
+        body.dark-theme .bg-red-200 {
+            background-color: #4a1a1a !important;
+        }
+        body.dark-theme .bg-green-200 {
+            background-color: #1a4a1a !important;
+        }
+        body.dark-theme .bg-yellow-200 {
+            background-color: #4a4020 !important;
+        }
+
+        /* Dark mode: colored text in divisive categories and badges */
+        body.dark-theme .text-red-900 {
+            color: #fca5a5 !important;
+        }
+        body.dark-theme .text-red-800 {
+            color: #fca5a5 !important;
+        }
+        body.dark-theme .text-orange-800 {
+            color: #fdba74 !important;
+        }
+        body.dark-theme .text-yellow-800 {
+            color: #fde047 !important;
+        }
+        body.dark-theme .text-lime-800 {
+            color: #bef264 !important;
+        }
+        body.dark-theme .text-green-800 {
+            color: #86efac !important;
+        }
+        body.dark-theme .text-emerald-800 {
+            color: #6ee7b7 !important;
+        }
+        body.dark-theme .text-green-700 {
+            color: #86efac !important;
+        }
+        body.dark-theme .text-red-700 {
+            color: #fca5a5 !important;
+        }
+        body.dark-theme .text-red-600 {
+            color: #fca5a5 !important;
         }
     </style>
 </head>
@@ -1233,6 +1349,23 @@
                     contestTitles: contestTitles,
                     images: allImages.sort(compareWithTieBreaking)
                 };
+
+                // Build contestVoters from merged breakdown data for comparison features
+                const mergedVoterMap = new Map();
+                allImages.forEach(img => {
+                    (img.voteBreakdown || []).forEach(vote => {
+                        if (!vote.isBlocked && !vote.isBanned && !mergedVoterMap.has(vote.userId)) {
+                            mergedVoterMap.set(vote.userId, {
+                                userId: vote.userId,
+                                username: vote.username,
+                                avatar: vote.avatar
+                            });
+                        }
+                    });
+                });
+                state.contestVoters = Array.from(mergedVoterMap.values()).sort((a, b) =>
+                    a.username.toLowerCase().localeCompare(b.username.toLowerCase())
+                );
 
             } catch (error) {
                 console.error('Error loading merged results:', error);
@@ -4112,12 +4245,12 @@
 
         function setActivityStartDate(value) {
             state.activityDateStart = value;
-            render();
+            loadActivityLogs();
         }
 
         function setActivityEndDate(value) {
             state.activityDateEnd = value;
-            render();
+            loadActivityLogs();
         }
 
         function setActivityFilterUser(userId) {
@@ -6845,16 +6978,14 @@
             const isActive = isUserFilterActive();
 
             return `
-                <div class="mb-2 max-w-md mx-auto relative">
-                    <div class="flex items-center justify-center gap-2">
-                        <button onclick="toggleUserFilterDropdown()" class="flex items-center gap-1 px-3 py-1 rounded-lg border-2 ${isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-sm font-medium hover:border-mauve-400 transition">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
-                            User Filter
-                        </button>
-                        ${isActive ? `<span class="text-xs font-medium text-mauve-600">Filtered: ${selectedCount}/${totalCount} users</span>` : ''}
-                    </div>
+                <div class="relative inline-flex items-center gap-1">
+                    <button onclick="toggleUserFilterDropdown()" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 ${isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-xs font-medium hover:border-mauve-400 transition">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
+                        Users
+                    </button>
+                    ${isActive ? `<span class="text-xs font-medium text-mauve-600">${selectedCount}/${totalCount}</span>` : ''}
                     ${state.userFilterDropdownOpen ? `
-                        <div class="absolute z-40 mt-1 w-64 bg-white rounded-lg shadow-xl border border-gray-200 max-h-64 overflow-y-auto user-filter-dropdown" style="left: 50%; transform: translateX(-50%);">
+                        <div class="absolute z-40 mt-1 top-full w-64 bg-white rounded-lg shadow-xl border border-gray-200 max-h-64 overflow-y-auto user-filter-dropdown" style="left: 0;">
                             <div class="sticky top-0 bg-white border-b border-gray-200 p-2 flex gap-2">
                                 <button onclick="selectAllFilterUsers()" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Select All</button>
                                 <button onclick="unselectAllFilterUsers()" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Unselect All</button>
@@ -6930,24 +7061,34 @@
             const isActive = isImageFilterActive();
 
             return `
-                <div class="mb-2 max-w-md mx-auto relative">
-                    <div class="flex items-center justify-center gap-2 flex-wrap">
-                        <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-3 py-1 rounded-lg border-2 ${state.imageFilterDropdownOpen ? 'border-mauve-400 bg-mauve-100 ring-2 ring-mauve-300' : isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-sm font-medium hover:border-mauve-400 transition">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            Image Filter${state.imageFilterDropdownOpen ? ' (editing)' : ''}
-                        </button>
-                        ${isActive ? `<span class="text-xs font-medium text-mauve-600">Showing: ${selectedCount}/${totalCount} images</span>` : ''}
-                        ${state.imageFilterDropdownOpen ? `
-                            <button onclick="selectAllFilterImages()" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
-                            <button onclick="unselectAllFilterImages()" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
-                        ` : ''}
-                    </div>
+                <div class="relative inline-flex items-center gap-1">
+                    <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 ${state.imageFilterDropdownOpen ? 'border-mauve-400 bg-mauve-100 ring-2 ring-mauve-300' : isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-xs font-medium hover:border-mauve-400 transition">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        Image${state.imageFilterDropdownOpen ? ' (editing)' : ''}
+                    </button>
+                    ${isActive ? `<span class="text-xs font-medium text-mauve-600">${selectedCount}/${totalCount}</span>` : ''}
+                    ${state.imageFilterDropdownOpen ? `
+                        <button onclick="selectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">All</button>
+                        <button onclick="unselectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">None</button>
+                    ` : ''}
                 </div>
             `;
         }
 
         function isImageVisibleInFilter(imageId) {
             return state.imageFilterSelectedImages === null || state.imageFilterSelectedImages.has(imageId);
+        }
+
+        function renderGlobalFilters() {
+            const userFilter = renderUserFilterDropdown(state.resultsView);
+            const imageFilter = renderImageFilterDropdown();
+            if (!userFilter && !imageFilter) return '';
+            return `
+                <div class="flex items-center justify-center gap-2 flex-wrap mb-2">
+                    ${userFilter}
+                    ${imageFilter}
+                </div>
+            `;
         }
 
         // ==================== DIVISIVE TAB HELPERS ====================
@@ -6961,14 +7102,21 @@
         function generateDivisiveData() {
             if (!state.results) return { categories: [], allImages: [] };
 
+            const imageFilterIds = getFilteredImageIds();
+            const userFilterIds = getFilteredUserIds();
+
             const allImages = state.results
+                .filter(img => imageFilterIds === null || imageFilterIds.has(img.id))
                 .filter(img => img.totalVotes >= 2)
                 .map(img => {
-                    const scores = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
-                    const sd = calculateSD(scores);
-                    const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
-                    return { ...img, sd: parseFloat(sd.toFixed(2)), averageScore: avg };
+                    let scores = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned);
+                    if (userFilterIds !== null) scores = scores.filter(v => userFilterIds.has(v.userId));
+                    const scoreVals = scores.map(v => v.score);
+                    const sd = calculateSD(scoreVals);
+                    const avg = scoreVals.length > 0 ? parseFloat((scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length).toFixed(2)) : 0;
+                    return { ...img, sd: parseFloat(sd.toFixed(2)), averageScore: avg, totalVotes: scoreVals.length };
                 })
+                .filter(img => img.totalVotes >= 2)
                 .filter(img => img.averageScore >= state.divisiveAvgMin && img.averageScore <= state.divisiveAvgMax);
 
             const sortFn = (a, b) => b.sd - a.sd || b.averageScore - a.averageScore;
@@ -7188,20 +7336,36 @@
             render();
         }
 
+        function getComparisonDataSource() {
+            // Use state.results for contests, or build from mergedResults for mergers
+            if (state.results && state.results.length > 0) return state.results;
+            if (state.mergedResults && state.mergedResults.images) {
+                return state.mergedResults.images.map(img => ({
+                    id: img.id,
+                    url: img.url,
+                    averageScore: parseFloat(img.averageScore),
+                    totalVotes: img.totalVotes,
+                    breakdown: img.voteBreakdown || []
+                }));
+            }
+            return [];
+        }
+
         function generateComparisonTable() {
-            if (!state.results || !state.selectedVoterUserId) return [];
+            const dataSource = getComparisonDataSource();
+            if (dataSource.length === 0 || !state.selectedVoterUserId) return [];
 
             const selectedUserId = state.selectedVoterUserId;
             // Build map of selected user's votes
             const selectedUserVotes = {};
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 const vote = (img.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
                 if (vote) selectedUserVotes[img.id] = vote.score;
             });
 
             // Build map of all other voters
             const voterMap = {};
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 (img.breakdown || []).forEach(vote => {
                     if (vote.userId === selectedUserId || vote.isBlocked || vote.isBanned) return;
                     if (!voterMap[vote.userId]) {
@@ -7245,10 +7409,11 @@
         }
 
         function generateContestAvgComparisonTable() {
-            if (!state.results) return [];
+            const dataSource = getComparisonDataSource();
+            if (dataSource.length === 0) return [];
             // Build per-voter contest average comparison percentages
             const voterMap = {};
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 if (!img.averageScore || img.averageScore === 0) return;
                 (img.breakdown || []).forEach(vote => {
                     if (vote.isBlocked || vote.isBanned) return;
@@ -7287,20 +7452,21 @@
         }
 
         function generateContestAverageComparison(viewMode) {
-            if (!state.results || !state.selectedVoterUserId) return [];
+            const dataSource = getComparisonDataSource();
+            if (dataSource.length === 0 || !state.selectedVoterUserId) return [];
             const selectedUserId = state.selectedVoterUserId;
             viewMode = viewMode || 'match';
 
             // Build user votes map
             const userVotes = {};
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 const vote = (img.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
                 if (vote) userVotes[img.id] = vote.score;
             });
 
             // Build comparisons with contest averages
             const comparisons = [];
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 if (userVotes[img.id] === undefined || img.averageScore === 0) return;
                 const diff = userVotes[img.id] - img.averageScore;
                 comparisons.push({
@@ -7353,12 +7519,13 @@
         }
 
         function generateUserVsUserComparison(targetUserId) {
-            if (!state.results || !state.selectedVoterUserId) return { matchBased: [], relativeBased: [] };
+            const dataSource = getComparisonDataSource();
+            if (dataSource.length === 0 || !state.selectedVoterUserId) return { matchBased: [], relativeBased: [] };
             const selectedUserId = state.selectedVoterUserId;
 
             const selectedVotes = {};
             const targetVotes = {};
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 const sv = (img.breakdown || []).find(v => v.userId === selectedUserId && !v.isBlocked && !v.isBanned);
                 const tv = (img.breakdown || []).find(v => v.userId === targetUserId && !v.isBlocked && !v.isBanned);
                 if (sv) selectedVotes[img.id] = sv.score;
@@ -7366,7 +7533,7 @@
             });
 
             const comparisons = [];
-            state.results.forEach(img => {
+            dataSource.forEach(img => {
                 if (selectedVotes[img.id] !== undefined && targetVotes[img.id] !== undefined) {
                     const diff = targetVotes[img.id] - selectedVotes[img.id];
                     comparisons.push({
@@ -11693,6 +11860,7 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                ${renderGlobalFilters()}
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
                                     ${tabs.map(tab => `
                                         <button
@@ -11779,14 +11947,7 @@
         function renderTabScaleSlider() {
             if (state.resultsView === 'byVoter') return '';
 
-            let filterHtml = '';
-            // User filter + Image filter for Total and Count (images mode) tabs
-            if (state.resultsView === 'average' || (state.resultsView === 'count' && state.countMode === 'images')) {
-                filterHtml = renderUserFilterDropdown(state.resultsView) + renderImageFilterDropdown();
-            }
-
             return `
-                ${filterHtml}
                 <div class="mb-4 max-w-md mx-auto">
                     <div class="flex items-center gap-2">
                         <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
@@ -11832,14 +11993,14 @@
                 const bMin = grouped[b].min;
                 return bMin - aMin;
             });
-            const scoreLabelColor = isUserFilterActive() ? 'color: #ffb6c1;' : 'color: white;';
+            const userFilterAsterisk = isUserFilterActive() ? '*' : '';
             const imageFilterIds = getFilteredImageIds();
             let allGrouped = null;
             if (imageFilterIds !== null) {
                 allGrouped = groupByScoreRange(getResultsWithoutImageFilter());
             }
 
-            if (sortedKeys.length === 0) {
+            if (sortedKeys.length === 0 && !allGrouped) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No voting data available.</p></div>`;
             }
 
@@ -11879,12 +12040,13 @@
                             <div class="flex flex-wrap gap-1">
                                 ${displayGroup.items.map(item => {
                                     const isVisible = isImageVisibleInFilter(item.id);
-                                    if (!isFilterEditing && !isVisible) return '';
+                                    const allHiddenByFilter = imageFilterIds !== null && imageFilterIds.size === 0;
+                                    if (!isFilterEditing && !isVisible && !allHiddenByFilter) return '';
                                     return `
-                                    <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:scale-105'} transition-transform rounded-lg overflow-hidden shadow-lg" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${item.id})` : `showBreakdown(${item.id})`}">
+                                    <div class="relative cursor-pointer ${isFilterEditing ? '' : !isVisible ? '' : 'hover:scale-105'} transition-transform rounded-lg overflow-hidden shadow-lg" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${item.id})` : isVisible ? `showBreakdown(${item.id})` : `toggleImageFilterDropdown()`}">
                                         <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                        <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; ${scoreLabelColor}">
-                                            ${item.averageScore}
+                                        <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">
+                                            ${item.averageScore}${userFilterAsterisk}
                                         </div>
                                         ${isFilterEditing ? `
                                             <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
@@ -11951,7 +12113,7 @@
 
             // Images mode with user filter
             const countData = isUserFilterActive() ? generateCountDataFiltered() : generateCountData();
-            const scoreLabelColor = isUserFilterActive() ? 'color: #ffb6c1;' : 'color: white;';
+            const userFilterAsterisk = isUserFilterActive() ? '*' : '';
 
             // Calculate hidden counts per count level for image filter
             const imageFilterIds = getFilteredImageIds();
@@ -11998,7 +12160,7 @@
                                         <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : `showBreakdown(${img.id})`}">
                                             <div class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full" style="height: ${imageSize}px; border: 3px solid ${bgColor};">
                                                 <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; ${scoreLabelColor}">${img.averageScore}</div>
+                                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">${img.averageScore}${userFilterAsterisk}</div>
                                             </div>
                                             ${isFilterEditing ? `
                                                 <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
@@ -12065,9 +12227,11 @@
             }
 
             const selectedUserId = state.selectedVoterUserId;
+            const imageFilterIds = getFilteredImageIds();
             const userVotesMap = {};
             const blockedVotesSet = new Set();
             state.results.forEach(imageResult => {
+                if (imageFilterIds !== null && !imageFilterIds.has(imageResult.id)) return;
                 const userVote = imageResult.breakdown.find(v => v.userId === selectedUserId);
                 if (userVote) {
                     userVotesMap[imageResult.id] = userVote.score;
@@ -12075,12 +12239,14 @@
                 }
             });
 
-            const displayResults = state.results.map(img => ({
-                ...img,
-                averageScore: userVotesMap[img.id] || 0,
-                userVoteScore: userVotesMap[img.id],
-                isBlocked: blockedVotesSet.has(img.id)
-            })).filter(img => img.userVoteScore);
+            const displayResults = state.results
+                .filter(img => imageFilterIds === null || imageFilterIds.has(img.id))
+                .map(img => ({
+                    ...img,
+                    averageScore: userVotesMap[img.id] || 0,
+                    userVoteScore: userVotesMap[img.id],
+                    isBlocked: blockedVotesSet.has(img.id)
+                })).filter(img => img.userVoteScore);
 
             if (displayResults.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Votes Yet</h3><p class="text-gray-600">This user hasn't voted on any images here yet.</p></div>`;
@@ -12309,14 +12475,15 @@
 
             // Compute contest average percentages
             const contestAvgPcts = (() => {
-                if (!state.results || !state.selectedVoterUserId) return {};
+                const dataSource = getComparisonDataSource();
+                if (dataSource.length === 0 || !state.selectedVoterUserId) return {};
                 const userVotes = {};
-                state.results.forEach(img => {
+                dataSource.forEach(img => {
                     const vote = (img.breakdown || []).find(v => v.userId === state.selectedVoterUserId && !v.isBlocked && !v.isBanned);
                     if (vote) userVotes[img.id] = vote.score;
                 });
                 let total = 0, exact = 0, close = 0, wide = 0, above = 0, below = 0;
-                state.results.forEach(img => {
+                dataSource.forEach(img => {
                     if (userVotes[img.id] === undefined || img.averageScore === 0) return;
                     total++;
                     const diff = userVotes[img.id] - img.averageScore;
@@ -12328,7 +12495,7 @@
                     if (diff < -0.50) below++;
                 });
                 if (total === 0) return {};
-                const exactRel = total > 0 ? Math.round((state.results.filter(img => userVotes[img.id] !== undefined && img.averageScore !== 0 && Math.abs(userVotes[img.id] - img.averageScore) <= 0.005).length / total) * 100) : 0;
+                const exactRel = total > 0 ? Math.round((dataSource.filter(img => userVotes[img.id] !== undefined && img.averageScore !== 0 && Math.abs(userVotes[img.id] - img.averageScore) <= 0.005).length / total) * 100) : 0;
                 return {
                     exactPct: ((exact / total) * 100).toFixed(0),
                     closePct: ((close / total) * 100).toFixed(0),
@@ -12508,6 +12675,7 @@
 
         function renderComparisonCategories(categories, imageSize, fontSize, showRange) {
             const imageFilterIds = getFilteredImageIds();
+            const breakdownFn = state.currentMergerId ? 'showBreakdownMerged' : 'showBreakdown';
             return categories.map(cat => {
                 const allItems = cat.items || [];
                 const visibleItems = imageFilterIds !== null ? allItems.filter(item => imageFilterIds.has(item.imageId)) : allItems;
@@ -12537,7 +12705,7 @@
                                             ${!scCollapsed ? `
                                                 <div class="flex-1 flex flex-wrap gap-1 items-start">
                                                     ${scVisibleItems.map(item => `
-                                                        <div onclick="showBreakdown(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                                        <div onclick="${breakdownFn}(${item.imageId})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
                                                             <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
                                                             <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
                                                                 ${item.averageScore}
@@ -13774,7 +13942,9 @@
                             </div>
                         ` : ''}
 
-                        ${state.resultsView === 'divisive' ? (() => {
+                        ${state.resultsView === 'userVotes' && state.comparisonView === 'table' ? renderComparisonTable() + (state.showBreakdownModal ? renderBreakdownModalMerged() : '') :
+                        state.resultsView === 'userVotes' && state.comparisonView === 'detail' ? renderComparisonDetail() + (state.showBreakdownModal ? renderBreakdownModalMerged() : '') :
+                        state.resultsView === 'divisive' ? (() => {
                             const mSortFn = (a, b) => b.sd - a.sd || b.averageScore - a.averageScore;
                             const mCat7 = (displayResults || []).filter(i => i.sd >= 1.5).sort(mSortFn);
                             const mCat6 = (displayResults || []).filter(i => i.sd >= 1.25 && i.sd < 1.5).sort(mSortFn);
@@ -14305,8 +14475,8 @@
                 try {
                     const user = JSON.parse(storedUser);
 
-                    // Check if token is expired
-                    if (user.expiresAt && Date.now() < user.expiresAt) {
+                    // Check if token is expired (treat missing expiresAt as valid for backwards compatibility)
+                    if (!user.expiresAt || Date.now() < user.expiresAt) {
                         // Check if user is banned and get ban reason, also load dark theme preference
                         // Only clear auth on confirmed ban, not on network errors
                         try {
