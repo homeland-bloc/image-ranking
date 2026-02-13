@@ -4036,12 +4036,28 @@
                 const now = new Date();
                 let weekStart, weekEnd;
 
-                if (state.activityDateStart && state.activityDateEnd) {
-                    weekStart = new Date(state.activityDateStart);
-                    weekStart.setHours(0, 0, 0, 0); // Start of day
-                    weekEnd = new Date(state.activityDateEnd);
-                    weekEnd.setHours(23, 59, 59, 999); // End of day
+                if (state.activityDateStart || state.activityDateEnd) {
+                    // Use provided dates, or compute defaults
+                    if (state.activityDateStart) {
+                        weekStart = new Date(state.activityDateStart);
+                        weekStart.setHours(0, 0, 0, 0); // Start of day
+                    } else {
+                        // If no start date, default to 7 days before end date
+                        weekStart = state.activityDateEnd ? new Date(state.activityDateEnd) : new Date(now);
+                        weekStart.setDate(weekStart.getDate() - 7);
+                        weekStart.setHours(0, 0, 0, 0);
+                    }
+
+                    if (state.activityDateEnd) {
+                        weekEnd = new Date(state.activityDateEnd);
+                        weekEnd.setHours(23, 59, 59, 999); // End of day
+                    } else {
+                        // If no end date, default to today
+                        weekEnd = new Date(now);
+                        weekEnd.setHours(23, 59, 59, 999);
+                    }
                 } else {
+                    // Both dates are null, use default last 7 days
                     weekStart = new Date(now);
                     weekStart.setDate(now.getDate() - 7);
                     weekStart.setHours(0, 0, 0, 0);
