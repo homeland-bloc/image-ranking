@@ -11852,6 +11852,83 @@
             render();
         }
 
+        // Shared rendering function for both contest and merged results
+        function renderResultsPageCommon(options) {
+            const {
+                icon = '🎆',
+                title = 'Final Ranking',
+                customHeaderContent = '', // For merger's contest dropdown
+                subtitle = '',
+                isPrivate,
+                isAdmin,
+                isCreator,
+                imageSize,
+                fontSize
+            } = options;
+
+            const tabs = [
+                { key: 'average', label: 'Total' },
+                { key: 'divisive', label: 'Divisive' },
+                { key: 'count', label: 'Count' },
+                { key: 'userVotes', label: 'By User' },
+                { key: 'byVoter', label: 'Average' }
+            ];
+
+            const canSwitchTabs = !isPrivate || isAdmin || isCreator;
+
+            const subtitleMap = {
+                average: 'Total votes from all participants',
+                divisive: 'Images ranked by how divisive they are',
+                count: 'Count of specific score votes',
+                userVotes: 'Individual user votes',
+                byVoter: 'Average scores per voter'
+            };
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                        <div class="text-center mb-4">
+                            <div class="flex items-center justify-center gap-2 mb-2">
+                                <span class="text-4xl">${icon}</span>
+                                <h2 class="text-2xl font-bold text-gray-800">${title}</h2>
+                            </div>
+                            ${customHeaderContent}
+                            <p class="text-gray-600 text-sm mb-1">${subtitle || subtitleMap[state.resultsView] || ''}</p>
+                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
+
+                            ${isPrivate ? `
+                                <div class="mt-3 mb-2 max-w-2xl mx-auto">
+                                    <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+                                        <span class="text-lg flex-shrink-0">⚠️</span>
+                                        <p class="flex-1">${isCreator ? "These results are private. Only you can view them." : "These results are private. Only you and the creator can view them."}</p>
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                ${renderGlobalFilters()}
+                                <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
+                                    ${tabs.map(tab => `
+                                        <button
+                                            ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
+                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
+                                        >${tab.label}</button>
+                                    `).join('')}
+                                </div>
+
+                                ${renderTabControls(isPrivate, isAdmin, isCreator)}
+                            </div>
+                        </div>
+
+                        ${renderTabScaleSlider()}
+
+                        ${renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator)}
+                    </div>
+                    ${state.showBreakdownModal ? (state.resultsView === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal()) : ''}
+                </div>
+            `;
+        }
+
         function renderResults() {
             // Check privacy settings
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
