@@ -1330,22 +1330,27 @@
                         imageScores[vote.image_id] = {
                             scores: [],
                             breakdown: [],
-                            userVotes: new Map() // Track votes by userId to prevent duplicates
+                            userVotes: new Map() // Track votes by (userId, contestId) to prevent duplicates within same contest
                         };
                     }
 
                     const isBlocked = vote.is_blocked || false;
                     const voterIsBanned = vote.voter?.is_banned || false;
                     const userId = vote.user_id;
+                    const contestId = vote.contest_id;
 
-                    // Check if we already have a vote from this user for this image
-                    if (imageScores[vote.image_id].userVotes.has(userId)) {
-                        // Skip duplicate vote
+                    // Create unique key combining userId and contestId
+                    // This allows same user to vote on same image in different contests
+                    const voteKey = `${userId}_${contestId}`;
+
+                    // Check if we already have a vote from this user for this image in this contest
+                    if (imageScores[vote.image_id].userVotes.has(voteKey)) {
+                        // Skip true duplicate vote (same user, same image, same contest)
                         return;
                     }
 
-                    // Mark this user as having voted
-                    imageScores[vote.image_id].userVotes.set(userId, true);
+                    // Mark this user as having voted in this contest
+                    imageScores[vote.image_id].userVotes.set(voteKey, true);
 
                     // Only include non-blocked AND non-banned votes in score calculations
                     if (!isBlocked && !voterIsBanned) {
@@ -3043,7 +3048,7 @@
 
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-gray-800">${item.averageScore}</div>
+                                    <div class="text-2xl font-bold text-gray-400">${item.averageScore}</div>
                                     <div class="text-xs text-gray-400">Average Score</div>
                                     <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
                                 </div>
@@ -6984,10 +6989,7 @@
                 } else {
                     state.userFilterSelectedUsers.add(userId);
                 }
-                // If all are now selected, reset to null
-                if (state.userFilterSelectedUsers.size === allVoters.length) {
-                    state.userFilterSelectedUsers = null;
-                }
+                // Don't automatically reset to null - user may want explicit control
             }
             render();
         }
@@ -7100,9 +7102,7 @@
                 } else {
                     state.imageFilterSelectedImages.add(imageId);
                 }
-                if (state.imageFilterSelectedImages.size === allImages.length) {
-                    state.imageFilterSelectedImages = null;
-                }
+                // Don't automatically reset to null - user may want explicit control
             }
             render();
         }
@@ -11898,67 +11898,17 @@
             const baseFontSize = 12;
             const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
 
-            // Tab definitions: Total → Divisive → Count → By User → Average
-            const tabs = [
-                { key: 'average', label: 'Total' },
-                { key: 'divisive', label: 'Divisive' },
-                { key: 'count', label: 'Count' },
-                { key: 'userVotes', label: 'By User' },
-                { key: 'byVoter', label: 'Average' }
-            ];
-
-            const canSwitchTabs = !isPrivate || isAdmin || isCreator;
-
-            const subtitleMap = {
-                average: 'Total votes from all participants',
-                divisive: 'Images ranked by how divisive they are',
-                count: 'Count of specific score votes',
-                userVotes: 'Individual user votes',
-                byVoter: 'Average scores per voter'
-            };
-
-            return `
-                <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
-                        <div class="text-center mb-4">
-                            <div class="flex items-center justify-center gap-2 mb-2">
-                                <span class="text-4xl">🎆</span>
-                                <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
-                            </div>
-                            <p class="text-gray-600 text-sm mb-1">${subtitleMap[state.resultsView] || ''}</p>
-                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
-
-                            ${isPrivate ? `
-                                <div class="mt-3 mb-2 max-w-2xl mx-auto">
-                                    <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
-                                        <span class="text-lg flex-shrink-0">⚠️</span>
-                                        <p class="flex-1">${isCreator ? "These results are private. Only you can view them." : "These results are private. Only you and the creator can view them."}</p>
-                                    </div>
-                                </div>
-                            ` : ''}
-
-                            <div class="mt-3 flex flex-col items-center justify-center gap-2">
-                                ${renderGlobalFilters()}
-                                <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
-                                    ${tabs.map(tab => `
-                                        <button
-                                            ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
-                                        >${tab.label}</button>
-                                    `).join('')}
-                                </div>
-
-                                ${renderTabControls(isPrivate, isAdmin, isCreator)}
-                            </div>
-                        </div>
-
-                        ${renderTabScaleSlider()}
-
-                        ${renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator)}
-                    </div>
-                    ${state.showBreakdownModal ? (state.resultsView === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal()) : ''}
-                </div>
-            `;
+            return renderResultsPageCommon({
+                icon: '🎆',
+                title: 'Final Ranking',
+                customHeaderContent: '',
+                subtitle: '',
+                isPrivate,
+                isAdmin,
+                isCreator,
+                imageSize,
+                fontSize
+            });
         }
 
         function renderTabControls(isPrivate, isAdmin, isCreator) {
@@ -12873,7 +12823,7 @@
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="flex justify-center gap-6">
                                     <div class="text-center">
-                                        <div class="text-2xl font-bold text-gray-800">${avg}</div>
+                                        <div class="text-2xl font-bold text-gray-400">${avg}</div>
                                         <div class="text-xs text-gray-400">Average Score</div>
                                     </div>
                                     <div class="text-center">
@@ -12936,7 +12886,7 @@
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="flex justify-center gap-6">
                                     <div class="text-center">
-                                        <div class="text-2xl font-bold text-gray-800">${avg}</div>
+                                        <div class="text-2xl font-bold text-gray-400">${avg}</div>
                                         <div class="text-xs text-gray-400">Average Score</div>
                                     </div>
                                     <div class="text-center">
@@ -13007,7 +12957,7 @@
 
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-gray-800">${item.averageScore}</div>
+                                    <div class="text-2xl font-bold text-gray-400">${item.averageScore}</div>
                                     <div class="text-xs text-gray-400">Average Score</div>
                                     <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
                                 </div>
@@ -13788,89 +13738,39 @@
             const baseFontSize = 12;
             const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
 
-            // Tab definitions: Total → Divisive → Count → By User → Average
-            const tabs = [
-                { key: 'average', label: 'Total' },
-                { key: 'divisive', label: 'Divisive' },
-                { key: 'count', label: 'Count' },
-                { key: 'userVotes', label: 'By User' },
-                { key: 'byVoter', label: 'Average' }
-            ];
-
-            const canSwitchTabs = !isPrivate || isAdmin || isCreator;
-
-            const subtitleMap = {
-                average: 'Total votes from all participants',
-                divisive: 'Images ranked by how divisive they are',
-                count: 'Count of specific score votes',
-                userVotes: 'Individual user votes',
-                byVoter: 'Average scores per voter'
-            };
-
-            const titleText = contestIds.length <= 3
-                ? contestIds.map(id => contestTitles[id]).join(', ')
-                : `${contestIds.length} contests`;
-
-            const mainContent = `
-                <div class="max-w-7xl mx-auto px-3 py-4">
-                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
-                        <div class="text-center mb-4">
-                            <div class="flex items-center justify-center gap-2 mb-2">
-                                <span class="text-4xl">🎆</span>
-                                <h2 class="text-2xl font-bold text-gray-800">Final Ranking</h2>
-                            </div>
-                            <div class="mb-1">
-                                <button
-                                    onclick="toggleMergedContestsDropdown()"
-                                    class="text-gray-600 text-sm hover:bg-gray-100 px-3 py-1 rounded-lg border border-gray-300 transition-colors inline-flex items-center gap-1"
-                                >
-                                    ${contestIds.length} contest${contestIds.length !== 1 ? 's' : ''}
-                                    <span class="text-xs">${state.showMergedContestsDropdown ? '▲' : '▼'}</span>
-                                </button>
-                                ${state.showMergedContestsDropdown ? `
-                                    <div class="mt-2 bg-gray-50 border border-gray-300 rounded-lg px-4 py-2 text-left max-w-md mx-auto contest-list-dropdown">
-                                        ${contestIds.map(id => `
-                                            <div class="text-sm text-gray-700 py-1 contest-list-item">
-                                                • ${contestTitles[id]}
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                ` : ''}
-                            </div>
-                            <p class="text-gray-600 text-sm mb-1">${subtitleMap[state.resultsView] || ''}</p>
-                            <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
-
-                            ${isPrivate ? `
-                                <div class="mt-3 mb-2 max-w-2xl mx-auto">
-                                    <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
-                                        <span class="text-lg flex-shrink-0">⚠️</span>
-                                        <p class="flex-1">${isCreator ? "These results are private. Only you can view them." : "These results are private. Only you and the creator can view them."}</p>
-                                    </div>
+            // Build contest dropdown HTML for merger header
+            const contestDropdownHTML = `
+                <div class="mb-1">
+                    <button
+                        onclick="toggleMergedContestsDropdown()"
+                        class="text-gray-600 text-sm hover:bg-gray-100 px-3 py-1 rounded-lg border border-gray-300 transition-colors inline-flex items-center gap-1"
+                    >
+                        ${contestIds.length} contest${contestIds.length !== 1 ? 's' : ''}
+                        <span class="text-xs">${state.showMergedContestsDropdown ? '▲' : '▼'}</span>
+                    </button>
+                    ${state.showMergedContestsDropdown ? `
+                        <div class="mt-2 bg-gray-50 border border-gray-300 rounded-lg px-4 py-2 text-left max-w-md mx-auto contest-list-dropdown">
+                            ${contestIds.map(id => `
+                                <div class="text-sm text-gray-400 py-1 contest-list-item">
+                                    • ${contestTitles[id]}
                                 </div>
-                            ` : ''}
-
-                            <div class="mt-3 flex flex-col items-center justify-center gap-2">
-                                ${renderGlobalFilters()}
-                                <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
-                                    ${tabs.map(tab => `
-                                        <button
-                                            ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
-                                        >${tab.label}</button>
-                                    `).join('')}
-                                </div>
-
-                                ${renderTabControls(isPrivate, isAdmin, isCreator)}
-                            </div>
+                            `).join('')}
                         </div>
-
-                        ${renderTabScaleSlider()}
-
-                        ${renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator)}
-                    </div>
-                    ${state.showBreakdownModal ? (state.resultsView === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal()) : ''}
+                    ` : ''}
                 </div>
             `;
+
+            const mainContent = renderResultsPageCommon({
+                icon: '🎆',
+                title: 'Final Ranking',
+                customHeaderContent: contestDropdownHTML,
+                subtitle: '',
+                isPrivate,
+                isAdmin,
+                isCreator,
+                imageSize,
+                fontSize
+            });
 
             // Restore original state
             state.results = originalResults;
