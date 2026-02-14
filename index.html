@@ -1330,22 +1330,27 @@
                         imageScores[vote.image_id] = {
                             scores: [],
                             breakdown: [],
-                            userVotes: new Map() // Track votes by userId to prevent duplicates
+                            userVotes: new Map() // Track votes by (userId, contestId) to prevent duplicates within same contest
                         };
                     }
 
                     const isBlocked = vote.is_blocked || false;
                     const voterIsBanned = vote.voter?.is_banned || false;
                     const userId = vote.user_id;
+                    const contestId = vote.contest_id;
 
-                    // Check if we already have a vote from this user for this image
-                    if (imageScores[vote.image_id].userVotes.has(userId)) {
-                        // Skip duplicate vote
+                    // Create unique key combining userId and contestId
+                    // This allows same user to vote on same image in different contests
+                    const voteKey = `${userId}_${contestId}`;
+
+                    // Check if we already have a vote from this user for this image in this contest
+                    if (imageScores[vote.image_id].userVotes.has(voteKey)) {
+                        // Skip true duplicate vote (same user, same image, same contest)
                         return;
                     }
 
-                    // Mark this user as having voted
-                    imageScores[vote.image_id].userVotes.set(userId, true);
+                    // Mark this user as having voted in this contest
+                    imageScores[vote.image_id].userVotes.set(voteKey, true);
 
                     // Only include non-blocked AND non-banned votes in score calculations
                     if (!isBlocked && !voterIsBanned) {
