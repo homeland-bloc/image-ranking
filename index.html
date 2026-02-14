@@ -3043,7 +3043,7 @@
 
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-gray-800">${item.averageScore}</div>
+                                    <div class="text-2xl font-bold text-gray-400">${item.averageScore}</div>
                                     <div class="text-xs text-gray-400">Average Score</div>
                                     <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
                                 </div>
@@ -6984,10 +6984,7 @@
                 } else {
                     state.userFilterSelectedUsers.add(userId);
                 }
-                // If all are now selected, reset to null
-                if (state.userFilterSelectedUsers.size === allVoters.length) {
-                    state.userFilterSelectedUsers = null;
-                }
+                // Don't automatically reset to null - user may want explicit control
             }
             render();
         }
@@ -7100,9 +7097,7 @@
                 } else {
                     state.imageFilterSelectedImages.add(imageId);
                 }
-                if (state.imageFilterSelectedImages.size === allImages.length) {
-                    state.imageFilterSelectedImages = null;
-                }
+                // Don't automatically reset to null - user may want explicit control
             }
             render();
         }
@@ -12873,7 +12868,7 @@
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="flex justify-center gap-6">
                                     <div class="text-center">
-                                        <div class="text-2xl font-bold text-gray-800">${avg}</div>
+                                        <div class="text-2xl font-bold text-gray-400">${avg}</div>
                                         <div class="text-xs text-gray-400">Average Score</div>
                                     </div>
                                     <div class="text-center">
@@ -12936,7 +12931,7 @@
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="flex justify-center gap-6">
                                     <div class="text-center">
-                                        <div class="text-2xl font-bold text-gray-800">${avg}</div>
+                                        <div class="text-2xl font-bold text-gray-400">${avg}</div>
                                         <div class="text-xs text-gray-400">Average Score</div>
                                     </div>
                                     <div class="text-center">
@@ -13007,7 +13002,7 @@
 
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-gray-800">${item.averageScore}</div>
+                                    <div class="text-2xl font-bold text-gray-400">${item.averageScore}</div>
                                     <div class="text-xs text-gray-400">Average Score</div>
                                     <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
                                 </div>
@@ -13830,7 +13825,7 @@
                                 ${state.showMergedContestsDropdown ? `
                                     <div class="mt-2 bg-gray-50 border border-gray-300 rounded-lg px-4 py-2 text-left max-w-md mx-auto contest-list-dropdown">
                                         ${contestIds.map(id => `
-                                            <div class="text-sm text-gray-700 py-1 contest-list-item">
+                                            <div class="text-sm text-gray-400 py-1 contest-list-item">
                                                 • ${contestTitles[id]}
                                             </div>
                                         `).join('')}
