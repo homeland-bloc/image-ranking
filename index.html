@@ -278,19 +278,19 @@
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 16px;
-            height: 16px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
-            background: #8b5cf6;
+            background: #C77BA6;
             cursor: pointer;
             border: 2px solid white;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
         input[type="range"]::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
-            background: #8b5cf6;
+            background: #C77BA6;
             cursor: pointer;
             border: 2px solid white;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
@@ -304,11 +304,11 @@
             background: #4a4a5a;
         }
         body.dark-theme input[type="range"]::-webkit-slider-thumb {
-            background: #a78bfa;
+            background: #D88FB8;
             border-color: #2a2a3a;
         }
         body.dark-theme input[type="range"]::-moz-range-thumb {
-            background: #a78bfa;
+            background: #D88FB8;
             border-color: #2a2a3a;
         }
         body.dark-theme input[type="range"]::-moz-range-track {
@@ -989,7 +989,6 @@
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
-            sessionExpired: false,  // Whether session has expired (show banner on login screen)
             darkTheme: false,  // Dark theme enabled
             themeToggling: false,  // Prevent theme toggle spam
             pendingRoute: null,  // Store route to redirect after login (e.g., '#contest=uuid')
@@ -998,8 +997,6 @@
             userFilterSelectedUsers: null,  // null = all users selected, Set of userIds when filtered
             userFilterDropdownOpen: false,  // Whether user filter dropdown is open
             countMode: 'images',  // 'images' or 'users' for Count tab toggle
-            divisiveAvgMin: 1.0,  // Divisive tab avg score range slider min
-            divisiveAvgMax: 5.0,  // Divisive tab avg score range slider max
             comparisonView: null,  // null, 'table', or 'detail' for By User comparison
             comparisonDetailUserId: null,  // User whose detail comparison is being viewed
             comparisonDetailView: 'match',  // 'match' or 'relative' toggle in comparison detail
@@ -2278,13 +2275,6 @@
                 return;
             }
 
-            // Admin can bypass 150-image limit
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 150 && !isAdmin) {
-                showAlert('Maximum 150 images per contest!', '❌');
-                return;
-            }
-
             try {
                 const img = await loadImageFromUrl(url);
                 const imageCount = state.newContest.images.length + 1;
@@ -2317,16 +2307,6 @@
             }
 
             console.log('✅ User confirmed adding duplicate URL:', url);
-
-            // Admin can bypass 150-image limit
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            if (state.newContest.images.length >= 150 && !isAdmin) {
-                showAlert('Maximum 150 images per contest!', '❌');
-                state.tempDuplicateUrl = null;
-                state.tempDuplicateUrlInputId = null;
-                state.modalProcessing = false;
-                return;
-            }
 
             try {
                 const img = await loadImageFromUrl(url);
@@ -2394,21 +2374,6 @@
                 showAlert(`Image(s) too large: ${fileDetails}. Maximum size is 1MB.`, '❌');
                 fileInput.value = '';
                 return;
-            }
-
-            // Check if adding all files would exceed the 150 image limit (admin can bypass)
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const totalImages = state.newContest.images.length + files.length;
-            if (totalImages > 150) {
-                if (!isAdmin) {
-                    const availableSlots = 150 - state.newContest.images.length;
-                    showAlert(`Cannot add ${files.length} images. Only ${availableSlots} slot(s) remaining (max 150 total)`, '❌');
-                    fileInput.value = '';
-                    return;
-                } else {
-                    // Admin bypassing limit - show notification
-                    showToast(`Admin: Bypassing 150 image limit (adding ${files.length} images, total: ${totalImages})`, 'info');
-                }
             }
 
             fileInput.value = '';
@@ -3010,9 +2975,12 @@
             const item = state.mergedResults.images.find(img => img.id === state.showBreakdownModal);
             if (!item) return '';
 
+            const userFilterIds = getFilteredUserIds();
+            const isFiltered = isUserFilterActive();
+
             const votesByScore = { 1: [], 2: [], 3: [], 4: [], 5: [] };
             (item.voteBreakdown || []).forEach(vote => {
-                if (votesByScore[vote.score]) {
+                if ((userFilterIds === null || userFilterIds.has(vote.userId)) && votesByScore[vote.score]) {
                     votesByScore[vote.score].push(vote);
                 }
             });
@@ -3026,7 +2994,7 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown</h3>
+                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -3667,7 +3635,6 @@
         }
 
         function login() {
-            state.sessionExpired = false;  // Clear session expired flag
             const authUrl = `https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=token&scope=identify`;
             window.location.href = authUrl;
         }
@@ -6718,8 +6685,6 @@
             state.imageFilterSelectedImages = null;
             state.imageFilterDropdownOpen = false;
             state.countMode = 'images';
-            state.divisiveAvgMin = 1.0;
-            state.divisiveAvgMax = 5.0;
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
@@ -6756,8 +6721,6 @@
             state.imageFilterSelectedImages = null;
             state.imageFilterDropdownOpen = false;
             state.countMode = 'images';
-            state.divisiveAvgMin = 1.0;
-            state.divisiveAvgMax = 5.0;
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
@@ -6978,6 +6941,9 @@
         }
 
         function toggleUserFilterUser(userId) {
+            const scrollY = window.scrollY;
+            const dropdown = document.querySelector('.user-filter-dropdown');
+            const dropdownScrollTop = dropdown ? dropdown.scrollTop : 0;
             const allVoters = getContestVotersList();
             if (state.userFilterSelectedUsers === null) {
                 // Was "all selected" - now deselect this one
@@ -6992,6 +6958,9 @@
                 // Don't automatically reset to null - user may want explicit control
             }
             render();
+            window.scrollTo(0, scrollY);
+            const newDropdown = document.querySelector('.user-filter-dropdown');
+            if (newDropdown) newDropdown.scrollTop = dropdownScrollTop;
         }
 
         function selectAllFilterUsers() {
@@ -7194,8 +7163,7 @@
                     const avg = scoreVals.length > 0 ? parseFloat((scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length).toFixed(2)) : 0;
                     return { ...img, sd: parseFloat(sd.toFixed(2)), averageScore: avg, totalVotes: scoreVals.length };
                 })
-                .filter(img => img.totalVotes >= 2)
-                .filter(img => img.averageScore >= state.divisiveAvgMin && img.averageScore <= state.divisiveAvgMax);
+                .filter(img => img.totalVotes >= 2);
 
             const sortFn = (a, b) => b.sd - a.sd || b.averageScore - a.averageScore;
             const cat7 = allImages.filter(i => i.sd >= 1.5).sort(sortFn);
@@ -7220,33 +7188,6 @@
             };
         }
 
-        function updateDivisiveAvgMin(value) {
-            state.divisiveAvgMin = parseFloat(value);
-            if (state.divisiveAvgMin > state.divisiveAvgMax) state.divisiveAvgMax = state.divisiveAvgMin;
-            clearTimeout(state.divisiveSliderTimeout);
-            state.divisiveSliderTimeout = setTimeout(() => { render(); }, 150);
-        }
-
-        function updateDivisiveAvgMax(value) {
-            state.divisiveAvgMax = parseFloat(value);
-            if (state.divisiveAvgMax < state.divisiveAvgMin) state.divisiveAvgMin = state.divisiveAvgMax;
-            clearTimeout(state.divisiveSliderTimeout);
-            state.divisiveSliderTimeout = setTimeout(() => { render(); }, 150);
-        }
-
-        function adjustDivisiveAvgMin(delta) {
-            const newVal = Math.max(1.0, Math.min(5.0, parseFloat((state.divisiveAvgMin + delta).toFixed(1))));
-            state.divisiveAvgMin = newVal;
-            if (state.divisiveAvgMin > state.divisiveAvgMax) state.divisiveAvgMax = state.divisiveAvgMin;
-            render();
-        }
-
-        function adjustDivisiveAvgMax(delta) {
-            const newVal = Math.max(1.0, Math.min(5.0, parseFloat((state.divisiveAvgMax + delta).toFixed(1))));
-            state.divisiveAvgMax = newVal;
-            if (state.divisiveAvgMax < state.divisiveAvgMin) state.divisiveAvgMin = state.divisiveAvgMax;
-            render();
-        }
 
         // ==================== COUNT TAB USERS MODE ====================
         function setCountMode(mode) {
@@ -9679,14 +9620,6 @@
         function renderLoginScreen() {
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
-                    ${state.sessionExpired ? `
-                        <div class="bg-amber-50 border border-amber-300 rounded-lg p-3 mb-4">
-                            <p class="text-sm text-amber-800 flex items-center gap-2">
-                                <span class="text-lg">⏰</span>
-                                <span><strong>Session Expired:</strong> Your session has expired. Please login again to continue.</span>
-                            </p>
-                        </div>
-                    ` : ''}
                     ${state.pendingRoute ? `
                         <div class="bg-blue-50 border border-blue-300 rounded-lg p-3 mb-4">
                             <p class="text-sm text-blue-800 flex items-center gap-2">
@@ -11377,7 +11310,7 @@
 
                         <div class="flex items-center justify-between mb-3 p-3 bg-gray-50 rounded-lg">
                             <div class="text-sm font-semibold text-gray-800">
-                                ${state.newContest.images.length} / 150 images added
+                                ${state.newContest.images.length} images added
                             </div>
                         </div>
 
@@ -11970,6 +11903,11 @@
                 return renderComparisonDetail() + (state.showBreakdownModal ? renderBreakdownModal() : '');
             }
 
+            // Handle full-screen comparison views for Average tab
+            if (state.resultsView === 'byVoter' && state.averageTabCompareAll) {
+                return renderAverageTabCompareAll();
+            }
+
             const baseSize = 150;
             const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
             const baseFontSize = 12;
@@ -12009,25 +11947,9 @@
                 `;
             }
 
-            // Divisive tab: avg score range slider + SD explanation
+            // Divisive tab: SD explanation
             if (state.resultsView === 'divisive') {
                 html += `
-                    <div class="mt-3 max-w-lg mx-auto">
-                        <label class="text-xs font-medium text-gray-700">Average Score Range: ${state.divisiveAvgMin.toFixed(1)} - ${state.divisiveAvgMax.toFixed(1)}</label>
-                        <p class="text-xs text-gray-500 mb-1">Filter images by their average score</p>
-                        <div class="flex items-center gap-3 mt-1">
-                            <div class="flex items-center gap-1 flex-1">
-                                <button onclick="adjustDivisiveAvgMin(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease min">−</button>
-                                <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMin}" oninput="updateDivisiveAvgMin(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
-                                <button onclick="adjustDivisiveAvgMin(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase min">+</button>
-                            </div>
-                            <div class="flex items-center gap-1 flex-1">
-                                <button onclick="adjustDivisiveAvgMax(-0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Decrease max">−</button>
-                                <input type="range" min="1.0" max="5.0" step="0.1" value="${state.divisiveAvgMax}" oninput="updateDivisiveAvgMax(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer accent-mauve-400" />
-                                <button onclick="adjustDivisiveAvgMax(0.1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition text-xs" title="Increase max">+</button>
-                            </div>
-                        </div>
-                    </div>
                     <div class="mt-2 max-w-lg mx-auto">
                         <p class="text-xs text-gray-500 text-center">SD = Standard Deviation — measures how much voters disagree on an image's score</p>
                     </div>
@@ -12416,15 +12338,15 @@
         }
 
         // ==================== TAB 5: AVERAGE (byVoter) ====================
-        function renderAverageTab() {
-            // Detail comparison view: user vs contest average
-            if (state.averageTabCompareAll && state.averageTabCompareUserId) {
+        // ==================== AVERAGE TAB COMPARE-ALL (full-screen) ====================
+        function renderAverageTabCompareAll() {
+            // Detail view: individual user vs contest average
+            if (state.averageTabCompareUserId) {
                 const baseSize = 150;
                 const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
                 const baseFontSize = 12;
                 const fontSize = Math.floor(baseFontSize * (state.imageScale / 100));
 
-                // Temporarily set selectedVoterUserId for generateContestAverageComparison
                 const prevSelectedVoter = state.selectedVoterUserId;
                 state.selectedVoterUserId = state.averageTabCompareUserId;
                 const categories = generateContestAverageComparison(state.comparisonAvgView);
@@ -12434,121 +12356,128 @@
                 const voterName = voter ? voter.username : 'Unknown';
 
                 return `
-                    <div class="flex items-center gap-3 mb-4 flex-wrap">
-                        <button onclick="backFromAverageCompareUser()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
-                            <span>←</span> Back
-                        </button>
-                        <h2 class="text-lg font-bold text-gray-800">${voterName} vs Contest Average</h2>
-                    </div>
+                    <div class="max-w-7xl mx-auto px-3 py-4">
+                        <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                            <div class="flex items-center gap-3 mb-4 flex-wrap">
+                                <button onclick="backFromAverageCompareUser()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
+                                    <span>←</span> Back
+                                </button>
+                                <h2 class="text-lg font-bold text-gray-800">${voterName} vs Contest Average</h2>
+                            </div>
 
-                    <div class="flex items-center gap-2 mb-4">
-                        <label class="text-xs font-medium text-gray-700">View:</label>
-                        <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
-                        <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
-                    </div>
+                            <div class="flex items-center gap-2 mb-4">
+                                <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
+                                <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                            </div>
 
-                    <div class="mb-4 max-w-md">
-                        <div class="flex items-center gap-2">
-                            <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
-                            <button onclick="adjustScale(-1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">−</button>
-                            <input type="range" min="20" max="250" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
-                            <button onclick="adjustScale(1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">+</button>
-                            <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            <div class="mb-4 max-w-md">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                    <button onclick="adjustScale(-1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">−</button>
+                                    <input type="range" min="20" max="250" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                                    <button onclick="adjustScale(1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">+</button>
+                                    <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                                </div>
+                            </div>
+
+                            <div>
+                                ${renderContestAvgCategories(categories, imageSize, fontSize)}
+                            </div>
                         </div>
                     </div>
-
-                    <div style="overflow-y: auto;">
-                        ${renderContestAvgCategories(categories, imageSize, fontSize)}
-                    </div>
                 `;
             }
 
-            // Compare all mode: show comparison table with percentages
-            if (state.averageTabCompareAll) {
-                let comparisonData = generateContestAvgComparisonTable();
-                const isMatch = state.comparisonTableView === 'match';
+            // Table view: all users vs contest average
+            let comparisonData = generateContestAvgComparisonTable();
+            const isMatch = state.comparisonTableView === 'match';
 
-                const matchColumns = [
-                    { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
-                    { key: 'closePct', label: 'Close (±0.51-1.00)', bg: '#fef08a' },
-                    { key: 'widePct', label: 'Wide (±1.01+)', bg: '#fecaca' }
-                ];
-                const relativeColumns = [
-                    { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
-                    { key: 'abovePct', label: 'Above', bg: '#bfdbfe' },
-                    { key: 'belowPct', label: 'Below', bg: '#fed7aa' }
-                ];
-                const columns = isMatch ? matchColumns : relativeColumns;
+            const matchColumns = [
+                { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
+                { key: 'closePct', label: 'Close (±0.51-1.00)', bg: '#fef08a' },
+                { key: 'widePct', label: 'Wide (±1.01+)', bg: '#fecaca' }
+            ];
+            const relativeColumns = [
+                { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
+                { key: 'abovePct', label: 'Above', bg: '#bfdbfe' },
+                { key: 'belowPct', label: 'Below', bg: '#fed7aa' }
+            ];
+            const columns = isMatch ? matchColumns : relativeColumns;
 
-                const getSortIndicator = (key) => {
-                    const sort = state.comparisonTableSortKeys.find(s => s.key === key);
-                    if (!sort) return '';
-                    return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
-                };
+            const getSortIndicator = (key) => {
+                const sort = state.comparisonTableSortKeys.find(s => s.key === key);
+                if (!sort) return '';
+                return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
+            };
 
-                // Apply sort
-                if (state.comparisonTableSortKeys.length > 0) {
-                    comparisonData = [...comparisonData].sort((a, b) => {
-                        for (const sortKey of state.comparisonTableSortKeys) {
-                            if (sortKey.key === 'username') {
-                                const cmp = a.username.toLowerCase().localeCompare(b.username.toLowerCase());
-                                const diff = sortKey.direction === 'desc' ? -cmp : cmp;
-                                if (diff !== 0) return diff;
-                            } else {
-                                const aVal = parseFloat(a[sortKey.key] || 0);
-                                const bVal = parseFloat(b[sortKey.key] || 0);
-                                const diff = sortKey.direction === 'desc' ? bVal - aVal : aVal - bVal;
-                                if (diff !== 0) return diff;
-                            }
+            if (state.comparisonTableSortKeys.length > 0) {
+                comparisonData = [...comparisonData].sort((a, b) => {
+                    for (const sortKey of state.comparisonTableSortKeys) {
+                        if (sortKey.key === 'username') {
+                            const cmp = a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+                            const diff = sortKey.direction === 'desc' ? -cmp : cmp;
+                            if (diff !== 0) return diff;
+                        } else {
+                            const aVal = parseFloat(a[sortKey.key] || 0);
+                            const bVal = parseFloat(b[sortKey.key] || 0);
+                            const diff = sortKey.direction === 'desc' ? bVal - aVal : aVal - bVal;
+                            if (diff !== 0) return diff;
                         }
-                        return 0;
-                    });
-                }
+                    }
+                    return 0;
+                });
+            }
 
-                return `
-                    <div class="flex items-center gap-3 mb-4 flex-wrap">
-                        <button onclick="backFromAverageCompareAll()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
-                            <span>←</span> Back
-                        </button>
-                        <h2 class="text-lg font-bold text-gray-800">Comparing: Contest Average</h2>
-                    </div>
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                        <div class="flex items-center gap-3 mb-4 flex-wrap">
+                            <button onclick="backFromAverageCompareAll()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
+                                <span>←</span> Back
+                            </button>
+                            <h2 class="text-lg font-bold text-gray-800">Comparing: Contest Average</h2>
+                        </div>
 
-                    <div class="flex items-center gap-2 mb-4">
-                        <label class="text-xs font-medium text-gray-700">View:</label>
-                        <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
-                        <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
-                    </div>
+                        <div class="flex items-center gap-2 mb-4">
+                            <label class="text-xs font-medium text-gray-700">View:</label>
+                            <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
+                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                        </div>
 
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr class="border-b-2 border-gray-200">
-                                    <th class="text-left py-2 px-2 cursor-pointer select-none" onclick="toggleComparisonTableSort('username')">User${getSortIndicator('username')}</th>
-                                    ${columns.map(col => `
-                                        <th class="text-center py-2 px-1 text-xs cursor-pointer select-none" onclick="toggleComparisonTableSort('${col.key}')">${col.label}${getSortIndicator(col.key)}</th>
-                                    `).join('')}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${comparisonData.map(voter => `
-                                    <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showAverageCompareUser('${voter.userId}')">
-                                        <td class="py-2 px-2">
-                                            <div class="flex items-center gap-2">
-                                                <img src="${voter.avatar}" class="w-6 h-6 rounded-full" />
-                                                <span class="font-medium truncate max-w-[120px]">${voter.username}</span>
-                                            </div>
-                                        </td>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="border-b-2 border-gray-200">
+                                        <th class="text-left py-2 px-2 cursor-pointer select-none" onclick="toggleComparisonTableSort('username')">User${getSortIndicator('username')}</th>
                                         ${columns.map(col => `
-                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${voter[col.key]}%</span></td>
+                                            <th class="text-center py-2 px-1 text-xs cursor-pointer select-none" onclick="toggleComparisonTableSort('${col.key}')">${col.label}${getSortIndicator(col.key)}</th>
                                         `).join('')}
                                     </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    ${comparisonData.map(voter => `
+                                        <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showAverageCompareUser('${voter.userId}')">
+                                            <td class="py-2 px-2">
+                                                <div class="flex items-center gap-2">
+                                                    <img src="${voter.avatar}" class="w-6 h-6 rounded-full" />
+                                                    <span class="font-medium truncate max-w-[120px]">${voter.username}</span>
+                                                </div>
+                                            </td>
+                                            ${columns.map(col => `
+                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${voter[col.key]}%</span></td>
+                                            `).join('')}
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                `;
-            }
+                </div>
+            `;
+        }
 
+        function renderAverageTab() {
             // Normal Average tab view
             const voterStats = generateVoterStats();
 
@@ -12874,7 +12803,10 @@
             const item = state.results.find(r => r.id === state.showBreakdownModal);
             if (!item) return '';
 
-            const scores = item.breakdown.filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
+            const userFilterIds = getFilteredUserIds();
+            const isFiltered = isUserFilterActive();
+
+            const scores = item.breakdown.filter(v => !v.isBlocked && !v.isBanned && (userFilterIds === null || userFilterIds.has(v.userId))).map(v => v.score);
             const sd = calculateSD(scores);
             const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0;
 
@@ -12887,7 +12819,7 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown</h3>
+                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
@@ -12937,7 +12869,10 @@
             const item = state.mergedResults.images.find(img => img.id === state.showBreakdownModal);
             if (!item) return '';
 
-            const scores = (item.voteBreakdown || []).filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
+            const userFilterIds = getFilteredUserIds();
+            const isFiltered = isUserFilterActive();
+
+            const scores = (item.voteBreakdown || []).filter(v => !v.isBlocked && !v.isBanned && (userFilterIds === null || userFilterIds.has(v.userId))).map(v => v.score);
             const sd = calculateSD(scores);
             const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0;
 
@@ -12950,7 +12885,7 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown</h3>
+                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
@@ -12999,9 +12934,14 @@
             const item = state.results.find(r => r.id === state.showBreakdownModal);
             if (!item) return '';
 
+            const userFilterIds = getFilteredUserIds();
+            const isFiltered = isUserFilterActive();
+
             const votesByScore = { 1: [], 2: [], 3: [], 4: [], 5: [] };
             item.breakdown.forEach(vote => {
-                votesByScore[vote.score].push(vote);
+                if (userFilterIds === null || userFilterIds.has(vote.userId)) {
+                    votesByScore[vote.score].push(vote);
+                }
             });
 
             Object.keys(votesByScore).forEach(score => {
@@ -13013,7 +12953,7 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown</h3>
+                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -14112,10 +14052,6 @@
         window.toggleImageFilterImage = toggleImageFilterImage;
         window.selectAllFilterImages = selectAllFilterImages;
         window.unselectAllFilterImages = unselectAllFilterImages;
-        window.updateDivisiveAvgMin = updateDivisiveAvgMin;
-        window.updateDivisiveAvgMax = updateDivisiveAvgMax;
-        window.adjustDivisiveAvgMin = adjustDivisiveAvgMin;
-        window.adjustDivisiveAvgMax = adjustDivisiveAvgMax;
         window.setCountMode = setCountMode;
         window.startComparison = startComparison;
         window.backFromComparison = backFromComparison;
@@ -14145,74 +14081,67 @@
                 try {
                     const user = JSON.parse(storedUser);
 
-                    // Check if token is expired (treat missing expiresAt as valid for backwards compatibility)
-                    if (!user.expiresAt || Date.now() < user.expiresAt) {
-                        // Check if user is banned and get ban reason, also load dark theme preference
-                        // Only clear auth on confirmed ban, not on network errors
-                        try {
-                            const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
-                                headers: {
-                                    'apikey': SUPABASE_ANON_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                    'Cache-Control': 'no-cache'
-                                }
-                            });
-
-                            if (banCheckResponse.ok) {
-                                const userData = await banCheckResponse.json();
-
-                                // If user is banned, log them out with reason
-                                if (userData && userData.length > 0 && userData[0].is_banned === true) {
-                                    const banReason = userData[0].ban_reason || 'No reason provided';
-                                    localStorage.removeItem('peony_user');
-                                    showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
-                                    return; // Exit early, don't proceed with login
-                                }
-
-                                // Load dark theme preference
-                                if (userData && userData.length > 0 && userData[0].dark_theme === true) {
-                                    state.darkTheme = true;
-                                    document.body.classList.add('dark-theme');
-                                }
-                            } else {
-                                // Network error or API issue - don't log out, just warn
-                                console.warn('Failed to check ban status, proceeding with cached session');
+                    // Check if user is banned and get ban reason, also load dark theme preference
+                    // Only clear auth on confirmed ban, not on network errors
+                    try {
+                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
                             }
-                        } catch (banCheckError) {
-                            // Network error checking ban status - don't log out the user
-                            console.warn('Ban check failed, proceeding with cached session:', banCheckError);
+                        });
+
+                        if (banCheckResponse.ok) {
+                            const userData = await banCheckResponse.json();
+
+                            // If user is banned, log them out with reason
+                            if (userData && userData.length > 0 && userData[0].is_banned === true) {
+                                const banReason = userData[0].ban_reason || 'No reason provided';
+                                localStorage.removeItem('peony_user');
+                                showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
+                                return; // Exit early, don't proceed with login
+                            }
+
+                            // Load dark theme preference
+                            if (userData && userData.length > 0 && userData[0].dark_theme === true) {
+                                state.darkTheme = true;
+                                document.body.classList.add('dark-theme');
+                            }
+                        } else {
+                            // Network error or API issue - don't log out, just warn
+                            console.warn('Failed to check ban status, proceeding with cached session');
                         }
-
-                        // User not banned (or ban check failed), proceed with login
-                        state.isLoggedIn = true;
-                        // AFTER: ensure user exists, then continue
-                        state.user = {
-                            id: user.id,
-                            username: user.username,
-                            avatar: user.avatar
-                        };
-
-                        // Ensure the row exists in public.users, then continue
-                        ensureLocalUser(state.user)
-                            .then(async () => {
-                                // proceed normally once the user row is present (or insertion attempted)
-                                await loadContests();
-                                await loadPinnedItems();
-
-                                render();
-                            })
-                            .catch(async (err) => {
-                                // should not happen because ensureLocalUser swallows errors, but safe fallback
-                                console.error('ensureLocalUser unexpected error:', err);
-                                await loadContests();
-                                await loadPinnedItems();
-                                render();
-                            });
-                    } else {
-                        // Token expired, clear it
-                        localStorage.removeItem('peony_user');
-                        state.sessionExpired = true;
+                    } catch (banCheckError) {
+                        // Network error checking ban status - don't log out the user
+                        console.warn('Ban check failed, proceeding with cached session:', banCheckError);
                     }
+
+                    // User not banned (or ban check failed), proceed with login
+                    state.isLoggedIn = true;
+                    // AFTER: ensure user exists, then continue
+                    state.user = {
+                        id: user.id,
+                        username: user.username,
+                        avatar: user.avatar
+                    };
+
+                    // Ensure the row exists in public.users, then continue
+                    ensureLocalUser(state.user)
+                        .then(async () => {
+                            // proceed normally once the user row is present (or insertion attempted)
+                            await loadContests();
+                            await loadPinnedItems();
+
+                            render();
+                        })
+                        .catch(async (err) => {
+                            // should not happen because ensureLocalUser swallows errors, but safe fallback
+                            console.error('ensureLocalUser unexpected error:', err);
+                            await loadContests();
+                            await loadPinnedItems();
+                            render();
+                        });
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
                     // Don't clear on network errors or other transient issues
