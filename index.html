@@ -1293,32 +1293,7 @@
                 const contests = await contestsResponse.json();
 
                 // Fetch ALL votes for these contests using pagination
-                let allVotes = [];
-                let offset = 0;
-                const limit = 1000;
-                let hasMore = true;
-
-                while (hasMore) {
-                    setLoading(`Loading votes... (${allVotes.length} loaded)`);
-
-                    const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${contestIds.join(',')})&limit=${limit}&offset=${offset}&select=*,voter:users!votes_user_id_fkey(username,avatar,is_banned)`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
-                    });
-                    const votes = await votesResponse.json();
-
-                    allVotes = allVotes.concat(votes);
-
-                    // If we got fewer results than the limit, we've reached the end
-                    if (votes.length < limit) {
-                        hasMore = false;
-                    } else {
-                        offset += limit;
-                    }
-                }
+                const allVotes = await fetchAllVotesPaginated(`contest_id=in.(${contestIds.join(',')})`, '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)');
 
                 // Build image scores from votes
                 const imageScores = {};
@@ -2747,7 +2722,7 @@
             let hasMore = true;
 
             while (hasMore) {
-                const url = `${SUPABASE_URL}/rest/v1/votes?${filterQuery}&limit=${limit}&offset=${offset}&select=${selectFields}`;
+                const url = `${SUPABASE_URL}/rest/v1/votes?${filterQuery}&order=id.asc&limit=${limit}&offset=${offset}&select=${selectFields}`;
                 const response = await fetch(url, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
