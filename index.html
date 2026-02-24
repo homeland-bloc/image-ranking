@@ -989,7 +989,6 @@
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
-            sessionExpired: false,  // Whether session has expired (show banner on login screen)
             darkTheme: false,  // Dark theme enabled
             themeToggling: false,  // Prevent theme toggle spam
             pendingRoute: null,  // Store route to redirect after login (e.g., '#contest=uuid')
@@ -3667,7 +3666,6 @@
         }
 
         function login() {
-            state.sessionExpired = false;  // Clear session expired flag
             const authUrl = `https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=token&scope=identify`;
             window.location.href = authUrl;
         }
@@ -9679,14 +9677,6 @@
         function renderLoginScreen() {
             return `
                 <div class="max-w-md mx-auto mt-20 p-6 bg-white rounded-2xl shadow-xl fade-in">
-                    ${state.sessionExpired ? `
-                        <div class="bg-amber-50 border border-amber-300 rounded-lg p-3 mb-4">
-                            <p class="text-sm text-amber-800 flex items-center gap-2">
-                                <span class="text-lg">⏰</span>
-                                <span><strong>Session Expired:</strong> Your session has expired. Please login again to continue.</span>
-                            </p>
-                        </div>
-                    ` : ''}
                     ${state.pendingRoute ? `
                         <div class="bg-blue-50 border border-blue-300 rounded-lg p-3 mb-4">
                             <p class="text-sm text-blue-800 flex items-center gap-2">
@@ -14145,74 +14135,67 @@
                 try {
                     const user = JSON.parse(storedUser);
 
-                    // Check if token is expired (treat missing expiresAt as valid for backwards compatibility)
-                    if (!user.expiresAt || Date.now() < user.expiresAt) {
-                        // Check if user is banned and get ban reason, also load dark theme preference
-                        // Only clear auth on confirmed ban, not on network errors
-                        try {
-                            const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
-                                headers: {
-                                    'apikey': SUPABASE_ANON_KEY,
-                                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                    'Cache-Control': 'no-cache'
-                                }
-                            });
-
-                            if (banCheckResponse.ok) {
-                                const userData = await banCheckResponse.json();
-
-                                // If user is banned, log them out with reason
-                                if (userData && userData.length > 0 && userData[0].is_banned === true) {
-                                    const banReason = userData[0].ban_reason || 'No reason provided';
-                                    localStorage.removeItem('peony_user');
-                                    showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
-                                    return; // Exit early, don't proceed with login
-                                }
-
-                                // Load dark theme preference
-                                if (userData && userData.length > 0 && userData[0].dark_theme === true) {
-                                    state.darkTheme = true;
-                                    document.body.classList.add('dark-theme');
-                                }
-                            } else {
-                                // Network error or API issue - don't log out, just warn
-                                console.warn('Failed to check ban status, proceeding with cached session');
+                    // Check if user is banned and get ban reason, also load dark theme preference
+                    // Only clear auth on confirmed ban, not on network errors
+                    try {
+                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
                             }
-                        } catch (banCheckError) {
-                            // Network error checking ban status - don't log out the user
-                            console.warn('Ban check failed, proceeding with cached session:', banCheckError);
+                        });
+
+                        if (banCheckResponse.ok) {
+                            const userData = await banCheckResponse.json();
+
+                            // If user is banned, log them out with reason
+                            if (userData && userData.length > 0 && userData[0].is_banned === true) {
+                                const banReason = userData[0].ban_reason || 'No reason provided';
+                                localStorage.removeItem('peony_user');
+                                showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
+                                return; // Exit early, don't proceed with login
+                            }
+
+                            // Load dark theme preference
+                            if (userData && userData.length > 0 && userData[0].dark_theme === true) {
+                                state.darkTheme = true;
+                                document.body.classList.add('dark-theme');
+                            }
+                        } else {
+                            // Network error or API issue - don't log out, just warn
+                            console.warn('Failed to check ban status, proceeding with cached session');
                         }
-
-                        // User not banned (or ban check failed), proceed with login
-                        state.isLoggedIn = true;
-                        // AFTER: ensure user exists, then continue
-                        state.user = {
-                            id: user.id,
-                            username: user.username,
-                            avatar: user.avatar
-                        };
-
-                        // Ensure the row exists in public.users, then continue
-                        ensureLocalUser(state.user)
-                            .then(async () => {
-                                // proceed normally once the user row is present (or insertion attempted)
-                                await loadContests();
-                                await loadPinnedItems();
-
-                                render();
-                            })
-                            .catch(async (err) => {
-                                // should not happen because ensureLocalUser swallows errors, but safe fallback
-                                console.error('ensureLocalUser unexpected error:', err);
-                                await loadContests();
-                                await loadPinnedItems();
-                                render();
-                            });
-                    } else {
-                        // Token expired, clear it
-                        localStorage.removeItem('peony_user');
-                        state.sessionExpired = true;
+                    } catch (banCheckError) {
+                        // Network error checking ban status - don't log out the user
+                        console.warn('Ban check failed, proceeding with cached session:', banCheckError);
                     }
+
+                    // User not banned (or ban check failed), proceed with login
+                    state.isLoggedIn = true;
+                    // AFTER: ensure user exists, then continue
+                    state.user = {
+                        id: user.id,
+                        username: user.username,
+                        avatar: user.avatar
+                    };
+
+                    // Ensure the row exists in public.users, then continue
+                    ensureLocalUser(state.user)
+                        .then(async () => {
+                            // proceed normally once the user row is present (or insertion attempted)
+                            await loadContests();
+                            await loadPinnedItems();
+
+                            render();
+                        })
+                        .catch(async (err) => {
+                            // should not happen because ensureLocalUser swallows errors, but safe fallback
+                            console.error('ensureLocalUser unexpected error:', err);
+                            await loadContests();
+                            await loadPinnedItems();
+                            render();
+                        });
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
                     // Don't clear on network errors or other transient issues
