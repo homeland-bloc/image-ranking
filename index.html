@@ -1007,7 +1007,13 @@
             imageFilterDropdownOpen: false,  // Whether image filter dropdown is open
             comparisonTableSortKeys: [],  // Array of {key, direction} for multi-sort
             averageTabCompareAll: false,  // Whether "Compare with all" mode is active on Average tab
-            averageTabCompareUserId: null  // User selected for contest average comparison in Average tab
+            averageTabCompareUserId: null,  // User selected for contest average comparison in Average tab
+            userAutosavedVotes: {},  // Autosaved votes keyed by context: { 'contest_UUID': {imageId: score}, 'merger_UUID': {...} }
+            autosaveContext: { type: null, id: null },  // Current voting context for auto-save ('contest' or 'merger')
+            isAutoSaving: false,  // Whether auto-save is in progress
+            lastAutoSaveTime: null,  // Timestamp of last successful auto-save
+            pendingDraftContext: null,  // Pending draft context for resume/discard confirmation modals
+            isAutosaveDraftExpanded: false  // Whether "Continue Drafts" section is expanded (default: folded)
         };
 
         function shuffleArray(array) {
@@ -1841,7 +1847,15 @@
 
                 // Reload user votes to reflect new submissions
                 await loadUserVotes();
+                await loadAllUserAutosaves();
                 state.hasSubmitted = true;
+
+                // Delete autosaves for this context now that votes are submitted
+                clearTimeout(autoSaveTimer);
+                if (state.autosaveContext.type && state.autosaveContext.id) {
+                    await deleteAutosaves(state.autosaveContext.type, state.autosaveContext.id);
+                    state.autosaveContext = { type: null, id: null };
+                }
 
                 // Update voter counts BEFORE loading results to ensure fresh data
                 // Check if we're voting on an extract (only if not in merger mode)
@@ -1987,6 +2001,9 @@
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
+            // Cancel pending auto-save timer but keep autosaves in DB for later resume
+            clearTimeout(autoSaveTimer);
+            state.autosaveContext = { type: null, id: null };
             state.view = 'home';
             state.currentContest = null;
             state.modalProcessing = false;
@@ -3974,6 +3991,274 @@
             }
         }
 
+        // ─── AUTO-SAVE DRAFT VOTING SYSTEM ───────────────────────────────────────
+
+        let autoSaveTimer = null;  // Debounce timer handle for auto-save
+
+        // Load all autosaved votes for the current user (called on home screen load)
+        async function loadAllUserAutosaves() {
+            if (!state.user) return;
+            try {
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/autosave_votes?user_id=eq.${state.user.id}&select=*`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
+                    }
+                );
+                if (!response.ok) throw new Error('Failed to load autosaves');
+                const autosaves = await response.json();
+                state.userAutosavedVotes = {};
+                autosaves.forEach(save => {
+                    if (save.score >= 1 && save.score <= 5) {
+                        const key = `${save.voting_context_type}_${save.voting_context_id}`;
+                        if (!state.userAutosavedVotes[key]) state.userAutosavedVotes[key] = {};
+                        state.userAutosavedVotes[key][save.image_id] = save.score;
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to load autosaves from DB, trying localStorage:', error);
+                // localStorage fallback is loaded lazily per-context when needed
+            }
+        }
+
+        // Delete autosaves for a specific voting context (called after submit or revote)
+        async function deleteAutosaves(contextType, contextId) {
+            if (!state.user || !contextType || !contextId) return;
+            // Clear from in-memory state immediately
+            const key = `${contextType}_${contextId}`;
+            delete state.userAutosavedVotes[key];
+            // Clear localStorage backup
+            try {
+                localStorage.removeItem(`autosave_${state.user.id}_${contextType}_${contextId}`);
+            } catch (e) { /* ignore */ }
+            // Delete from database (fire and forget – don't block UI)
+            try {
+                await fetch(
+                    `${SUPABASE_URL}/rest/v1/autosave_votes?user_id=eq.${state.user.id}&voting_context_type=eq.${contextType}&voting_context_id=eq.${contextId}`,
+                    {
+                        method: 'DELETE',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                        }
+                    }
+                );
+            } catch (error) {
+                console.error('Failed to delete autosaves from DB:', error);
+            }
+        }
+
+        // Debounced trigger – call after each vote action (2-second delay)
+        function debouncedAutoSave() {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(performAutoSave, 2000);
+        }
+
+        // Perform the actual auto-save to DB + localStorage
+        async function performAutoSave() {
+            if (!state.user) return;
+            const contextType = state.autosaveContext.type;
+            const contextId   = state.autosaveContext.id;
+            if (!contextType || !contextId) return;
+
+            // Build list of votes to save
+            const votesToSave = [];
+            const isMergerVoting = contextType === 'merger';
+
+            state.shuffledImages.forEach(img => {
+                if (!state.votes[img.id]) return;
+                let contestId;
+                if (isMergerVoting) {
+                    const owningContest = state.contests.find(c =>
+                        state.mergerContestIds.includes(c.id) &&
+                        c.images.some(i => i.id === img.id)
+                    );
+                    contestId = owningContest ? owningContest.id : (state.mergerContestIds[0] || contextId);
+                } else {
+                    contestId = state.currentContest ? state.currentContest.id : contextId;
+                }
+                if (contestId) {
+                    votesToSave.push({
+                        user_id: state.user.id,
+                        image_id: img.id,
+                        contest_id: contestId,
+                        score: state.votes[img.id],
+                        voting_context_type: contextType,
+                        voting_context_id: contextId
+                    });
+                }
+            });
+
+            if (votesToSave.length === 0) return;
+
+            // Persist to localStorage as backup
+            const lsKey = `autosave_${state.user.id}_${contextType}_${contextId}`;
+            try {
+                const lsData = {};
+                votesToSave.forEach(v => { lsData[v.image_id] = v.score; });
+                localStorage.setItem(lsKey, JSON.stringify(lsData));
+            } catch (e) { console.error('localStorage save failed:', e); }
+
+            // Upsert to database
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/autosave_votes`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'resolution=merge-duplicates'
+                    },
+                    body: JSON.stringify(votesToSave)
+                });
+                if (response.ok) {
+                    // Update in-memory state
+                    const key = `${contextType}_${contextId}`;
+                    if (!state.userAutosavedVotes[key]) state.userAutosavedVotes[key] = {};
+                    votesToSave.forEach(v => { state.userAutosavedVotes[key][v.image_id] = v.score; });
+                    state.lastAutoSaveTime = new Date();
+                    showAutoSaveToast();
+                }
+            } catch (error) {
+                console.error('Auto-save DB write failed (localStorage backup preserved):', error);
+            }
+        }
+
+        // Brief non-intrusive "Auto-saved ✓" toast at bottom-center
+        function showAutoSaveToast() {
+            const existing = document.getElementById('autosave-toast');
+            if (existing) { existing.remove(); }
+            const toast = document.createElement('div');
+            toast.id = 'autosave-toast';
+            toast.style.cssText = [
+                'position:fixed',
+                'bottom:24px',
+                'left:50%',
+                'transform:translateX(-50%)',
+                'background:#22c55e',
+                'color:#fff',
+                'padding:5px 14px',
+                'border-radius:999px',
+                'font-size:13px',
+                'font-weight:600',
+                'z-index:9999',
+                'opacity:0',
+                'transition:opacity 200ms ease',
+                'pointer-events:none',
+                'white-space:nowrap'
+            ].join(';');
+            toast.textContent = 'Auto-saved \u2713';
+            document.body.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.style.opacity = '1';
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 200);
+                }, 800);
+            });
+        }
+
+        // Show "Continue Draft" modal for a contest or merger
+        function continueVotingDraft(itemId, itemType) {
+            const key = `${itemType}_${itemId}`;
+            const autosaves = state.userAutosavedVotes[key] || {};
+            const autosaveCount = Object.keys(autosaves).length;
+
+            let item, totalImages, itemName;
+            if (itemType === 'contest') {
+                item = state.contests.find(c => c.id === itemId);
+                totalImages = item ? item.images.length : 0;
+                itemName = item ? item.title : 'Unknown';
+            } else if (itemType === 'merger') {
+                item = state.mergers.find(m => m.id === itemId);
+                const mergedContests = item ? state.contests.filter(c => item.contestIds.includes(c.id)) : [];
+                totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
+                itemName = item ? item.name : 'Unknown';
+            }
+            if (!item) return;
+
+            state.pendingDraftContext = { itemId, itemType, item };
+
+            state.modal = {
+                icon: '\uD83D\uDCBE',
+                message: `You have ${autosaveCount} out of ${totalImages} votes auto-saved for "${itemName}".\n\nThese votes have not been submitted yet.`,
+                buttons: [
+                    { text: 'Discard Draft', action: 'confirmDiscardDraft', primary: false, color: 'red-outline' },
+                    { text: 'Resume Drafting', action: 'confirmResumeDraft', primary: true }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        // Resume a draft: start voting with autosaved votes pre-populated
+        async function confirmResumeDraft() {
+            if (!state.pendingDraftContext) return;
+            const { itemId, itemType, item } = state.pendingDraftContext;
+            state.pendingDraftContext = null;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+
+            if (itemType === 'contest') {
+                startVoting(item, true);  // true = load autosaves
+            } else if (itemType === 'merger') {
+                await startMergerVoting(itemId, false, true);  // false = don't revote all, true = load autosaves
+            }
+        }
+
+        // Ask for confirmation before discarding a draft
+        function confirmDiscardDraft() {
+            if (!state.pendingDraftContext) return;
+            const { itemId, itemType } = state.pendingDraftContext;
+            const key = `${itemType}_${itemId}`;
+            const autosaveCount = Object.keys(state.userAutosavedVotes[key] || {}).length;
+
+            state.modal = {
+                icon: '\u26A0\uFE0F',
+                message: `Are you sure? This will delete ${autosaveCount} auto-saved vote${autosaveCount !== 1 ? 's' : ''}.`,
+                buttons: [
+                    { text: 'Cancel', action: 'cancelDiscardDraft', primary: false },
+                    { text: 'Delete Draft', action: 'executeDiscardDraft', primary: true, color: 'red' }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        // Go back to the resume modal from the discard confirmation
+        function cancelDiscardDraft() {
+            if (!state.pendingDraftContext) {
+                closeModal();
+                return;
+            }
+            const { itemId, itemType } = state.pendingDraftContext;
+            // Re-show the resume modal
+            continueVotingDraft(itemId, itemType);
+        }
+
+        // Actually delete the draft and return to home
+        async function executeDiscardDraft() {
+            if (!state.pendingDraftContext) { closeModal(); return; }
+            const { itemId, itemType } = state.pendingDraftContext;
+            state.pendingDraftContext = null;
+            state.modal = null;
+            document.body.classList.remove('modal-open');
+            await deleteAutosaves(itemType, itemId);
+            render();
+        }
+
+        // Toggle "Continue Drafts" section expansion
+        function toggleAutosaveDraftSection() {
+            state.isAutosaveDraftExpanded = !state.isAutosaveDraftExpanded;
+            render();
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+
         async function loadActivityLogs() {
             try {
                 state.activityLogsLoading = true;
@@ -4393,7 +4678,7 @@
             });
         }
 
-        function startVoting(contest) {
+        function startVoting(contest, loadAutosaves = false) {
             state.currentContest = contest;
             state.shuffledImages = shuffleArray(contest.images);
             state.votes = {};
@@ -4401,6 +4686,21 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
+
+            // Set auto-save context (only for regular contests, not extracts)
+            if (!contest.isExtract) {
+                state.autosaveContext = { type: 'contest', id: contest.id };
+                // Pre-populate votes from autosaves when resuming a draft
+                if (loadAutosaves) {
+                    const autosaveKey = `contest_${contest.id}`;
+                    const autosaves = state.userAutosavedVotes[autosaveKey] || {};
+                    Object.entries(autosaves).forEach(([imgId, score]) => {
+                        state.votes[parseInt(imgId)] = score;
+                    });
+                }
+            } else {
+                state.autosaveContext = { type: null, id: null };
+            }
 
             // Load voting mode preference from localStorage, default to 'multi'
             const savedVotingMode = localStorage.getItem('peony_voting_mode');
@@ -4627,6 +4927,12 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
+            // Clear any pending auto-save and delete existing autosaves (starting fresh)
+            clearTimeout(autoSaveTimer);
+            if (state.currentContest && !state.currentContest.isExtract) {
+                deleteAutosaves('contest', state.currentContest.id);
+            }
+
             // Reset voting state with clean slate
             state.votes = {};
             state.hasSubmitted = false;
@@ -4634,12 +4940,23 @@
             state.currentImageIndex = 0;
             state.view = 'vote';
 
+            // Set fresh autosave context
+            if (state.currentContest && !state.currentContest.isExtract) {
+                state.autosaveContext = { type: 'contest', id: state.currentContest.id };
+            }
+
             render();
         }
 
         async function confirmRevoteWithPrefill() {
             state.modal = null;
             document.body.classList.remove('modal-open');
+
+            // Clear any pending auto-save and delete existing autosaves (starting fresh revote)
+            clearTimeout(autoSaveTimer);
+            if (state.currentContest && !state.currentContest.isExtract) {
+                await deleteAutosaves('contest', state.currentContest.id);
+            }
 
             setLoading('Loading your previous votes...');
 
@@ -4661,6 +4978,11 @@
                 state.shuffledImages = shuffleArray(state.currentContest.images);
                 state.currentImageIndex = 0;
                 state.view = 'vote';
+
+                // Set autosave context for fresh revote session
+                if (state.currentContest && !state.currentContest.isExtract) {
+                    state.autosaveContext = { type: 'contest', id: state.currentContest.id };
+                }
 
                 clearLoading();
                 render();
@@ -4702,16 +5024,26 @@
         }
 
         async function confirmRevoteMerger() {
+            const mergerId = state.currentMergerId;
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            // Start merger voting with fresh slate (revoteAll = true clears all votes)
-            await startMergerVoting(state.currentMergerId, true);
+            // Clear any pending auto-save and delete existing autosaves (starting fresh)
+            clearTimeout(autoSaveTimer);
+            if (mergerId) await deleteAutosaves('merger', mergerId);
+
+            // Start merger voting with fresh slate (revoteAll = true)
+            await startMergerVoting(mergerId, true);
         }
 
         async function confirmRevoteMergerWithPrefill() {
+            const mergerId = state.currentMergerId;
             state.modal = null;
             document.body.classList.remove('modal-open');
+
+            // Clear any pending auto-save and delete existing autosaves (starting fresh revote)
+            clearTimeout(autoSaveTimer);
+            if (mergerId) await deleteAutosaves('merger', mergerId);
 
             setLoading('Loading your previous votes...');
 
@@ -4761,6 +5093,9 @@
 
                 // Set currentContest to null to indicate merger voting mode
                 state.currentContest = null;
+
+                // Set autosave context for this revote session
+                state.autosaveContext = { type: 'merger', id: state.currentMergerId };
 
                 // Update URL hash for shareable link
                 window.location.hash = `merger=${state.currentMergerId}`;
@@ -5285,7 +5620,7 @@
             render();
         }
 
-        async function startMergerVoting(mergerId, revoteAll = false) {
+        async function startMergerVoting(mergerId, revoteAll = false, loadAutosaves = false) {
             const merger = state.mergers.find(m => m.id === mergerId);
             if (!merger) {
                 showToast('Merger not found', 'error');
@@ -5355,6 +5690,18 @@
             state.hasSubmitted = false;
             state.results = null;
             state.view = 'vote';
+
+            // Set auto-save context for merger voting
+            state.autosaveContext = { type: 'merger', id: mergerId };
+
+            // Pre-populate votes from autosaves when resuming a draft
+            if (loadAutosaves) {
+                const autosaveKey = `merger_${mergerId}`;
+                const autosaves = state.userAutosavedVotes[autosaveKey] || {};
+                Object.entries(autosaves).forEach(([imgId, score]) => {
+                    state.votes[parseInt(imgId)] = score;
+                });
+            }
 
             // Load voting mode preference from localStorage, default to 'multi'
             const savedVotingMode = localStorage.getItem('peony_voting_mode');
@@ -5483,6 +5830,9 @@
             state.modal = null;
             state.pendingMergerId = null;
             document.body.classList.remove('modal-open');
+            // Clear any pending auto-save and delete existing autosaves (starting fresh)
+            clearTimeout(autoSaveTimer);
+            if (mergerId) deleteAutosaves('merger', mergerId);
             startMergerVoting(mergerId, true);
         }
 
@@ -6310,6 +6660,8 @@
             state.lastClickedImageId = currentImage.id;
             state.showTickAnimation = true;
 
+            debouncedAutoSave();
+
             render();
 
             setTimeout(() => {
@@ -6360,6 +6712,7 @@
 
             // Assign the selected score to this image
             state.votes[imageId] = state.selectedScore;
+            debouncedAutoSave();
             render();
         }
 
@@ -8816,6 +9169,10 @@
                                     buttonClass = 'bg-gradient-to-r from-pink-400 to-pink-600 text-white hover:from-pink-500 hover:to-pink-700';
                                 } else if (btn.color === 'blue') {
                                     buttonClass = 'bg-gradient-to-r from-blue-400 to-blue-600 text-white hover:from-blue-500 hover:to-blue-700';
+                                } else if (btn.color === 'red') {
+                                    buttonClass = 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700';
+                                } else if (btn.color === 'red-outline') {
+                                    buttonClass = 'border-2 border-red-500 text-red-500 hover:bg-red-50 bg-white';
                                 } else if (btn.primary) {
                                     buttonClass = 'bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700';
                                 } else {
@@ -9738,6 +10095,90 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
+                    ${(() => {
+                        // CONTINUE DRAFTS SECTION
+                        // Show contests/mergers where user has autosaved votes but hasn't submitted fully
+                        const draftItems = [];
+
+                        filteredContests.forEach(contest => {
+                            if (contest.isLocked) return;
+                            const autosaveKey = `contest_${contest.id}`;
+                            const autosaves = state.userAutosavedVotes[autosaveKey] || {};
+                            const autosaveCount = Object.keys(autosaves).length;
+                            if (autosaveCount === 0) return;
+                            // Don't show if user has fully voted (submitted all)
+                            const userVotes = state.userVotedContests[contest.id] || {};
+                            const votedAll = Object.keys(userVotes).length === contest.images.length && contest.images.length > 0;
+                            if (votedAll) return;
+                            draftItems.push({ item: contest, type: 'contest', autosaveCount, totalImages: contest.images.length });
+                        });
+
+                        filteredMergers.forEach(merger => {
+                            if (merger.isLocked) return;
+                            const autosaveKey = `merger_${merger.id}`;
+                            const autosaves = state.userAutosavedVotes[autosaveKey] || {};
+                            const autosaveCount = Object.keys(autosaves).length;
+                            if (autosaveCount === 0) return;
+                            // Don't show if user has fully voted all merger contests
+                            const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
+                            const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
+                            const totalVoted = mergedContests.reduce((sum, c) => {
+                                return sum + Object.keys(state.userVotedContests[c.id] || {}).length;
+                            }, 0);
+                            if (totalVoted === totalImages && totalImages > 0) return;
+                            draftItems.push({ item: merger, type: 'merger', autosaveCount, totalImages });
+                        });
+
+                        // Sort by most recently modified (newest first) – use item createdAt as proxy
+                        draftItems.sort((a, b) => {
+                            const dateA = new Date(a.item.createdAt || a.item.created_at || 0);
+                            const dateB = new Date(b.item.createdAt || b.item.created_at || 0);
+                            return dateB - dateA;
+                        });
+
+                        if (draftItems.length > 0) {
+                            const displayItems = state.isAutosaveDraftExpanded ? draftItems : draftItems.slice(0, 1);
+                            return `
+                                <div class="mb-4">
+                                    <div class="bg-gradient-to-r from-orange-500 to-orange-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-3 flex-1">
+                                                <button
+                                                    onclick="toggleAutosaveDraftSection()"
+                                                    class="text-white hover:bg-white/20 rounded-lg p-1 transition"
+                                                >
+                                                    <svg class="w-5 h-5 transition-transform ${state.isAutosaveDraftExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                    </svg>
+                                                </button>
+                                                <div class="flex-1">
+                                                    <h3 class="text-lg font-bold text-white">🔄 Continue Drafts</h3>
+                                                    <p class="text-xs text-orange-100">Resume your in-progress votes</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
+                                        ${displayItems.map(({ item, type }) => {
+                                            if (type === 'contest') return renderContestCard(item, false, null);
+                                            if (type === 'merger') return renderMergerCard(item, false, null);
+                                            return '';
+                                        }).join('')}
+                                    </div>
+                                    ${draftItems.length > 1 && !state.isAutosaveDraftExpanded ? `
+                                        <button
+                                            onclick="toggleAutosaveDraftSection()"
+                                            class="w-full text-center text-sm text-orange-600 hover:text-orange-700 font-medium py-2 bg-orange-50 hover:bg-orange-100 rounded-lg transition"
+                                        >
+                                            Show ${draftItems.length - 1} more draft${draftItems.length - 1 > 1 ? 's' : ''}
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }
+                        return '';
+                    })()}
+
                     ${(() => {
                         // COMPLETE VOTING SECTION
                         // Identify contests and mergers where user has partial votes
@@ -10726,6 +11167,10 @@
                                 const hasVotedAll = votedImageCount === totalImageCount && totalImageCount > 0;
                                 const hasVotedSome = votedImageCount > 0 && votedImageCount < totalImageCount;
                                 const hasVotedNone = votedImageCount === 0;
+                                const autosaveKey = `contest_${contest.id}`;
+                                const autosaves = state.userAutosavedVotes[autosaveKey] || {};
+                                const autosaveCount = Object.keys(autosaves).length;
+                                const hasAutosaves = autosaveCount > 0 && !hasVotedAll;
                             const canDelete = canDeleteContest(contest);
                             const isBanned = state.bannedUsers.includes(state.user.id);
                             const createdDate = formatDate(contest.createdAt);
@@ -10796,6 +11241,19 @@
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
                                                 class="flex-[1.5] bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                            >
+                                                View Results
+                                            </button>
+                                        ` : hasAutosaves ? `
+                                            <button
+                                                onclick='continueVotingDraft("${contest.id}", "contest")'
+                                                class="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-2 rounded-lg font-semibold hover:from-orange-600 hover:to-orange-700 transition shadow-md text-sm"
+                                            >
+                                                Continue Draft (${autosaveCount}/${totalImageCount})
+                                            </button>
+                                            <button
+                                                onclick='viewResults(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
                                             </button>
@@ -10879,6 +11337,11 @@
             const hasVotedSome = (fullyVotedContests.length > 0 || partiallyVotedContests.length > 0) && !hasVotedAll;
             const hasVotedNone = fullyVotedContests.length === 0 && partiallyVotedContests.length === 0;
 
+            const mergerAutosaveKey = `merger_${merger.id}`;
+            const mergerAutosaves = state.userAutosavedVotes[mergerAutosaveKey] || {};
+            const mergerAutosaveCount = Object.keys(mergerAutosaves).length;
+            const hasMergerAutosaves = mergerAutosaveCount > 0 && !hasVotedAll;
+
             const isBanned = state.bannedUsers.includes(state.user.id);
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
@@ -10947,6 +11410,19 @@
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
                                 class="flex-[1.5] bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
+                        ` : hasMergerAutosaves ? `
+                            <button
+                                onclick='continueVotingDraft("${merger.id}", "merger")'
+                                class="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-2 rounded-lg font-semibold hover:from-orange-600 hover:to-orange-700 transition shadow-md text-sm"
+                            >
+                                Continue Draft (${mergerAutosaveCount}/${totalImages})
+                            </button>
+                            <button
+                                onclick='viewMergerResults("${merger.id}")'
+                                class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
@@ -13725,6 +14201,16 @@
                 return content;
             }
 
+            // Handle full-screen "Compare all" view for Average tab (same as contest renderResults)
+            if (state.resultsView === 'byVoter' && state.averageTabCompareAll) {
+                const content = renderAverageTabCompareAll();
+                // Restore original state
+                state.results = originalResults;
+                state.contestVoters = originalVoters;
+                state.currentContest = originalContest;
+                return content;
+            }
+
             const baseSize = 150;
             const imageSize = Math.max(30, Math.min(500, Math.floor(baseSize * (state.imageScale / 100))));
             const baseFontSize = 12;
@@ -14017,6 +14503,13 @@
         window.executeDeleteExtract = executeDeleteExtract;
         window.toggleDarkTheme = toggleDarkTheme;
         window.loadActivityLogs = loadActivityLogs;
+        window.loadAllUserAutosaves = loadAllUserAutosaves;
+        window.continueVotingDraft = continueVotingDraft;
+        window.confirmResumeDraft = confirmResumeDraft;
+        window.confirmDiscardDraft = confirmDiscardDraft;
+        window.cancelDiscardDraft = cancelDiscardDraft;
+        window.executeDiscardDraft = executeDiscardDraft;
+        window.toggleAutosaveDraftSection = toggleAutosaveDraftSection;
         // Results tab enhancements
         window.toggleSection = toggleSection;
         window.toggleUserFilterDropdown = toggleUserFilterDropdown;
@@ -14150,6 +14643,7 @@
 
             if (state.user) {
                 await loadUserVotes();
+                await loadAllUserAutosaves();
             }
 
             // Parse URL search parameter
