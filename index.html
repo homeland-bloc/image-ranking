@@ -4229,14 +4229,15 @@
             render();
         }
 
-        // Go back to the resume modal from the discard confirmation
+        // Go back to the resume modal from the discard confirmation (or just close if triggered from voting page)
         function cancelDiscardDraft() {
-            if (!state.pendingDraftContext) {
+            if (!state.pendingDraftContext || state.pendingDraftContext.fromVoting) {
+                state.pendingDraftContext = null;
                 closeModal();
                 return;
             }
             const { itemId, itemType } = state.pendingDraftContext;
-            // Re-show the resume modal
+            // Re-show the resume modal (home screen flow only)
             continueVotingDraft(itemId, itemType);
         }
 
@@ -4280,7 +4281,7 @@
             else if (type === 'merger') item = state.mergers.find(m => m.id === id);
             if (!item) return;
 
-            state.pendingDraftContext = { itemId: id, itemType: type, item };
+            state.pendingDraftContext = { itemId: id, itemType: type, item, fromVoting: true };
             state.modal = {
                 icon: '\uD83D\uDDD1\uFE0F',
                 message: `Discard your draft? This will clear ${totalCount} in-progress vote${totalCount !== 1 ? 's' : ''} and start fresh.\n\nThis cannot be undone.`,
@@ -4308,7 +4309,7 @@
             render();
         }
 
-        // Render the autosave status bar shown at the bottom of the voting UI
+        // Render the autosave status bar shown above the voting section
         function renderAutosaveStatusBar() {
             if (!state.autosaveContext.type || !state.autosaveContext.id) return '';
             const ctxKey = `${state.autosaveContext.type}_${state.autosaveContext.id}`;
@@ -4322,34 +4323,34 @@
             } else if (hasAnySaved) {
                 statusText = `💾 ${savedCount} of ${totalCount} vote${savedCount !== 1 ? 's' : ''} auto-saved`;
             } else {
-                statusText = '💾 Votes will be auto-saved a few seconds after each vote';
+                statusText = '💾 Votes will be auto-saved after each vote';
             }
 
             return `
-                <div class="bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-3 py-2.5">
-                    <div class="flex items-center justify-center gap-2 mb-1.5">
+                <div class="bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-700 rounded-lg px-3 py-2 mb-3">
+                    <div class="flex items-center gap-2">
+                        <p class="text-xs text-amber-800 dark:text-amber-300 flex-1 min-w-0">${statusText}</p>
                         <button
                             onclick="manualSaveVotes()"
-                            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/70 border border-green-300 dark:border-green-700 transition"
+                            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/70 border border-green-300 dark:border-green-700 transition flex-shrink-0"
                             title="Save all current votes as a draft right now"
                         >
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
                             </svg>
                             Save now
                         </button>
                         <button
                             onclick="discardCurrentDraftFromVoting()"
-                            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-300 dark:border-red-700 transition"
+                            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-300 dark:border-red-700 transition flex-shrink-0"
                             title="Discard saved draft and start fresh"
                         >
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                             </svg>
                             Discard draft
                         </button>
                     </div>
-                    <p class="text-center text-xs text-gray-500 dark:text-gray-400 leading-tight">${statusText}</p>
                 </div>
             `;
         }
@@ -10243,7 +10244,7 @@
                             const displayItems = state.isAutosaveDraftExpanded ? draftItems : draftItems.slice(0, 1);
                             return `
                                 <div class="mb-4">
-                                    <div class="bg-gradient-to-r from-orange-400 to-orange-500 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
+                                    <div class="bg-gradient-to-r from-orange-400 to-orange-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-3 flex-1">
                                                 <button
@@ -11348,15 +11349,12 @@
                                                 View Results
                                             </button>
                                         ` : hasAutosaves ? `
-                                            <div class="flex-1 flex flex-col gap-0.5">
-                                                <button
-                                                    onclick='continueVotingDraft("${contest.id}", "contest")'
-                                                    class="w-full bg-gradient-to-r from-orange-400 to-orange-500 text-white py-2 rounded-lg font-semibold hover:from-orange-500 hover:to-orange-600 transition shadow-md text-sm"
-                                                >
-                                                    Continue Draft
-                                                </button>
-                                                <span class="text-center text-xs text-orange-600 font-medium">${autosaveCount} of ${totalImageCount} votes saved</span>
-                                            </div>
+                                            <button
+                                                onclick='continueVotingDraft("${contest.id}", "contest")'
+                                                class="flex-1 bg-gradient-to-r from-orange-400 to-orange-600 text-white py-2 rounded-lg font-semibold hover:from-orange-500 hover:to-orange-700 transition shadow-md text-sm"
+                                            >
+                                                Continue Draft
+                                            </button>
                                             <button
                                                 onclick='viewResults(${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
@@ -11520,15 +11518,12 @@
                                 View Results
                             </button>
                         ` : hasMergerAutosaves ? `
-                            <div class="flex-1 flex flex-col gap-0.5">
-                                <button
-                                    onclick='continueVotingDraft("${merger.id}", "merger")'
-                                    class="w-full bg-gradient-to-r from-orange-400 to-orange-500 text-white py-2 rounded-lg font-semibold hover:from-orange-500 hover:to-orange-600 transition shadow-md text-sm"
-                                >
-                                    Continue Draft
-                                </button>
-                                <span class="text-center text-xs text-orange-600 font-medium">${mergerAutosaveCount} of ${totalImages} votes saved</span>
-                            </div>
+                            <button
+                                onclick='continueVotingDraft("${merger.id}", "merger")'
+                                class="flex-1 bg-gradient-to-r from-orange-400 to-orange-600 text-white py-2 rounded-lg font-semibold hover:from-orange-500 hover:to-orange-700 transition shadow-md text-sm"
+                            >
+                                Continue Draft
+                            </button>
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
@@ -11942,6 +11937,7 @@
                             💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
                         </p>
                     </div>
+                    ${renderAutosaveStatusBar()}
                     <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header with progress -->
                         <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
@@ -12085,7 +12081,6 @@
 
                 <!-- Fixed bottom voting panel -->
                 <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t-2 border-gray-300 dark:border-gray-700 shadow-2xl z-50">
-                    ${renderAutosaveStatusBar()}
                     <div class="max-w-4xl mx-auto px-4 py-4">
                         <!-- Mobile layout: stacked -->
                         <div class="flex flex-col sm:hidden items-center justify-center gap-4">
@@ -12216,6 +12211,7 @@
                             💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
                         </p>
                     </div>
+                    ${renderAutosaveStatusBar()}
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <div class="bg-gray-200 h-3 flex gap-1 p-1">
                             ${Array.from({ length: segmentCount }, (_, segmentIdx) => {
@@ -12329,7 +12325,6 @@
                                 </button>
                             </div>
                         </div>
-                        ${renderAutosaveStatusBar()}
                     </div>
                 </div>
             `;
