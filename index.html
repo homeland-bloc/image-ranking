@@ -4229,14 +4229,15 @@
             render();
         }
 
-        // Go back to the resume modal from the discard confirmation
+        // Go back to the resume modal from the discard confirmation (or just close if triggered from voting page)
         function cancelDiscardDraft() {
-            if (!state.pendingDraftContext) {
+            if (!state.pendingDraftContext || state.pendingDraftContext.fromVoting) {
+                state.pendingDraftContext = null;
                 closeModal();
                 return;
             }
             const { itemId, itemType } = state.pendingDraftContext;
-            // Re-show the resume modal
+            // Re-show the resume modal (home screen flow only)
             continueVotingDraft(itemId, itemType);
         }
 
@@ -4280,7 +4281,7 @@
             else if (type === 'merger') item = state.mergers.find(m => m.id === id);
             if (!item) return;
 
-            state.pendingDraftContext = { itemId: id, itemType: type, item };
+            state.pendingDraftContext = { itemId: id, itemType: type, item, fromVoting: true };
             state.modal = {
                 icon: '\uD83D\uDDD1\uFE0F',
                 message: `Discard your draft? This will clear ${totalCount} in-progress vote${totalCount !== 1 ? 's' : ''} and start fresh.\n\nThis cannot be undone.`,
