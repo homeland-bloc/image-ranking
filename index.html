@@ -1997,12 +1997,14 @@
             }
         }
 
-        function confirmCancelVoting() {
+        async function confirmCancelVoting() {
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
-            // Cancel pending auto-save timer but keep autosaves in DB for later resume
+            // Flush any pending debounced autosave before leaving, so the home screen
+            // sees the true vote count when showing the resume/discard draft modal.
             clearTimeout(autoSaveTimer);
+            await performAutoSave();
             state.autosaveContext = { type: null, id: null };
             state.view = 'home';
             state.currentContest = null;
@@ -7173,10 +7175,15 @@
             render();
         }
 
-        function confirmBackToHome() {
+        async function confirmBackToHome() {
             state.modalProcessing = true;
             state.modal = null;
             document.body.classList.remove('modal-open');
+
+            // Flush any pending debounced autosave before leaving, so the home screen
+            // sees the true vote count when showing the resume/discard draft modal.
+            clearTimeout(autoSaveTimer);
+            await performAutoSave();
 
             // Reset all contest-related state with null checks
             state.view = 'home';
