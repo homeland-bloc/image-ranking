@@ -3965,17 +3965,10 @@
             if (!state.user) return;
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
-
-                const votes = await response.json();
+                const votes = await fetchAllVotesPaginated(
+                    `user_id=eq.${state.user.id}`,
+                    'contest_id,image_id,score'
+                );
 
                 state.userVotedContests = {};
                 votes.forEach(vote => {
@@ -4727,8 +4720,21 @@
         function loadImagesWithTracking(images) {
             return new Promise((resolve) => {
                 const MAX_TIMEOUT = 10000; // 10 seconds max timeout
+                const CONCURRENCY = 6; // Max concurrent image loads
                 let loadedCount = 0;
                 let hasCompleted = false;
+
+                // Throttle renders using requestAnimationFrame to avoid main-thread thrashing
+                let pendingRenderFrame = false;
+                const scheduleRender = () => {
+                    if (!pendingRenderFrame) {
+                        pendingRenderFrame = true;
+                        requestAnimationFrame(() => {
+                            pendingRenderFrame = false;
+                            render();
+                        });
+                    }
+                };
 
                 // Timeout fallback
                 const timeoutId = setTimeout(() => {
@@ -4749,8 +4755,7 @@
                     return;
                 }
 
-                // Create image load promises
-                const imagePromises = images.map((img, index) => {
+                const loadImage = (img) => {
                     return new Promise((resolveImg) => {
                         const imageObj = new Image();
 
@@ -4758,7 +4763,7 @@
                             if (!hasCompleted) {
                                 loadedCount++;
                                 state.multiModeLoadedImages = loadedCount;
-                                render();
+                                scheduleRender();
                                 resolveImg();
                             }
                         };
@@ -4767,10 +4772,15 @@
                         imageObj.onerror = onLoadOrError; // Count errors as loaded to prevent hanging
                         imageObj.src = img.url;
                     });
-                });
+                };
 
-                // Wait for all images to load
-                Promise.all(imagePromises).then(() => {
+                // Process images in batches of CONCURRENCY to avoid exhausting connection limits
+                const processInBatches = async () => {
+                    for (let i = 0; i < images.length; i += CONCURRENCY) {
+                        if (hasCompleted) break;
+                        const batch = images.slice(i, i + CONCURRENCY);
+                        await Promise.all(batch.map(loadImage));
+                    }
                     if (!hasCompleted) {
                         hasCompleted = true;
                         clearTimeout(timeoutId);
@@ -4778,7 +4788,9 @@
                         render();
                         resolve();
                     }
-                });
+                };
+
+                processInBatches();
             });
         }
 
@@ -4794,13 +4806,21 @@
             // Set auto-save context (only for regular contests, not extracts)
             if (!contest.isExtract) {
                 state.autosaveContext = { type: 'contest', id: contest.id };
-                // Pre-populate votes from autosaves when resuming a draft
+                const autosaveKey = `contest_${contest.id}`;
                 if (loadAutosaves) {
-                    const autosaveKey = `contest_${contest.id}`;
+                    // Pre-populate votes from autosaves when resuming a draft
                     const autosaves = state.userAutosavedVotes[autosaveKey] || {};
                     Object.entries(autosaves).forEach(([imgId, score]) => {
                         state.votes[parseInt(imgId)] = score;
                     });
+                } else {
+                    // If the user clicked "Start Voting" but autosaves exist, prompt them
+                    const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
+                    if (Object.keys(existingAutosaves).length > 0) {
+                        state.view = 'home';
+                        continueVotingDraft(contest.id, 'contest');
+                        return;
+                    }
                 }
             } else {
                 state.autosaveContext = { type: null, id: null };
@@ -4808,7 +4828,7 @@
 
             // Load voting mode preference from localStorage, default to 'multi'
             const savedVotingMode = localStorage.getItem('peony_voting_mode');
-            state.votingMode = savedVotingMode || 'multi';
+            state.votingMode = savedVotingMode || 'single';
 
             // Clear merger context (we're voting on a single contest)
             state.currentMergerId = null;
@@ -5193,7 +5213,7 @@
 
                 // Load voting mode preference from localStorage, default to 'multi'
                 const savedVotingMode = localStorage.getItem('peony_voting_mode');
-                state.votingMode = savedVotingMode || 'multi';
+                state.votingMode = savedVotingMode || 'single';
 
                 // Set currentContest to null to indicate merger voting mode
                 state.currentContest = null;
@@ -5809,7 +5829,7 @@
 
             // Load voting mode preference from localStorage, default to 'multi'
             const savedVotingMode = localStorage.getItem('peony_voting_mode');
-            state.votingMode = savedVotingMode || 'multi';
+            state.votingMode = savedVotingMode || 'single';
 
             // Set currentContest to null to indicate merger voting mode
             state.currentContest = null;
@@ -10210,9 +10230,11 @@
                             const autosaves = state.userAutosavedVotes[autosaveKey] || {};
                             const autosaveCount = Object.keys(autosaves).length;
                             if (autosaveCount === 0) return;
-                            // Don't show if user has fully voted (submitted all)
+                            // Don't show if user has fully voted (submitted all current images)
                             const userVotes = state.userVotedContests[contest.id] || {};
-                            const votedAll = Object.keys(userVotes).length === contest.images.length && contest.images.length > 0;
+                            const contestImageIds = new Set(contest.images.map(img => img.id));
+                            const votedImages = Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                            const votedAll = contestImageIds.size > 0 && votedImages === contestImageIds.size;
                             if (votedAll) return;
                             draftItems.push({ item: contest, type: 'contest', autosaveCount, totalImages: contest.images.length });
                         });
@@ -10227,7 +10249,9 @@
                             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
                             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
                             const totalVoted = mergedContests.reduce((sum, c) => {
-                                return sum + Object.keys(state.userVotedContests[c.id] || {}).length;
+                                const cVotes = state.userVotedContests[c.id] || {};
+                                const cImageIds = new Set(c.images.map(img => img.id));
+                                return sum + Object.keys(cVotes).filter(id => cImageIds.has(parseInt(id))).length;
                             }, 0);
                             if (totalVoted === totalImages && totalImages > 0) return;
                             draftItems.push({ item: merger, type: 'merger', autosaveCount, totalImages });
@@ -10294,8 +10318,9 @@
                             const userVotes = state.userVotedContests[contest.id];
                             if (userVotes && Object.keys(userVotes).length > 0) {
                                 const totalImages = contest.images.length;
-                                const votedImages = Object.keys(userVotes).length;
-                                if (votedImages < totalImages) {
+                                const contestImageIds = new Set(contest.images.map(img => img.id));
+                                const votedImages = Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                                if (votedImages > 0 && votedImages < totalImages) {
                                     // User has partial votes
                                     itemsToComplete.push({ item: contest, type: 'contest', votedImages, totalImages });
                                 }
@@ -10315,7 +10340,8 @@
                                     totalImages += contest.images.length;
                                     const userVotes = state.userVotedContests[contestId];
                                     if (userVotes) {
-                                        votedImages += Object.keys(userVotes).length;
+                                        const contestImageIds = new Set(contest.images.map(img => img.id));
+                                        votedImages += Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
                                     }
                                 }
                             });
