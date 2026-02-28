@@ -5051,7 +5051,17 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            // Clear any pending auto-save and delete existing autosaves (starting fresh)
+            // If an autosave draft exists, prompt the user instead of silently discarding it
+            if (state.currentContest && !state.currentContest.isExtract) {
+                const autosaveKey = `contest_${state.currentContest.id}`;
+                const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
+                if (Object.keys(existingAutosaves).length > 0) {
+                    continueVotingDraft(state.currentContest.id, 'contest');
+                    return;
+                }
+            }
+
+            // No draft — proceed with fresh start
             clearTimeout(autoSaveTimer);
             if (state.currentContest && !state.currentContest.isExtract) {
                 deleteAutosaves('contest', state.currentContest.id);
@@ -5152,7 +5162,17 @@
             state.modal = null;
             document.body.classList.remove('modal-open');
 
-            // Clear any pending auto-save and delete existing autosaves (starting fresh)
+            // If an autosave draft exists, prompt the user instead of silently discarding it
+            if (mergerId) {
+                const autosaveKey = `merger_${mergerId}`;
+                const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
+                if (Object.keys(existingAutosaves).length > 0) {
+                    continueVotingDraft(mergerId, 'merger');
+                    return;
+                }
+            }
+
+            // No draft — proceed with fresh start
             clearTimeout(autoSaveTimer);
             if (mergerId) await deleteAutosaves('merger', mergerId);
 
