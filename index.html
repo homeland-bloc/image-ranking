@@ -2773,6 +2773,18 @@
             return allVotes;
         }
 
+        // Returns true when there are locally-stored draft votes for the given autosave key.
+        function hasAutosaveDraft(autosaveKey) {
+            const drafts = state.userAutosavedVotes[autosaveKey] || {};
+            return Object.keys(drafts).length > 0;
+        }
+
+        // Counts how many keys in userVotes correspond to images that currently belong to a contest.
+        // imageIdSet is a Set<number> of the contest's current image IDs.
+        function countValidVotes(userVotes, imageIdSet) {
+            return Object.keys(userVotes).filter(id => imageIdSet.has(parseInt(id))).length;
+        }
+
         async function showContestInfoModal(item, itemType) {
             setLoading('Loading information...');
             try {
@@ -4818,8 +4830,7 @@
                     });
                 } else {
                     // If the user clicked "Start Voting" but autosaves exist, prompt them
-                    const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
-                    if (Object.keys(existingAutosaves).length > 0) {
+                    if (hasAutosaveDraft(autosaveKey)) {
                         state.view = 'home';
                         continueVotingDraft(contest.id, 'contest');
                         return;
@@ -5057,8 +5068,7 @@
             // If an autosave draft exists, prompt the user instead of silently discarding it
             if (state.currentContest && !state.currentContest.isExtract) {
                 const autosaveKey = `contest_${state.currentContest.id}`;
-                const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
-                if (Object.keys(existingAutosaves).length > 0) {
+                if (hasAutosaveDraft(autosaveKey)) {
                     continueVotingDraft(state.currentContest.id, 'contest');
                     return;
                 }
@@ -5168,8 +5178,7 @@
             // If an autosave draft exists, prompt the user instead of silently discarding it
             if (mergerId) {
                 const autosaveKey = `merger_${mergerId}`;
-                const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
-                if (Object.keys(existingAutosaves).length > 0) {
+                if (hasAutosaveDraft(autosaveKey)) {
                     continueVotingDraft(mergerId, 'merger');
                     return;
                 }
@@ -10347,6 +10356,11 @@
             });
 
             const isBanned = state.bannedUsers.includes(state.user.id);
+            // Precompute image-ID sets once per render so the draft/completion loops don't
+            // rebuild a Set for every contest on every render call.
+            const contestImageIdSets = new Map(
+                state.contests.map(c => [c.id, new Set(c.images.map(img => img.id))])
+            );
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
@@ -10363,8 +10377,8 @@
                             if (autosaveCount === 0) return;
                             // Don't show if user has fully voted (submitted all current images)
                             const userVotes = state.userVotedContests[contest.id] || {};
-                            const contestImageIds = new Set(contest.images.map(img => img.id));
-                            const votedImages = Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                            const contestImageIds = contestImageIdSets.get(contest.id);
+                            const votedImages = countValidVotes(userVotes, contestImageIds);
                             const votedAll = contestImageIds.size > 0 && votedImages === contestImageIds.size;
                             if (votedAll) return;
                             draftItems.push({ item: contest, type: 'contest', autosaveCount, totalImages: contest.images.length });
@@ -10381,8 +10395,7 @@
                             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
                             const totalVoted = mergedContests.reduce((sum, c) => {
                                 const cVotes = state.userVotedContests[c.id] || {};
-                                const cImageIds = new Set(c.images.map(img => img.id));
-                                return sum + Object.keys(cVotes).filter(id => cImageIds.has(parseInt(id))).length;
+                                return sum + countValidVotes(cVotes, contestImageIdSets.get(c.id));
                             }, 0);
                             if (totalVoted === totalImages && totalImages > 0) return;
                             draftItems.push({ item: merger, type: 'merger', autosaveCount, totalImages });
@@ -10449,8 +10462,7 @@
                             const userVotes = state.userVotedContests[contest.id];
                             if (userVotes && Object.keys(userVotes).length > 0) {
                                 const totalImages = contest.images.length;
-                                const contestImageIds = new Set(contest.images.map(img => img.id));
-                                const votedImages = Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                                const votedImages = countValidVotes(userVotes, contestImageIdSets.get(contest.id));
                                 if (votedImages > 0 && votedImages < totalImages) {
                                     // User has partial votes
                                     itemsToComplete.push({ item: contest, type: 'contest', votedImages, totalImages });
@@ -10471,8 +10483,7 @@
                                     totalImages += contest.images.length;
                                     const userVotes = state.userVotedContests[contestId];
                                     if (userVotes) {
-                                        const contestImageIds = new Set(contest.images.map(img => img.id));
-                                        votedImages += Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                                        votedImages += countValidVotes(userVotes, contestImageIdSets.get(contest.id));
                                     }
                                 }
                             });
