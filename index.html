@@ -963,6 +963,7 @@
             view: 'home',
             viewingUserId: null, // User ID being viewed in profile
             showUserProfileModal: false, // Show user profile modal
+            globalSimilarityResults: {}, // Cache for global similarity results per userId ('loading' | {results} | {tooFewVotes} | {error})
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -2770,6 +2771,18 @@
             }
 
             return allVotes;
+        }
+
+        // Returns true when there are locally-stored draft votes for the given autosave key.
+        function hasAutosaveDraft(autosaveKey) {
+            const drafts = state.userAutosavedVotes[autosaveKey] || {};
+            return Object.keys(drafts).length > 0;
+        }
+
+        // Counts how many keys in userVotes correspond to images that currently belong to a contest.
+        // imageIdSet is a Set<number> of the contest's current image IDs.
+        function countValidVotes(userVotes, imageIdSet) {
+            return Object.keys(userVotes).filter(id => imageIdSet.has(parseInt(id))).length;
         }
 
         async function showContestInfoModal(item, itemType) {
@@ -4817,8 +4830,7 @@
                     });
                 } else {
                     // If the user clicked "Start Voting" but autosaves exist, prompt them
-                    const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
-                    if (Object.keys(existingAutosaves).length > 0) {
+                    if (hasAutosaveDraft(autosaveKey)) {
                         state.view = 'home';
                         continueVotingDraft(contest.id, 'contest');
                         return;
@@ -5056,8 +5068,7 @@
             // If an autosave draft exists, prompt the user instead of silently discarding it
             if (state.currentContest && !state.currentContest.isExtract) {
                 const autosaveKey = `contest_${state.currentContest.id}`;
-                const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
-                if (Object.keys(existingAutosaves).length > 0) {
+                if (hasAutosaveDraft(autosaveKey)) {
                     continueVotingDraft(state.currentContest.id, 'contest');
                     return;
                 }
@@ -5167,8 +5178,7 @@
             // If an autosave draft exists, prompt the user instead of silently discarding it
             if (mergerId) {
                 const autosaveKey = `merger_${mergerId}`;
-                const existingAutosaves = state.userAutosavedVotes[autosaveKey] || {};
-                if (Object.keys(existingAutosaves).length > 0) {
+                if (hasAutosaveDraft(autosaveKey)) {
                     continueVotingDraft(mergerId, 'merger');
                     return;
                 }
@@ -8987,6 +8997,109 @@
             render();
         }
 
+        async function compareGlobally(userId) {
+            // Return immediately if already cached (results or loading)
+            const cached = state.globalSimilarityResults[userId];
+            if (cached && cached !== 'error') return;
+
+            state.globalSimilarityResults[userId] = 'loading';
+            render();
+
+            try {
+                // Ensure allUsers is loaded so we can look up names/avatars
+                if (!state.allUsers || state.allUsers.length === 0) {
+                    const usersResp = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
+                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Cache-Control': 'no-cache' }
+                    });
+                    if (usersResp.ok) {
+                        const users = await usersResp.json();
+                        state.allUsers = users.map(u => ({ id: u.id, username: u.username, avatar: u.avatar, isBanned: u.is_banned || false }));
+                    }
+                }
+
+                // Fetch all votes app-wide (paginated to beat 2000-row limit)
+                const allVotes = await fetchAllVotesPaginated('', 'user_id,image_id,score,contest_id');
+
+                // Group votes by user_id
+                const votesByUser = {};
+                allVotes.forEach(v => {
+                    if (!votesByUser[v.user_id]) votesByUser[v.user_id] = [];
+                    votesByUser[v.user_id].push(v);
+                });
+
+                const targetVotes = votesByUser[userId] || [];
+
+                // Need at least 50 votes to produce meaningful comparisons
+                if (targetVotes.length < 50) {
+                    state.globalSimilarityResults[userId] = { tooFewVotes: true };
+                    render();
+                    return;
+                }
+
+                // Build target user's vote map: image_id -> score, and contest set
+                const targetVoteMap = {};
+                const targetContestIds = new Set();
+                targetVotes.forEach(v => {
+                    targetVoteMap[v.image_id] = v.score;
+                    targetContestIds.add(v.contest_id);
+                });
+
+                const results = [];
+
+                for (const [otherUserId, otherVotes] of Object.entries(votesByUser)) {
+                    if (otherUserId === userId) continue;
+                    if (state.bannedUsers.includes(otherUserId)) continue;
+
+                    const userInfo = state.allUsers.find(u => u.id === otherUserId);
+                    if (!userInfo || userInfo.isBanned) continue;
+
+                    let exact = 0, close = 0, wide = 0;
+                    const sharedContestIds = new Set();
+
+                    otherVotes.forEach(v => {
+                        if (targetVoteMap[v.image_id] !== undefined) {
+                            const diff = Math.abs(targetVoteMap[v.image_id] - v.score);
+                            if (diff === 0) exact++;
+                            else if (diff === 1) close++;
+                            else wide++;
+                            sharedContestIds.add(v.contest_id);
+                        }
+                    });
+
+                    const sharedCount = exact + close + wide;
+                    if (sharedCount === 0) continue;
+
+                    const exactPct = (exact / sharedCount) * 100;
+                    const closePct = (close / sharedCount) * 100;
+                    const widePct = (wide / sharedCount) * 100;
+                    // Unified similarity: exact + half of close
+                    const similarity = exactPct + (closePct / 2);
+                    const lowConfidence = sharedCount < 50 || sharedContestIds.size < 5;
+
+                    results.push({
+                        userId: otherUserId,
+                        username: userInfo.username,
+                        avatar: userInfo.avatar,
+                        similarity: similarity.toFixed(1),
+                        exactPct: exactPct.toFixed(0),
+                        closePct: closePct.toFixed(0),
+                        widePct: widePct.toFixed(0),
+                        sharedCount,
+                        sharedContests: sharedContestIds.size,
+                        lowConfidence
+                    });
+                }
+
+                results.sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity));
+                state.globalSimilarityResults[userId] = { results };
+            } catch (err) {
+                console.error('Error computing global similarity:', err);
+                state.globalSimilarityResults[userId] = { error: true };
+            }
+
+            render();
+        }
+
         async function banUser(userId, banReason) {
             try {
                 // Update database with ban status and reason
@@ -10243,6 +10356,11 @@
             });
 
             const isBanned = state.bannedUsers.includes(state.user.id);
+            // Precompute image-ID sets once per render so the draft/completion loops don't
+            // rebuild a Set for every contest on every render call.
+            const contestImageIdSets = new Map(
+                state.contests.map(c => [c.id, new Set(c.images.map(img => img.id))])
+            );
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
@@ -10259,8 +10377,8 @@
                             if (autosaveCount === 0) return;
                             // Don't show if user has fully voted (submitted all current images)
                             const userVotes = state.userVotedContests[contest.id] || {};
-                            const contestImageIds = new Set(contest.images.map(img => img.id));
-                            const votedImages = Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                            const contestImageIds = contestImageIdSets.get(contest.id);
+                            const votedImages = countValidVotes(userVotes, contestImageIds);
                             const votedAll = contestImageIds.size > 0 && votedImages === contestImageIds.size;
                             if (votedAll) return;
                             draftItems.push({ item: contest, type: 'contest', autosaveCount, totalImages: contest.images.length });
@@ -10277,8 +10395,7 @@
                             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
                             const totalVoted = mergedContests.reduce((sum, c) => {
                                 const cVotes = state.userVotedContests[c.id] || {};
-                                const cImageIds = new Set(c.images.map(img => img.id));
-                                return sum + Object.keys(cVotes).filter(id => cImageIds.has(parseInt(id))).length;
+                                return sum + countValidVotes(cVotes, contestImageIdSets.get(c.id));
                             }, 0);
                             if (totalVoted === totalImages && totalImages > 0) return;
                             draftItems.push({ item: merger, type: 'merger', autosaveCount, totalImages });
@@ -10345,8 +10462,7 @@
                             const userVotes = state.userVotedContests[contest.id];
                             if (userVotes && Object.keys(userVotes).length > 0) {
                                 const totalImages = contest.images.length;
-                                const contestImageIds = new Set(contest.images.map(img => img.id));
-                                const votedImages = Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                                const votedImages = countValidVotes(userVotes, contestImageIdSets.get(contest.id));
                                 if (votedImages > 0 && votedImages < totalImages) {
                                     // User has partial votes
                                     itemsToComplete.push({ item: contest, type: 'contest', votedImages, totalImages });
@@ -10367,8 +10483,7 @@
                                     totalImages += contest.images.length;
                                     const userVotes = state.userVotedContests[contestId];
                                     if (userVotes) {
-                                        const contestImageIds = new Set(contest.images.map(img => img.id));
-                                        votedImages += Object.keys(userVotes).filter(id => contestImageIds.has(parseInt(id))).length;
+                                        votedImages += countValidVotes(userVotes, contestImageIdSets.get(contest.id));
                                     }
                                 }
                             });
@@ -11222,6 +11337,52 @@
             const isBanned = state.bannedUsers.includes(userId);
             const isCurrentUser = state.user && state.user.id === userId;
 
+            // Pre-render global similarity section
+            const gsResult = state.globalSimilarityResults[userId];
+            let globalSimilaritySection = '';
+            if (gsResult === 'loading') {
+                globalSimilaritySection = `
+                    <div class="mb-6 p-4 bg-gray-50 rounded-xl text-center text-sm text-gray-500 animate-pulse">
+                        Computing global similarity across all voters...
+                    </div>`;
+            } else if (gsResult && gsResult.tooFewVotes) {
+                globalSimilaritySection = `
+                    <div class="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-800">
+                        ⚠️ Not enough voting history to compare globally. (Minimum 50 image votes required.)
+                    </div>`;
+            } else if (gsResult && gsResult.error) {
+                globalSimilaritySection = `
+                    <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800">
+                        Failed to compute global similarity. <button onclick="delete state.globalSimilarityResults['${userId}']; compareGlobally('${userId}')" class="underline font-medium">Try again</button>
+                    </div>`;
+            } else if (gsResult && gsResult.results) {
+                const rows = gsResult.results.length === 0
+                    ? `<p class="text-sm text-gray-500 text-center py-4">No other users share enough votes to compare.</p>`
+                    : gsResult.results.map((r, i) => {
+                        const simVal = parseFloat(r.similarity);
+                        const simColor = simVal >= 65 ? '#16a34a' : simVal >= 40 ? '#b45309' : '#dc2626';
+                        const simBg   = simVal >= 65 ? '#dcfce7' : simVal >= 40 ? '#fef3c7' : '#fee2e2';
+                        return `
+                            <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer" onclick="viewUserProfile('${r.userId}')">
+                                <span class="text-xs text-gray-400 w-5 shrink-0 text-right">${i + 1}.</span>
+                                <img src="${r.avatar}" class="w-7 h-7 rounded-full shrink-0" />
+                                <span class="font-medium text-sm flex-1 min-w-0 truncate">${r.username}</span>
+                                <span class="text-xs font-bold px-2 py-0.5 rounded shrink-0" style="background:${simBg};color:${simColor};">${r.similarity}%</span>
+                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#bbf7d0;color:#1f2937;" title="Exact">${r.exactPct}%E</span>
+                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fef08a;color:#1f2937;" title="Close (±1)">${r.closePct}%C</span>
+                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fecaca;color:#1f2937;" title="Wide (≥2)">${r.widePct}%W</span>
+                                <span class="text-xs text-gray-400 shrink-0">${r.sharedCount}v</span>
+                                ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 50 shared votes or fewer than 5 shared contests">⚠️</span>' : ''}
+                            </div>`;
+                    }).join('');
+                globalSimilaritySection = `
+                    <div class="mb-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-3">Global Similarity (${gsResult.results.length} users)</h3>
+                        <p class="text-xs text-gray-400 mb-2">Similarity = exact% + close%÷2 &nbsp;|&nbsp; E=Exact, C=Close(±1), W=Wide(≥2) &nbsp;|&nbsp; ⚠️ = low confidence</p>
+                        <div class="space-y-1.5 max-h-80 overflow-y-auto pr-1">${rows}</div>
+                    </div>`;
+            }
+
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeUserProfileModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden modal-content flex flex-col" onclick="event.stopPropagation()">
@@ -11245,12 +11406,17 @@
                                         Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'} •
                                         ${state.userProfileTotalVotes || 0} image${(state.userProfileTotalVotes || 0) !== 1 ? 's' : ''} voted on
                                     </p>
+                                    <button onclick="compareGlobally('${userId}')" class="mt-2 text-xs px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-full font-medium transition" ${gsResult === 'loading' ? 'disabled' : ''}>
+                                        ${gsResult === 'loading' ? 'Computing...' : 'Compare Globally 🌐'}
+                                    </button>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Scrollable content -->
                         <div class="flex-1 overflow-y-auto p-6">
+                            <!-- Global Similarity Results -->
+                            ${globalSimilaritySection}
                             <!-- Created Items Section -->
                             ${allCreatedItems.length > 0 ? `
                                 <div class="mb-6">
@@ -14656,6 +14822,7 @@
         window.toggleFolderExpanded = toggleFolderExpanded;
         window.viewUserProfile = viewUserProfile;
         window.closeUserProfileModal = closeUserProfileModal;
+        window.compareGlobally = compareGlobally;
         window.confirmDeleteMerger = confirmDeleteMerger;
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
