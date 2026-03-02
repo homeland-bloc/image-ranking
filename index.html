@@ -963,7 +963,13 @@
             view: 'home',
             viewingUserId: null, // User ID being viewed in profile
             showUserProfileModal: false, // Show user profile modal
+            adminUserListScroll: 0, // Saved scroll position of admin dashboard user list
             globalSimilarityResults: {}, // Cache for global similarity results per userId ('loading' | {results} | {tooFewVotes} | {error})
+            renameModal: null, // { itemId, itemType, name } when rename modal is open
+            showUserLeaderboard: false,
+            userLeaderboardData: null, // null | 'loading' | Array of user stat objects
+            leaderboardSortKey: 'totalVotes',
+            leaderboardSortDir: 'desc',
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -2973,6 +2979,7 @@
 
         function showBreakdownMerged(imageId) {
             state.showBreakdownModal = imageId;
+            document.body.classList.add('modal-open');
             render();
         }
 
@@ -8966,16 +8973,9 @@
                 }
             }
 
-            // Fetch user's voting history
+            // Fetch user's voting history (paginated to work past the 2000-row Supabase limit)
             try {
-                const votesResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&select=contest_id`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
-                });
-                const userVotes = await votesResponse.json();
+                const userVotes = await fetchAllVotesPaginated(`user_id=eq.${userId}`, 'contest_id');
 
                 // Store unique contest IDs this user has voted on
                 state.userProfileVotedContests = [...new Set(userVotes.map(v => v.contest_id))];
@@ -8990,11 +8990,15 @@
         }
 
         function closeUserProfileModal() {
+            const savedScroll = state.adminUserListScroll || 0;
             state.showUserProfileModal = false;
             state.viewingUserId = null;
             state.userProfileVotedContests = [];
             document.body.classList.remove('modal-open');
             render();
+            // Restore admin user list scroll position after re-render
+            const el = document.getElementById('admin-user-list');
+            if (el) el.scrollTop = savedScroll;
         }
 
         async function compareGlobally(userId) {
@@ -9098,6 +9102,197 @@
             }
 
             render();
+        }
+
+        function openRenameModal(itemId, itemType, currentName) {
+            state.renameModal = { itemId, itemType, name: currentName };
+            render();
+        }
+
+        function cancelRenameModal() {
+            state.renameModal = null;
+            render();
+        }
+
+        async function saveRename() {
+            const { itemId, itemType, name } = state.renameModal;
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            const table = itemType === 'contest' ? 'contests' : itemType === 'merger' ? 'mergers' : 'extracts';
+            const field = itemType === 'contest' ? 'title' : 'name';
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal',
+                    },
+                    body: JSON.stringify({ [field]: trimmed }),
+                });
+                if (!res.ok) throw new Error('PATCH failed');
+                // Update local state
+                if (itemType === 'contest') {
+                    const c = state.contests.find(x => x.id === itemId);
+                    if (c) c.title = trimmed;
+                } else if (itemType === 'merger') {
+                    const m = state.mergers.find(x => x.id === itemId);
+                    if (m) m.name = trimmed;
+                } else {
+                    const e = state.extracts.find(x => x.id === itemId);
+                    if (e) e.name = trimmed;
+                }
+                state.renameModal = null;
+                showToast('✅ Renamed successfully');
+            } catch (err) {
+                console.error('Rename failed:', err);
+                showToast('❌ Failed to rename. Please try again.');
+            }
+            render();
+        }
+
+        async function openUserLeaderboard() {
+            state.showUserDropdown = false;
+            state.showUserLeaderboard = true;
+            if (state.userLeaderboardData && state.userLeaderboardData !== 'loading') {
+                render();
+                return;
+            }
+            state.userLeaderboardData = 'loading';
+            render();
+            try {
+                const allVotes = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
+                // Build per-user stats
+                const statsMap = {};
+                allVotes.forEach(v => {
+                    if (!statsMap[v.user_id]) {
+                        statsMap[v.user_id] = { totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0} };
+                    }
+                    const s = statsMap[v.user_id];
+                    s.totalVotes++;
+                    if (v.contest_id) s.contestIds.add(v.contest_id);
+                    if (v.score >= 1 && v.score <= 5) s.scores[v.score]++;
+                });
+                // Merge with allUsers for display info
+                const rows = [];
+                for (const [userId, s] of Object.entries(statsMap)) {
+                    const userInfo = state.allUsers.find(u => u.id === userId);
+                    if (!userInfo) continue;
+                    const totalContests = s.contestIds.size;
+                    rows.push({
+                        userId,
+                        username: userInfo.username,
+                        avatar: userInfo.avatar,
+                        totalVotes: s.totalVotes,
+                        totalContests,
+                        score1: s.scores[1],
+                        score2: s.scores[2],
+                        score3: s.scores[3],
+                        score4: s.scores[4],
+                        score5: s.scores[5],
+                    });
+                }
+                state.userLeaderboardData = rows;
+            } catch (err) {
+                console.error('Leaderboard error:', err);
+                state.userLeaderboardData = null;
+                showToast('❌ Failed to load leaderboard');
+            }
+            render();
+        }
+
+        function closeUserLeaderboard() {
+            state.showUserLeaderboard = false;
+            render();
+        }
+
+        function setLeaderboardSort(key) {
+            if (state.leaderboardSortKey === key) {
+                state.leaderboardSortDir = state.leaderboardSortDir === 'desc' ? 'asc' : 'desc';
+            } else {
+                state.leaderboardSortKey = key;
+                state.leaderboardSortDir = 'desc';
+            }
+            render();
+        }
+
+        function renderUserLeaderboard() {
+            if (!state.showUserLeaderboard) return '';
+            const data = state.userLeaderboardData;
+            const sortKey = state.leaderboardSortKey;
+            const sortDir = state.leaderboardSortDir;
+
+            const sortArrow = (key) => {
+                if (sortKey !== key) return '<span class="text-gray-300 ml-1">↕</span>';
+                return sortDir === 'desc' ? '<span class="text-blue-500 ml-1">↓</span>' : '<span class="text-blue-500 ml-1">↑</span>';
+            };
+
+            const thClass = 'px-3 py-2 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap';
+
+            let bodyHtml = '';
+            if (data === 'loading') {
+                bodyHtml = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">Loading leaderboard data…</td></tr>';
+            } else if (!data) {
+                bodyHtml = '<tr><td colspan="8" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
+            } else {
+                const sorted = [...data].sort((a, b) => {
+                    if (sortKey === 'username') {
+                        return sortDir === 'asc' ? a.username.localeCompare(b.username) : b.username.localeCompare(a.username);
+                    }
+                    return sortDir === 'asc' ? a[sortKey] - b[sortKey] : b[sortKey] - a[sortKey];
+                });
+                bodyHtml = sorted.map((r, i) => `
+                    <tr class="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="viewUserProfile('${r.userId}'); closeUserLeaderboard();">
+                        <td class="px-3 py-2 text-xs text-gray-400 text-right">${i + 1}</td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center gap-2">
+                                <img src="${r.avatar}" class="w-6 h-6 rounded-full shrink-0" />
+                                <span class="text-sm font-medium text-gray-800 truncate max-w-[130px]">${r.username}</span>
+                            </div>
+                        </td>
+                        <td class="px-3 py-2 text-sm text-gray-700 text-right">${r.totalVotes.toLocaleString()}</td>
+                        <td class="px-3 py-2 text-sm text-gray-700 text-right">${r.totalContests.toLocaleString()}</td>
+                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#fecaca;color:#1f2937;">${r.score1}</span></td>
+                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#fed7aa;color:#1f2937;">${r.score2}</span></td>
+                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#fef08a;color:#1f2937;">${r.score3}</span></td>
+                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#bbf7d0;color:#1f2937;">${r.score4}</span></td>
+                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#a7f3d0;color:#1f2937;">${r.score5}</span></td>
+                    </tr>`).join('');
+            }
+
+            return `
+                <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeUserLeaderboard()">
+                    <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col" onclick="event.stopPropagation()">
+                        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                            <h2 class="text-xl font-bold text-gray-800">🏆 User Leaderboard</h2>
+                            <button onclick="closeUserLeaderboard()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                        </div>
+                        <div class="overflow-auto flex-1">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50 sticky top-0 z-10">
+                                    <tr>
+                                        <th class="${thClass} w-8 text-right">#</th>
+                                        <th class="${thClass}" onclick="setLeaderboardSort('username')">User ${sortArrow('username')}</th>
+                                        <th class="${thClass} text-right" onclick="setLeaderboardSort('totalVotes')">Votes ${sortArrow('totalVotes')}</th>
+                                        <th class="${thClass} text-right" onclick="setLeaderboardSort('totalContests')">Contests ${sortArrow('totalContests')}</th>
+                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score1')"><span title="Score 1">1⭐</span> ${sortArrow('score1')}</th>
+                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score2')"><span title="Score 2">2⭐</span> ${sortArrow('score2')}</th>
+                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score3')"><span title="Score 3">3⭐</span> ${sortArrow('score3')}</th>
+                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score4')"><span title="Score 4">4⭐</span> ${sortArrow('score4')}</th>
+                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score5')"><span title="Score 5">5⭐</span> ${sortArrow('score5')}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${bodyHtml}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="px-6 py-3 border-t border-gray-100 text-xs text-gray-400 shrink-0">
+                            Click a column header to sort. Click a user row to view their profile.
+                        </div>
+                    </div>
+                </div>`;
         }
 
         async function banUser(userId, banReason) {
@@ -10194,7 +10389,10 @@
                                                     🔧 App Settings
                                                 </button>
                                             ` : ''}
-                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''} flex items-center justify-between">
+                                            <button onclick="openUserLeaderboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
+                                                🏆 Leaderboard
+                                            </button>
+                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200 flex items-center justify-between">
                                                 <span>🌙 Dark Theme</span>
                                                 <div class="relative inline-block w-10 h-5 transition duration-200 ease-in-out rounded-full ${state.darkTheme ? 'bg-purple-500' : 'bg-gray-300'}">
                                                     <span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 ease-in-out ${state.darkTheme ? 'translate-x-5' : 'translate-x-0'}"></span>
@@ -10455,10 +10653,19 @@
                         // COMPLETE VOTING SECTION
                         // Identify contests and mergers where user has partial votes
                         const itemsToComplete = [];
+                        // Items older than 30 days are excluded from the "complete" folder
+                        // (the button still shows on the card; only the folder is filtered)
+                        const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+                        const nowMs = Date.now();
+                        const isOlderThanMonth = item => {
+                            const t = new Date(item.createdAt || item.created_at || 0).getTime();
+                            return nowMs - t > ONE_MONTH_MS;
+                        };
 
-                        // Check contests for partial votes (skip locked)
+                        // Check contests for partial votes (skip locked or older than 1 month)
                         filteredContests.forEach(contest => {
                             if (contest.isLocked) return;
+                            if (isOlderThanMonth(contest)) return;
                             const userVotes = state.userVotedContests[contest.id];
                             if (userVotes && Object.keys(userVotes).length > 0) {
                                 const totalImages = contest.images.length;
@@ -10470,9 +10677,10 @@
                             }
                         });
 
-                        // Check mergers for partial votes (skip locked)
+                        // Check mergers for partial votes (skip locked or older than 1 month)
                         filteredMergers.forEach(merger => {
                             if (merger.isLocked) return;
+                            if (isOlderThanMonth(merger)) return;
                             const mergerContestIds = merger.contestIds || [];
                             let totalImages = 0;
                             let votedImages = 0;
@@ -10494,9 +10702,10 @@
                             }
                         });
 
-                        // Check extracts for partial votes (skip locked)
+                        // Check extracts for partial votes (skip locked or older than 1 month)
                         filteredExtracts.forEach(extract => {
                             if (extract.isLocked) return;
+                            if (isOlderThanMonth(extract)) return;
                             const extractImageIds = extract.imageIds || [];
                             const totalImages = extractImageIds.length;
 
@@ -11162,6 +11371,13 @@
                                                 ✏️ Add More Images
                                             </button>
                                         ` : ''}
+                                        <!-- Rename Button -->
+                                        <button
+                                            onclick="openRenameModal('${item.id}', '${itemType}', ${JSON.stringify(itemType === 'contest' ? item.title : item.name)}); closeContestInfoModal();"
+                                            class="w-full px-4 py-2 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition text-sm"
+                                        >
+                                            ✏️ Rename ${itemType === 'contest' ? 'Contest' : itemType === 'merger' ? 'Merger' : 'Extract'}
+                                        </button>
                                         <!-- Delete Button -->
                                         <button
                                             onclick="${itemType === 'contest' ? `deleteContest('${item.id}')` : itemType === 'merger' ? `deleteMerger('${item.id}')` : `deleteExtract('${item.id}')`}; closeContestInfoModal();"
@@ -11327,11 +11543,8 @@
                 ...createdExtracts.map(e => ({ ...e, itemType: 'extract' }))
             ];
 
-            const allVotedItems = [
-                ...votedContests.map(c => ({ ...c, itemType: 'contest' })),
-                ...votedMergers.map(m => ({ ...m, itemType: 'merger' })),
-                ...votedExtracts.map(e => ({ ...e, itemType: 'extract' }))
-            ];
+            // Only show contests in the voted section (mergers/extracts are derivative)
+            const allVotedItems = votedContests.map(c => ({ ...c, itemType: 'contest' }));
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isBanned = state.bannedUsers.includes(userId);
@@ -11359,26 +11572,24 @@
                 const rows = gsResult.results.length === 0
                     ? `<p class="text-sm text-gray-500 text-center py-4">No other users share enough votes to compare.</p>`
                     : gsResult.results.map((r, i) => {
-                        const simVal = parseFloat(r.similarity);
-                        const simColor = simVal >= 65 ? '#16a34a' : simVal >= 40 ? '#b45309' : '#dc2626';
-                        const simBg   = simVal >= 65 ? '#dcfce7' : simVal >= 40 ? '#fef3c7' : '#fee2e2';
+                        const rowOpacity = r.lowConfidence ? 'opacity-50' : '';
                         return `
-                            <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer" onclick="viewUserProfile('${r.userId}')">
+                            <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer ${rowOpacity}" onclick="viewUserProfile('${r.userId}')">
                                 <span class="text-xs text-gray-400 w-5 shrink-0 text-right">${i + 1}.</span>
                                 <img src="${r.avatar}" class="w-7 h-7 rounded-full shrink-0" />
                                 <span class="font-medium text-sm flex-1 min-w-0 truncate">${r.username}</span>
-                                <span class="text-xs font-bold px-2 py-0.5 rounded shrink-0" style="background:${simBg};color:${simColor};">${r.similarity}%</span>
-                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#bbf7d0;color:#1f2937;" title="Exact">${r.exactPct}%E</span>
-                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fef08a;color:#1f2937;" title="Close (±1)">${r.closePct}%C</span>
-                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fecaca;color:#1f2937;" title="Wide (≥2)">${r.widePct}%W</span>
-                                <span class="text-xs text-gray-400 shrink-0">${r.sharedCount}v</span>
+                                <span class="text-xs text-gray-400 shrink-0">(${r.sharedCount} votes)</span>
                                 ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 50 shared votes or fewer than 5 shared contests">⚠️</span>' : ''}
+                                <span class="ml-2 text-xs font-bold px-2 py-0.5 rounded shrink-0" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span>
+                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#bbf7d0;color:#1f2937;" title="Exact match">${r.exactPct}%</span>
+                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fef08a;color:#1f2937;" title="Close (±1)">${r.closePct}%</span>
+                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fecaca;color:#1f2937;" title="Wide (≥2)">${r.widePct}%</span>
                             </div>`;
                     }).join('');
                 globalSimilaritySection = `
                     <div class="mb-6">
                         <h3 class="text-lg font-bold text-gray-800 mb-3">Global Similarity (${gsResult.results.length} users)</h3>
-                        <p class="text-xs text-gray-400 mb-2">Similarity = exact% + close%÷2 &nbsp;|&nbsp; E=Exact, C=Close(±1), W=Wide(≥2) &nbsp;|&nbsp; ⚠️ = low confidence</p>
+                        <p class="text-xs text-gray-400 mb-2">Blue = similarity score (exact% + close%÷2) &nbsp;·&nbsp; Green = exact &nbsp;·&nbsp; Yellow = close(±1) &nbsp;·&nbsp; Red = wide(≥2) &nbsp;·&nbsp; ⚠️ low confidence</p>
                         <div class="space-y-1.5 max-h-80 overflow-y-auto pr-1">${rows}</div>
                     </div>`;
             }
@@ -11442,12 +11653,12 @@
 
                             <!-- Voting History Section -->
                             <div class="mb-4">
-                                <h3 class="text-lg font-bold text-gray-800 mb-3">Items Voted On (${allVotedItems.length})</h3>
+                                <h3 class="text-lg font-bold text-gray-800 mb-3">Contests Voted On (${allVotedItems.length})</h3>
                             </div>
 
                             ${allVotedItems.length === 0 ? `
                                 <div class="bg-gray-50 rounded-lg p-8 text-center">
-                                    <p class="text-gray-500">No voting history yet</p>
+                                    <p class="text-gray-500">No contests voted on yet</p>
                                 </div>
                             ` : `
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -12195,11 +12406,11 @@
                                 </div>
                             </div>
 
-                            <!-- Filter and Sort Controls -->
-                            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <!-- Filter and Sort Controls — always 2-column so it fits in one row on mobile too -->
+                            <div class="mt-3 grid grid-cols-2 gap-3">
                                 <!-- Filter by Score -->
                                 <div>
-                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Filter by Score</label>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Filter by Score</label>
                                     <div class="flex gap-1.5 flex-wrap">
                                         ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
                                             const isSelected = state.multiModeFilter.includes(filter);
@@ -12208,7 +12419,7 @@
                                             return `
                                                 <button
                                                     onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
-                                                    class="px-3 py-1.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                                    class="px-2.5 py-1 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
                                                     style="background-color: ${bgColor};"
                                                     title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
                                                 >
@@ -12217,18 +12428,25 @@
                                             `;
                                         }).join('')}
                                     </div>
+                                    ${state.multiModeFilter.length > 0
+                                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                                               Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}.
+                                               Click a button again to remove it.
+                                           </p>`
+                                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
+                                    }
                                 </div>
 
                                 <!-- Sort -->
                                 <div>
-                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Sort</label>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Sort</label>
                                     <select
                                         onchange="setMultiModeSort(this.value)"
-                                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                                        class="w-auto px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
                                     >
-                                        <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default Order</option>
-                                        <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>Highest to Lowest</option>
-                                        <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Lowest to Highest</option>
+                                        <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default</option>
+                                        <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>High → Low</option>
+                                        <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
                                     </select>
                                 </div>
                             </div>
@@ -12267,6 +12485,13 @@
                                         });
                                     }
                                     // 'default' keeps the original order
+
+                                    if (filteredImages.length === 0) {
+                                        return `<div class="w-full py-10 text-center text-gray-500 dark:text-gray-400">
+                                            <p class="font-medium">No images match the active score filter.</p>
+                                            <p class="text-xs mt-1">Click a highlighted filter button above to remove it.</p>
+                                        </div>`;
+                                    }
 
                                     return filteredImages.map((image, idx) => {
                                         const currentVote = state.votes[image.id];
@@ -13706,6 +13931,32 @@
             `;
         }
 
+        function renderRenameModal() {
+            if (!state.renameModal) return '';
+            const { itemType, name } = state.renameModal;
+            const label = itemType === 'contest' ? 'Contest' : itemType === 'merger' ? 'Merger' : 'Extract';
+            return `
+                <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)cancelRenameModal()">
+                    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onclick="event.stopPropagation()">
+                        <h2 class="text-xl font-bold text-gray-800 mb-4">Rename ${label}</h2>
+                        <input
+                            id="rename-input"
+                            type="text"
+                            value="${name.replace(/"/g, '&quot;')}"
+                            oninput="state.renameModal.name = this.value"
+                            onkeydown="if(event.key==='Enter')saveRename()"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm mb-4"
+                            placeholder="${label} name"
+                            autofocus
+                        />
+                        <div class="flex gap-2">
+                            <button onclick="saveRename()" class="flex-1 px-4 py-2 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition text-sm">Save</button>
+                            <button onclick="cancelRenameModal()" class="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition text-sm">Cancel</button>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
         function renderBreakdownModal() {
             const item = state.results.find(r => r.id === state.showBreakdownModal);
             if (!item) return '';
@@ -13750,9 +14001,24 @@
 
                             <div class="bg-gray-50 rounded-lg p-3 mb-3">
                                 <div class="text-center">
-                                    <div class="text-2xl font-bold text-gray-400">${item.averageScore}</div>
-                                    <div class="text-xs text-gray-400">Average Score</div>
-                                    <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
+                                    ${(() => {
+                                        if (isFiltered) {
+                                            const filteredCount = Object.values(votesByScore).reduce((s, arr) => s + arr.length, 0);
+                                            const filteredAvg = filteredCount > 0
+                                                ? (Object.entries(votesByScore).reduce((s, [sc, arr]) => s + parseInt(sc) * arr.length, 0) / filteredCount).toFixed(2)
+                                                : '—';
+                                            return `
+                                                <div class="text-2xl font-bold text-gray-400">${filteredAvg}*</div>
+                                                <div class="text-xs text-gray-400">Average Score (filtered)*</div>
+                                                <div class="text-xs text-gray-500 mt-1">${filteredCount}* of ${item.totalVotes} votes shown</div>
+                                            `;
+                                        }
+                                        return `
+                                            <div class="text-2xl font-bold text-gray-400">${item.averageScore}</div>
+                                            <div class="text-xs text-gray-400">Average Score</div>
+                                            <div class="text-xs text-gray-500 mt-1">${item.totalVotes} total votes</div>
+                                        `;
+                                    })()}
                                 </div>
                             </div>
 
@@ -13898,7 +14164,7 @@
                                         ${totalBannedUsers > 0 ? `<span class="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded">${totalBannedUsers} banned</span>` : ''}
                                     </div>
                                     ${state.allUsers.length > 0 ? `
-                                        <div class="space-y-2 max-h-96 overflow-y-auto">
+                                        <div id="admin-user-list" class="space-y-2 max-h-96 overflow-y-auto" onscroll="state.adminUserListScroll = this.scrollTop">
                                             ${[...state.allUsers].sort((a, b) => a.username.localeCompare(b.username)).map(user => {
                                                 const isBanned = state.bannedUsers.includes(user.id);
                                                 return `
@@ -14649,7 +14915,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
         }
 
         window.login = login;
@@ -14823,6 +15089,12 @@
         window.viewUserProfile = viewUserProfile;
         window.closeUserProfileModal = closeUserProfileModal;
         window.compareGlobally = compareGlobally;
+        window.openRenameModal = openRenameModal;
+        window.saveRename = saveRename;
+        window.cancelRenameModal = cancelRenameModal;
+        window.openUserLeaderboard = openUserLeaderboard;
+        window.closeUserLeaderboard = closeUserLeaderboard;
+        window.setLeaderboardSort = setLeaderboardSort;
         window.confirmDeleteMerger = confirmDeleteMerger;
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
