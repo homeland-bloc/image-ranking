@@ -12577,7 +12577,7 @@
                                 <div class="flex items-center gap-2">
                                     <button
                                         onclick="adjustMultiVotingImageScale(-1)"
-                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 transition"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 transition"
                                         title="Decrease scale by 1%"
                                     >−</button>
                                     <input
@@ -12590,35 +12590,41 @@
                                     />
                                     <button
                                         onclick="adjustMultiVotingImageScale(1)"
-                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 transition"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 transition"
                                         title="Increase scale by 1%"
                                     >+</button>
                                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300 w-12">${imageScale}%</span>
                                 </div>
                             </div>
 
-                            <!-- Filter and Sort Controls — all in one row -->
-                            <div class="mt-3">
-                                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                                    <!-- Filter label + score buttons -->
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0">Filter:</span>
-                                    ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
-                                        const isSelected = state.multiModeFilter.includes(filter);
-                                        const label = filter === 'non-voted' ? '?' : filter;
-                                        const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
-                                        return `
-                                            <button
-                                                onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
-                                                class="px-2.5 py-1 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
-                                                style="background-color: ${bgColor};"
-                                                title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
-                                            >
-                                                ${label}
-                                            </button>
-                                        `;
-                                    }).join('')}
-                                    <!-- Sort label + dropdown -->
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0 ml-1">Sort:</span>
+                            <!-- Filter and Sort Controls — two-column layout -->
+                            <div class="mt-3 flex gap-4 items-start">
+                                <!-- Left: Filter -->
+                                <div class="flex-1 min-w-0">
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
+                                            const isSelected = state.multiModeFilter.includes(filter);
+                                            const label = filter === 'non-voted' ? '?' : filter;
+                                            const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
+                                            return `
+                                                <button
+                                                    onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
+                                                    class="px-2 py-0.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                                    style="background-color: ${bgColor};"
+                                                    title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
+                                                >${label}</button>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                    ${state.multiModeFilter.length > 0
+                                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
+                                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
+                                    }
+                                </div>
+                                <!-- Right: Sort -->
+                                <div class="flex flex-col items-end shrink-0">
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
                                     <select
                                         onchange="setMultiModeSort(this.value)"
                                         class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
@@ -12628,14 +12634,6 @@
                                         <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
                                     </select>
                                 </div>
-                                <!-- Helper text spanning full width below the entire filter+sort row -->
-                                ${state.multiModeFilter.length > 0
-                                    ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                                           Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}.
-                                           Click a button again to remove it.
-                                       </p>`
-                                    : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
-                                }
                             </div>
                         </div>
 
@@ -15279,6 +15277,7 @@
         window.openRenameModal = openRenameModal;
         window.saveRename = saveRename;
         window.cancelRenameModal = cancelRenameModal;
+        window.state = state;
         window.openUserLeaderboard = openUserLeaderboard;
         window.closeUserLeaderboard = closeUserLeaderboard;
         window.setLeaderboardSort = setLeaderboardSort;
