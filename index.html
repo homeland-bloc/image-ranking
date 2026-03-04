@@ -973,6 +973,7 @@
             leaderboardStatType: 'totalVotes', // 'totalVotes'|'totalContests'|'totalCreated'|'scoreCounter'|'avgScoreCounter'|'totalAvg'|'highestAvg'|'lowestAvg'
             leaderboardSelectedScore: 1, // 1-5 for scoreCounter / avgScoreCounter
             hideLowConfidenceGlobal: false, // Hide low-confidence rows in global similarity
+            showVoteContestCounts: null, // null = auto (true on desktop, false on mobile), true/false = user override
             globalSimilarityExcludedContests: {}, // userId -> [] of excluded contest IDs
             globalSimilarityContestFilterOpen: {}, // userId -> bool (contest filter panel open)
             globalSimilarityAllVotes: null, // Cached allVotes for global comparison (avoids re-fetching on filter change)
@@ -9125,6 +9126,13 @@
             render();
         }
 
+        function toggleShowVoteContestCounts() {
+            // resolve current effective value then flip it
+            const cur = state.showVoteContestCounts !== null ? state.showVoteContestCounts : window.innerWidth >= 640;
+            state.showVoteContestCounts = !cur;
+            render();
+        }
+
         function toggleGlobalSimilarityContestFilter(userId) {
             if (!state.globalSimilarityContestFilterOpen[userId]) {
                 state.globalSimilarityContestFilterOpen[userId] = true;
@@ -11787,31 +11795,41 @@
                     </div>`;
             } else if (gsResult && gsResult.results) {
                 const hideLow = state.hideLowConfidenceGlobal;
-                const visibleResults = hideLow ? gsResult.results.filter(r => !r.lowConfidence) : gsResult.results;
+                // Resolve effective showCounts — null means auto: show on desktop, hide on mobile
+                const showCounts = state.showVoteContestCounts !== null ? state.showVoteContestCounts : window.innerWidth >= 640;
+                // When hideLow=true try to show only high-confidence rows; if ALL rows are low-confidence
+                // fall back to showing all with dimmed text so pfps are never entirely absent
+                let visibleResults = hideLow ? gsResult.results.filter(r => !r.lowConfidence) : gsResult.results;
+                const allHiddenByLowConf = hideLow && visibleResults.length === 0 && gsResult.results.length > 0;
+                if (allHiddenByLowConf) visibleResults = gsResult.results;
 
                 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
                 const rowsHtml = visibleResults.length === 0
-                    ? `<tr><td colspan="6" class="py-4 text-center text-sm text-gray-500">${gsResult.results.length === 0 ? 'No other users share enough votes to compare.' : 'All results are low-confidence. Toggle the button above to show them.'}</td></tr>`
+                    ? `<tr><td colspan="${showCounts ? 6 : 4}" class="py-4 text-center text-sm text-gray-500">No other users share enough votes to compare.</td></tr>`
                     : visibleResults.map((r, i) => {
-                        // Apply dimming only to text cells, not the avatar, so pfps are always fully visible
-                        const dim = r.lowConfidence ? 'opacity-50' : '';
+                        // Dim text content (NOT the avatar) for low-confidence rows.
+                        // Opacity is applied via inline style on inner span/div elements to avoid
+                        // the cross-browser bug where opacity on <td>/<tr> also fades <img> children.
+                        const dimStyle = r.lowConfidence ? 'opacity:0.45' : '';
                         const avatar = r.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.userId}`;
                         return `
-                            <tr class="hover:bg-gray-50 cursor-pointer transition" onclick="viewUserProfile('${r.userId}')">
-                                <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-xs text-gray-400 text-right ${dim}">${i + 1}.</td>
-                                <td style="width:2rem" class="pr-1.5 py-1"><img src="${avatar}" class="w-7 h-7 rounded-full block" /></td>
-                                <td class="py-1 ${dim}" style="max-width:0;width:100%">
-                                    <div class="flex items-center gap-1 min-w-0">
+                            <tr class="hover:bg-gray-100 cursor-pointer transition" onclick="viewUserProfile('${r.userId}')">
+                                <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-xs text-gray-400 text-right"><span style="${dimStyle}">${i + 1}.</span></td>
+                                <td style="width:2rem" class="pr-2 py-1"><img src="${avatar}" class="w-7 h-7 rounded-full block" style="min-width:1.75rem" /></td>
+                                <td class="py-1" style="width:100%;max-width:0">
+                                    <div class="flex items-center gap-1 min-w-0" style="${dimStyle}">
                                         <span class="font-medium text-sm truncate">${r.username}</span>
                                         ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 200 shared votes or fewer than 5 shared contests">📮</span>' : ''}
                                     </div>
                                 </td>
-                                <td style="width:1%;white-space:nowrap" class="pl-2 py-1 text-right ${dim}"><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span></td>
-                                <td style="width:1%;white-space:nowrap" class="pl-2 py-1 text-right text-xs text-gray-400 ${dim}">(${plural(r.sharedCount, 'vote')})</td>
-                                <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-right text-xs text-gray-400 ${dim}">(${plural(r.sharedContests, 'contest')})</td>
+                                <td style="width:1%;white-space:nowrap;padding-left:0.75rem" class="py-1 text-right"><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1e40af;${dimStyle}">${r.similarity}%</span></td>
+                                ${showCounts ? `
+                                <td style="width:1%;white-space:nowrap" class="pl-2 py-1 text-right text-xs text-gray-400"><span style="${dimStyle}">(${plural(r.sharedCount, 'vote')})</span></td>
+                                <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-right text-xs text-gray-400"><span style="${dimStyle}">(${plural(r.sharedContests, 'contest')})</span></td>` : ''}
                             </tr>`;
                     }).join('');
-                const rows = `<div class="overflow-x-auto"><table class="border-collapse w-full">${rowsHtml}</table></div>`;
+                // Single overflow:auto container (not nested) so horizontal scroll works properly on mobile
+                const rows = `<div class="max-h-[360px] overflow-auto" data-preserve-scroll="gs-results-${userId}"><table class="border-collapse" style="min-width:100%">${allHiddenByLowConf ? `<tr><td colspan="${showCounts ? 6 : 4}" class="pt-1 pb-2 text-center text-xs text-amber-600">All matches are low-confidence — showing anyway</td></tr>` : ''}${rowsHtml}</table></div>`;
 
                 // Contest filter panel
                 const allContestIds = gsResult.allContestIds || [];
@@ -11852,15 +11870,21 @@
                 globalSimilaritySection = `
                     <div class="mb-6">
                         <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-                            <h3 class="text-lg font-bold text-gray-800">Global Similarity (${visibleResults.length}${hideLow && lowConfCount > 0 ? `+${lowConfCount} hidden` : ''} users)</h3>
-                            ${lowConfCount > 0 ? `
-                            <button onclick="toggleHideLowConfidenceGlobal()"
-                                class="text-xs px-2.5 py-1 rounded-full border transition ${hideLow ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-gray-100 border-gray-300 text-gray-600'} hover:opacity-80">
-                                ${hideLow ? '📮 Show low-confidence' : '📮 Hide low-confidence'}
-                            </button>` : ''}
+                            <h3 class="text-lg font-bold text-gray-800">Global Similarity (${visibleResults.length}${hideLow && lowConfCount > 0 && !allHiddenByLowConf ? `+${lowConfCount} low-conf` : ''} users)</h3>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                ${lowConfCount > 0 ? `
+                                <button onclick="toggleHideLowConfidenceGlobal()"
+                                    class="text-xs px-2.5 py-1 rounded-full border transition ${hideLow ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-gray-100 border-gray-300 text-gray-600'} hover:opacity-80">
+                                    ${hideLow ? '📮 Show low-conf' : '📮 Hide low-conf'}
+                                </button>` : ''}
+                                <button onclick="toggleShowVoteContestCounts()"
+                                    class="text-xs px-2.5 py-1 rounded-full border transition ${showCounts ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-100 border-gray-300 text-gray-600'} hover:opacity-80">
+                                    ${showCounts ? '🔢 Hide counts' : '🔢 Show counts'}
+                                </button>
+                            </div>
                         </div>
                         <p class="text-xs text-gray-400 mb-2">Blue = similarity (exact% + close%÷2) &nbsp;·&nbsp; 📮 low confidence (&lt;200 shared votes or &lt;5 contests)</p>
-                        <div class="max-h-[360px] overflow-y-auto pr-1">${rows}</div>
+                        ${rows}
                         ${contestFilterHtml}
                     </div>`;
             }
@@ -15367,6 +15391,7 @@
         window.closeUserProfileModal = closeUserProfileModal;
         window.compareGlobally = compareGlobally;
         window.toggleHideLowConfidenceGlobal = toggleHideLowConfidenceGlobal;
+        window.toggleShowVoteContestCounts = toggleShowVoteContestCounts;
         window.toggleGlobalSimilarityContestFilter = toggleGlobalSimilarityContestFilter;
         window.toggleGlobalSimilarityContest = toggleGlobalSimilarityContest;
         window.selectAllGlobalSimilarityContests = selectAllGlobalSimilarityContests;
