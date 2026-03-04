@@ -9120,6 +9120,11 @@
             render();
         }
 
+        function toggleHideLowConfidenceGlobal() {
+            state.hideLowConfidenceGlobal = !state.hideLowConfidenceGlobal;
+            render();
+        }
+
         function toggleGlobalSimilarityContestFilter(userId) {
             if (!state.globalSimilarityContestFilterOpen[userId]) {
                 state.globalSimilarityContestFilterOpen[userId] = true;
@@ -11723,20 +11728,27 @@
                 const hideLow = state.hideLowConfidenceGlobal;
                 const visibleResults = hideLow ? gsResult.results.filter(r => !r.lowConfidence) : gsResult.results;
 
-                const rows = visibleResults.length === 0
-                    ? `<p class="text-sm text-gray-500 text-center py-4">${gsResult.results.length === 0 ? 'No other users share enough votes to compare.' : 'All results are low-confidence. Toggle the button above to show them.'}</p>`
+                const rowsHtml = visibleResults.length === 0
+                    ? `<tr><td colspan="6" class="py-4 text-center text-sm text-gray-500">${gsResult.results.length === 0 ? 'No other users share enough votes to compare.' : 'All results are low-confidence. Toggle the button above to show them.'}</td></tr>`
                     : visibleResults.map((r, i) => {
                         const rowOpacity = r.lowConfidence ? 'opacity-50' : '';
+                        const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
                         return `
-                            <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer ${rowOpacity}" onclick="viewUserProfile('${r.userId}')">
-                                <span class="text-xs text-gray-400 w-5 shrink-0 text-right">${i + 1}.</span>
-                                <img src="${r.avatar}" class="w-7 h-7 rounded-full shrink-0" />
-                                <span class="font-medium text-sm flex-1 min-w-0 truncate">${r.username}</span>
-                                ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 200 shared votes or fewer than 5 shared contests">📮</span>' : ''}
-                                <span class="text-xs font-bold px-2 py-0.5 rounded shrink-0" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span>
-                                <span class="text-xs text-gray-400 shrink-0">(${r.sharedCount} votes/${r.sharedContests} contests)</span>
-                            </div>`;
+                            <tr class="hover:bg-gray-50 cursor-pointer transition ${rowOpacity}" onclick="viewUserProfile('${r.userId}')">
+                                <td class="pl-1 pr-1 py-1 text-xs text-gray-400 text-right w-5 shrink-0">${i + 1}.</td>
+                                <td class="pr-1.5 py-1 w-8"><img src="${r.avatar}" class="w-7 h-7 rounded-full" /></td>
+                                <td class="py-1 max-w-0">
+                                    <div class="flex items-center gap-1 min-w-0">
+                                        <span class="font-medium text-sm truncate">${r.username}</span>
+                                        ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 200 shared votes or fewer than 5 shared contests">📮</span>' : ''}
+                                    </div>
+                                </td>
+                                <td class="pl-2 py-1 text-right whitespace-nowrap"><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span></td>
+                                <td class="pl-2 py-1 text-right text-xs text-gray-400 whitespace-nowrap">(${plural(r.sharedCount, 'vote')})</td>
+                                <td class="pl-1 pr-1 py-1 text-right text-xs text-gray-400 whitespace-nowrap">(${plural(r.sharedContests, 'contest')})</td>
+                            </tr>`;
                     }).join('');
+                const rows = `<table class="w-full border-collapse">${rowsHtml}</table>`;
 
                 // Contest filter panel
                 const allContestIds = gsResult.allContestIds || [];
@@ -11774,13 +11786,13 @@
                         <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
                             <h3 class="text-lg font-bold text-gray-800">Global Similarity (${visibleResults.length}${hideLow && lowConfCount > 0 ? `+${lowConfCount} hidden` : ''} users)</h3>
                             ${lowConfCount > 0 ? `
-                            <button onclick="state.hideLowConfidenceGlobal=!state.hideLowConfidenceGlobal;render()"
+                            <button onclick="toggleHideLowConfidenceGlobal()"
                                 class="text-xs px-2.5 py-1 rounded-full border transition ${hideLow ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-gray-100 border-gray-300 text-gray-600'} hover:opacity-80">
                                 ${hideLow ? '📮 Show low-confidence' : '📮 Hide low-confidence'}
                             </button>` : ''}
                         </div>
                         <p class="text-xs text-gray-400 mb-2">Blue = similarity (exact% + close%÷2) &nbsp;·&nbsp; 📮 low confidence (&lt;200 shared votes or &lt;5 contests)</p>
-                        <div class="space-y-1.5 max-h-80 overflow-y-auto pr-1">${rows}</div>
+                        <div class="max-h-80 overflow-y-auto pr-1">${rows}</div>
                         ${contestFilterHtml}
                     </div>`;
             }
@@ -12577,7 +12589,7 @@
                                 <div class="flex items-center gap-2">
                                     <button
                                         onclick="adjustMultiVotingImageScale(-1)"
-                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 transition"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 transition"
                                         title="Decrease scale by 1%"
                                     >−</button>
                                     <input
@@ -12590,35 +12602,41 @@
                                     />
                                     <button
                                         onclick="adjustMultiVotingImageScale(1)"
-                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 transition"
+                                        class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 flex items-center justify-center font-bold text-gray-700 transition"
                                         title="Increase scale by 1%"
                                     >+</button>
                                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300 w-12">${imageScale}%</span>
                                 </div>
                             </div>
 
-                            <!-- Filter and Sort Controls — all in one row -->
-                            <div class="mt-3">
-                                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                                    <!-- Filter label + score buttons -->
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0">Filter:</span>
-                                    ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
-                                        const isSelected = state.multiModeFilter.includes(filter);
-                                        const label = filter === 'non-voted' ? '?' : filter;
-                                        const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
-                                        return `
-                                            <button
-                                                onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
-                                                class="px-2.5 py-1 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
-                                                style="background-color: ${bgColor};"
-                                                title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
-                                            >
-                                                ${label}
-                                            </button>
-                                        `;
-                                    }).join('')}
-                                    <!-- Sort label + dropdown -->
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0 ml-1">Sort:</span>
+                            <!-- Filter and Sort Controls — two-column layout -->
+                            <div class="mt-3 flex gap-4 items-start">
+                                <!-- Left: Filter -->
+                                <div class="flex-1 min-w-0">
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
+                                            const isSelected = state.multiModeFilter.includes(filter);
+                                            const label = filter === 'non-voted' ? '?' : filter;
+                                            const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
+                                            return `
+                                                <button
+                                                    onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
+                                                    class="px-2 py-0.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                                    style="background-color: ${bgColor};"
+                                                    title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
+                                                >${label}</button>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                    ${state.multiModeFilter.length > 0
+                                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
+                                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
+                                    }
+                                </div>
+                                <!-- Right: Sort -->
+                                <div class="flex flex-col items-end shrink-0">
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
                                     <select
                                         onchange="setMultiModeSort(this.value)"
                                         class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
@@ -12628,14 +12646,6 @@
                                         <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
                                     </select>
                                 </div>
-                                <!-- Helper text spanning full width below the entire filter+sort row -->
-                                ${state.multiModeFilter.length > 0
-                                    ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                                           Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}.
-                                           Click a button again to remove it.
-                                       </p>`
-                                    : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
-                                }
                             </div>
                         </div>
 
@@ -15276,9 +15286,13 @@
         window.viewUserProfile = viewUserProfile;
         window.closeUserProfileModal = closeUserProfileModal;
         window.compareGlobally = compareGlobally;
+        window.toggleHideLowConfidenceGlobal = toggleHideLowConfidenceGlobal;
+        window.toggleGlobalSimilarityContestFilter = toggleGlobalSimilarityContestFilter;
+        window.toggleGlobalSimilarityContest = toggleGlobalSimilarityContest;
         window.openRenameModal = openRenameModal;
         window.saveRename = saveRename;
         window.cancelRenameModal = cancelRenameModal;
+        window.state = state;
         window.openUserLeaderboard = openUserLeaderboard;
         window.closeUserLeaderboard = closeUserLeaderboard;
         window.setLeaderboardSort = setLeaderboardSort;
