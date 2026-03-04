@@ -9150,6 +9150,19 @@
             compareGlobally(userId);
         }
 
+        function selectAllGlobalSimilarityContests(userId) {
+            state.globalSimilarityExcludedContests[userId] = [];
+            delete state.globalSimilarityResults[userId];
+            compareGlobally(userId);
+        }
+
+        function unselectAllGlobalSimilarityContests(userId) {
+            const allContestIds = (state.globalSimilarityResults[userId]?.allContestIds) || [];
+            state.globalSimilarityExcludedContests[userId] = [...allContestIds];
+            delete state.globalSimilarityResults[userId];
+            compareGlobally(userId);
+        }
+
         function openRenameModal(itemId, itemType, currentName) {
             state.renameModal = { itemId, itemType, name: currentName };
             render();
@@ -9296,6 +9309,21 @@
             render();
         }
 
+        function setLeaderboardStatType(value) {
+            state.leaderboardStatType = value;
+            render();
+        }
+
+        function setLeaderboardScore(value) {
+            state.leaderboardSelectedScore = parseInt(value);
+            render();
+        }
+
+        function toggleLeaderboardSortDir() {
+            state.leaderboardSortDir = state.leaderboardSortDir === 'desc' ? 'asc' : 'desc';
+            render();
+        }
+
         function setLeaderboardSort(key) {
             if (state.leaderboardSortKey === key) {
                 state.leaderboardSortDir = state.leaderboardSortDir === 'desc' ? 'asc' : 'desc';
@@ -9361,7 +9389,7 @@
             const scoreSelectorHtml = needsScoreSelector ? `
                 <div class="flex items-center gap-1.5">
                     <label class="text-sm text-gray-600 shrink-0">Score:</label>
-                    <select onchange="state.leaderboardSelectedScore=parseInt(this.value);render()" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                    <select onchange="setLeaderboardScore(this.value)" class="px-2 py-1 border border-gray-300 rounded text-sm">
                         ${[1,2,3,4,5].map(s => `<option value="${s}" ${selectedScore === s ? 'selected' : ''}>${s}★</option>`).join('')}
                     </select>
                 </div>` : '';
@@ -9418,7 +9446,7 @@
                         <div class="px-6 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3 shrink-0">
                             <div class="flex items-center gap-1.5">
                                 <label class="text-sm text-gray-600 shrink-0">View by:</label>
-                                <select onchange="state.leaderboardStatType=this.value;render()" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                                <select onchange="setLeaderboardStatType(this.value)" class="px-2 py-1 border border-gray-300 rounded text-sm">
                                     ${statOptions.map(o => `<option value="${o.value}" ${statType === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
                                 </select>
                             </div>
@@ -9432,7 +9460,7 @@
                                         <th class="${thClass} w-8 text-right">#</th>
                                         <th class="${thClass}">User</th>
                                         <th class="${thClass} text-right cursor-pointer hover:bg-gray-100 select-none"
-                                            onclick="state.leaderboardSortDir=state.leaderboardSortDir==='desc'?'asc':'desc';render()">
+                                            onclick="toggleLeaderboardSortDir()">
                                             ${colLabel} ${sortArrow()}
                                         </th>
                                     </tr>
@@ -11728,27 +11756,27 @@
                 const hideLow = state.hideLowConfidenceGlobal;
                 const visibleResults = hideLow ? gsResult.results.filter(r => !r.lowConfidence) : gsResult.results;
 
+                const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
                 const rowsHtml = visibleResults.length === 0
                     ? `<tr><td colspan="6" class="py-4 text-center text-sm text-gray-500">${gsResult.results.length === 0 ? 'No other users share enough votes to compare.' : 'All results are low-confidence. Toggle the button above to show them.'}</td></tr>`
                     : visibleResults.map((r, i) => {
                         const rowOpacity = r.lowConfidence ? 'opacity-50' : '';
-                        const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
                         return `
                             <tr class="hover:bg-gray-50 cursor-pointer transition ${rowOpacity}" onclick="viewUserProfile('${r.userId}')">
-                                <td class="pl-1 pr-1 py-1 text-xs text-gray-400 text-right w-5 shrink-0">${i + 1}.</td>
-                                <td class="pr-1.5 py-1 w-8"><img src="${r.avatar}" class="w-7 h-7 rounded-full" /></td>
-                                <td class="py-1 max-w-0">
+                                <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-xs text-gray-400 text-right">${i + 1}.</td>
+                                <td style="width:1%;white-space:nowrap" class="pr-1.5 py-1"><img src="${r.avatar}" class="w-7 h-7 rounded-full" /></td>
+                                <td class="py-1" style="max-width:0;width:100%">
                                     <div class="flex items-center gap-1 min-w-0">
                                         <span class="font-medium text-sm truncate">${r.username}</span>
                                         ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 200 shared votes or fewer than 5 shared contests">📮</span>' : ''}
                                     </div>
                                 </td>
-                                <td class="pl-2 py-1 text-right whitespace-nowrap"><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span></td>
-                                <td class="pl-2 py-1 text-right text-xs text-gray-400 whitespace-nowrap">(${plural(r.sharedCount, 'vote')})</td>
-                                <td class="pl-1 pr-1 py-1 text-right text-xs text-gray-400 whitespace-nowrap">(${plural(r.sharedContests, 'contest')})</td>
+                                <td style="width:1%;white-space:nowrap" class="pl-2 py-1 text-right"><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span></td>
+                                <td style="width:1%;white-space:nowrap" class="pl-2 py-1 text-right text-xs text-gray-400">(${plural(r.sharedCount, 'vote')})</td>
+                                <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-right text-xs text-gray-400">(${plural(r.sharedContests, 'contest')})</td>
                             </tr>`;
                     }).join('');
-                const rows = `<table class="w-full border-collapse">${rowsHtml}</table>`;
+                const rows = `<div class="overflow-x-auto"><table class="border-collapse w-full">${rowsHtml}</table></div>`;
 
                 // Contest filter panel
                 const allContestIds = gsResult.allContestIds || [];
@@ -11764,7 +11792,12 @@
                             <span>${filterOpen ? '▲' : '▼'}</span>
                         </button>
                         ${filterOpen ? `
-                        <div class="p-2 max-h-40 overflow-y-auto space-y-1 bg-white">
+                        <div class="flex items-center gap-2 px-2 py-1.5 border-b border-gray-100 bg-gray-50">
+                            <button onclick="selectAllGlobalSimilarityContests('${userId}')" class="text-xs text-blue-600 hover:underline">Select all</button>
+                            <span class="text-gray-300">|</span>
+                            <button onclick="unselectAllGlobalSimilarityContests('${userId}')" class="text-xs text-blue-600 hover:underline">Unselect all</button>
+                        </div>
+                        <div class="p-2 max-h-40 overflow-y-auto space-y-1 bg-white" data-preserve-scroll="gs-filter-${userId}">
                             ${allContestIds.map(cId => {
                                 const contest = state.contests.find(c => c.id === cId);
                                 const name = contest?.title || cId;
@@ -15080,6 +15113,12 @@
         function render() {
             const app = document.getElementById('app');
 
+            // Save scroll positions of elements that should be preserved across re-renders
+            const savedScrolls = [];
+            document.querySelectorAll('[data-preserve-scroll]').forEach(el => {
+                savedScrolls.push({ key: el.dataset.preserveScroll, top: el.scrollTop });
+            });
+
             if (!state.isLoggedIn) {
                 app.innerHTML = renderHeader() + renderLoginScreen() + renderModal() + renderUploadProgressModal() + renderToast() + renderLoadingOverlay() + renderLogoutConfirmModal();
                 return;
@@ -15113,6 +15152,12 @@
             }
 
             app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
+
+            // Restore scroll positions
+            savedScrolls.forEach(({ key, top }) => {
+                const el = document.querySelector(`[data-preserve-scroll="${key}"]`);
+                if (el) el.scrollTop = top;
+            });
         }
 
         window.login = login;
@@ -15289,13 +15334,19 @@
         window.toggleHideLowConfidenceGlobal = toggleHideLowConfidenceGlobal;
         window.toggleGlobalSimilarityContestFilter = toggleGlobalSimilarityContestFilter;
         window.toggleGlobalSimilarityContest = toggleGlobalSimilarityContest;
+        window.selectAllGlobalSimilarityContests = selectAllGlobalSimilarityContests;
+        window.unselectAllGlobalSimilarityContests = unselectAllGlobalSimilarityContests;
         window.openRenameModal = openRenameModal;
         window.saveRename = saveRename;
         window.cancelRenameModal = cancelRenameModal;
         window.state = state;
         window.openUserLeaderboard = openUserLeaderboard;
         window.closeUserLeaderboard = closeUserLeaderboard;
+        window.render = render;
         window.setLeaderboardSort = setLeaderboardSort;
+        window.setLeaderboardStatType = setLeaderboardStatType;
+        window.setLeaderboardScore = setLeaderboardScore;
+        window.toggleLeaderboardSortDir = toggleLeaderboardSortDir;
         window.confirmDeleteMerger = confirmDeleteMerger;
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
