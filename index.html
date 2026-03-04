@@ -11719,8 +11719,6 @@
                     <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800">
                         Failed to compute global similarity. <button onclick="delete state.globalSimilarityResults['${userId}']; compareGlobally('${userId}')" class="underline font-medium">Try again</button>
                     </div>`;
-            // TODO (mobile): global comparison rows don't show usernames on narrow screens —
-            //   layout needs to be redesigned for mobile (tracking note, full redo planned).
             } else if (gsResult && gsResult.results) {
                 const hideLow = state.hideLowConfidenceGlobal;
                 const visibleResults = hideLow ? gsResult.results.filter(r => !r.lowConfidence) : gsResult.results;
