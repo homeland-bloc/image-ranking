@@ -970,6 +970,12 @@
             userLeaderboardData: null, // null | 'loading' | Array of user stat objects
             leaderboardSortKey: 'totalVotes',
             leaderboardSortDir: 'desc',
+            leaderboardStatType: 'totalVotes', // 'totalVotes'|'totalContests'|'totalCreated'|'scoreCounter'|'avgScoreCounter'|'totalAvg'|'highestAvg'|'lowestAvg'
+            leaderboardSelectedScore: 1, // 1-5 for scoreCounter / avgScoreCounter
+            hideLowConfidenceGlobal: false, // Hide low-confidence rows in global similarity
+            globalSimilarityExcludedContests: {}, // userId -> [] of excluded contest IDs
+            globalSimilarityContestFilterOpen: {}, // userId -> bool (contest filter panel open)
+            globalSimilarityAllVotes: null, // Cached allVotes for global comparison (avoids re-fetching on filter change)
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -9021,12 +9027,21 @@
                     }
                 }
 
-                // Fetch all votes app-wide (paginated to beat 2000-row limit)
-                const allVotes = await fetchAllVotesPaginated('', 'user_id,image_id,score,contest_id');
+                // Fetch all votes app-wide — use cached copy if available to avoid re-fetching on contest filter changes
+                if (!state.globalSimilarityAllVotes) {
+                    state.globalSimilarityAllVotes = await fetchAllVotesPaginated('', 'user_id,image_id,score,contest_id');
+                }
+                const allVotes = state.globalSimilarityAllVotes;
+
+                // Apply per-user contest exclusion filter
+                const excludedContests = (state.globalSimilarityExcludedContests || {})[userId] || [];
+                const workingVotes = excludedContests.length > 0
+                    ? allVotes.filter(v => !excludedContests.includes(v.contest_id))
+                    : allVotes;
 
                 // Group votes by user_id
                 const votesByUser = {};
-                allVotes.forEach(v => {
+                workingVotes.forEach(v => {
                     if (!votesByUser[v.user_id]) votesByUser[v.user_id] = [];
                     votesByUser[v.user_id].push(v);
                 });
@@ -9040,13 +9055,17 @@
                     return;
                 }
 
-                // Build target user's vote map: image_id -> score, and contest set
+                // Build target user's vote map: image_id -> score, and full contest list
                 const targetVoteMap = {};
                 const targetContestIds = new Set();
                 targetVotes.forEach(v => {
                     targetVoteMap[v.image_id] = v.score;
                     targetContestIds.add(v.contest_id);
                 });
+
+                // Also capture ALL contest IDs this user ever voted in (pre-filter) for the filter UI
+                const allTargetVotes = allVotes.filter(v => v.user_id === userId);
+                const allTargetContestIds = [...new Set(allTargetVotes.map(v => v.contest_id))];
 
                 const results = [];
 
@@ -9078,16 +9097,13 @@
                     const widePct = (wide / sharedCount) * 100;
                     // Unified similarity: exact + half of close
                     const similarity = exactPct + (closePct / 2);
-                    const lowConfidence = sharedCount < 50 || sharedContestIds.size < 5;
+                    const lowConfidence = sharedCount < 200 || sharedContestIds.size < 5;
 
                     results.push({
                         userId: otherUserId,
                         username: userInfo.username,
                         avatar: userInfo.avatar,
                         similarity: similarity.toFixed(1),
-                        exactPct: exactPct.toFixed(0),
-                        closePct: closePct.toFixed(0),
-                        widePct: widePct.toFixed(0),
                         sharedCount,
                         sharedContests: sharedContestIds.size,
                         lowConfidence
@@ -9095,13 +9111,38 @@
                 }
 
                 results.sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity));
-                state.globalSimilarityResults[userId] = { results };
+                state.globalSimilarityResults[userId] = { results, allContestIds: allTargetContestIds };
             } catch (err) {
                 console.error('Error computing global similarity:', err);
                 state.globalSimilarityResults[userId] = { error: true };
             }
 
             render();
+        }
+
+        function toggleGlobalSimilarityContestFilter(userId) {
+            if (!state.globalSimilarityContestFilterOpen[userId]) {
+                state.globalSimilarityContestFilterOpen[userId] = true;
+            } else {
+                state.globalSimilarityContestFilterOpen[userId] = false;
+            }
+            render();
+        }
+
+        function toggleGlobalSimilarityContest(userId, contestId) {
+            if (!state.globalSimilarityExcludedContests[userId]) {
+                state.globalSimilarityExcludedContests[userId] = [];
+            }
+            const excluded = state.globalSimilarityExcludedContests[userId];
+            const idx = excluded.indexOf(contestId);
+            if (idx >= 0) {
+                excluded.splice(idx, 1);
+            } else {
+                excluded.push(contestId);
+            }
+            // Clear cached result and recompute with new filter
+            delete state.globalSimilarityResults[userId];
+            compareGlobally(userId);
         }
 
         function openRenameModal(itemId, itemType, currentName) {
@@ -9162,35 +9203,78 @@
             state.userLeaderboardData = 'loading';
             render();
             try {
+                // Ensure allUsers is loaded so rows can be matched to display names
+                if (!state.allUsers || state.allUsers.length === 0) {
+                    const usersResp = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
+                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Cache-Control': 'no-cache' }
+                    });
+                    if (usersResp.ok) {
+                        const users = await usersResp.json();
+                        state.allUsers = users.map(u => ({ id: u.id, username: u.username, avatar: u.avatar, isBanned: u.is_banned || false }));
+                    }
+                }
+
                 const allVotes = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
+
                 // Build per-user stats
                 const statsMap = {};
                 allVotes.forEach(v => {
                     if (!statsMap[v.user_id]) {
-                        statsMap[v.user_id] = { totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0} };
+                        statsMap[v.user_id] = {
+                            totalVotes: 0,
+                            contestIds: new Set(),
+                            scores: {1:0,2:0,3:0,4:0,5:0},
+                            scoreSum: 0,
+                            contestVotes: {} // contestId -> {sum, count}
+                        };
                     }
                     const s = statsMap[v.user_id];
                     s.totalVotes++;
-                    if (v.contest_id) s.contestIds.add(v.contest_id);
-                    if (v.score >= 1 && v.score <= 5) s.scores[v.score]++;
+                    if (v.contest_id) {
+                        s.contestIds.add(v.contest_id);
+                        if (!s.contestVotes[v.contest_id]) s.contestVotes[v.contest_id] = { sum: 0, count: 0 };
+                        s.contestVotes[v.contest_id].sum += v.score;
+                        s.contestVotes[v.contest_id].count++;
+                    }
+                    if (v.score >= 1 && v.score <= 5) {
+                        s.scores[v.score]++;
+                        s.scoreSum += v.score;
+                    }
                 });
+
+                // Build items-created map from already-loaded state data
+                const createdMap = {};
+                [...(state.contests || []), ...(state.mergers || []), ...(state.extracts || [])].forEach(item => {
+                    if (item.createdBy) createdMap[item.createdBy] = (createdMap[item.createdBy] || 0) + 1;
+                });
+
                 // Merge with allUsers for display info
                 const rows = [];
                 for (const [userId, s] of Object.entries(statsMap)) {
                     const userInfo = state.allUsers.find(u => u.id === userId);
                     if (!userInfo) continue;
                     const totalContests = s.contestIds.size;
+
+                    // Per-contest averages for highest/lowest avg stats
+                    const contestAvgs = Object.values(s.contestVotes)
+                        .filter(c => c.count > 0)
+                        .map(c => c.sum / c.count);
+
                     rows.push({
                         userId,
                         username: userInfo.username,
                         avatar: userInfo.avatar,
                         totalVotes: s.totalVotes,
                         totalContests,
+                        totalCreated: createdMap[userId] || 0,
                         score1: s.scores[1],
                         score2: s.scores[2],
                         score3: s.scores[3],
                         score4: s.scores[4],
                         score5: s.scores[5],
+                        totalAvg: s.totalVotes > 0 ? s.scoreSum / s.totalVotes : 0,
+                        highestAvg: contestAvgs.length > 0 ? Math.max(...contestAvgs) : 0,
+                        lowestAvg: contestAvgs.length > 0 ? Math.min(...contestAvgs) : 0,
                     });
                 }
                 state.userLeaderboardData = rows;
@@ -9220,67 +9304,132 @@
         function renderUserLeaderboard() {
             if (!state.showUserLeaderboard) return '';
             const data = state.userLeaderboardData;
-            const sortKey = state.leaderboardSortKey;
-            const sortDir = state.leaderboardSortDir;
+            const statType = state.leaderboardStatType || 'totalVotes';
+            const selectedScore = state.leaderboardSelectedScore || 1;
+            const sortDir = state.leaderboardSortDir || 'desc';
 
-            const sortArrow = (key) => {
-                if (sortKey !== key) return '<span class="text-gray-300 ml-1">↕</span>';
-                return sortDir === 'desc' ? '<span class="text-blue-500 ml-1">↓</span>' : '<span class="text-blue-500 ml-1">↑</span>';
+            const thClass = 'px-3 py-2 text-left text-xs font-semibold text-gray-600 whitespace-nowrap';
+
+            const statOptions = [
+                { value: 'totalVotes',       label: 'Total Votes' },
+                { value: 'totalContests',    label: 'Contests Voted In' },
+                { value: 'totalCreated',     label: 'Items Created' },
+                { value: 'scoreCounter',     label: 'Score Counter' },
+                { value: 'avgScoreCounter',  label: 'Avg Score Count / Contest' },
+                { value: 'totalAvg',         label: 'Total Average Score' },
+                { value: 'highestAvg',       label: 'Highest Contest Average' },
+                { value: 'lowestAvg',        label: 'Lowest Contest Average' },
+            ];
+
+            const isAvgType = ['totalAvg', 'highestAvg', 'lowestAvg', 'avgScoreCounter'].includes(statType);
+            const needsScoreSelector = ['scoreCounter', 'avgScoreCounter'].includes(statType);
+            const hasAppTotal = ['totalVotes', 'scoreCounter', 'totalCreated'].includes(statType);
+
+            const getStatValue = (r) => {
+                switch (statType) {
+                    case 'totalVotes':      return r.totalVotes;
+                    case 'totalContests':   return r.totalContests;
+                    case 'totalCreated':    return r.totalCreated;
+                    case 'scoreCounter':    return r[`score${selectedScore}`] || 0;
+                    case 'avgScoreCounter': return r.totalContests > 0 ? (r[`score${selectedScore}`] || 0) / r.totalContests : 0;
+                    case 'totalAvg':        return r.totalAvg || 0;
+                    case 'highestAvg':      return r.highestAvg || 0;
+                    case 'lowestAvg':       return r.lowestAvg || 0;
+                    default:                return r.totalVotes;
+                }
             };
 
-            const thClass = 'px-3 py-2 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap';
+            const formatStatValue = (v) => {
+                if (v === undefined || v === null) return '—';
+                return isAvgType ? v.toFixed(2) : v.toLocaleString();
+            };
+
+            const colLabel = (() => {
+                const base = statOptions.find(o => o.value === statType)?.label || 'Value';
+                return needsScoreSelector ? `${base} (${selectedScore}★)` : base;
+            })();
+
+            const sortArrow = () => sortDir === 'desc'
+                ? '<span class="text-blue-500 ml-1">↓</span>'
+                : '<span class="text-blue-500 ml-1">↑</span>';
+
+            const scoreSelectorHtml = needsScoreSelector ? `
+                <div class="flex items-center gap-1.5">
+                    <label class="text-sm text-gray-600 shrink-0">Score:</label>
+                    <select onchange="state.leaderboardSelectedScore=parseInt(this.value);render()" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                        ${[1,2,3,4,5].map(s => `<option value="${s}" ${selectedScore === s ? 'selected' : ''}>${s}★</option>`).join('')}
+                    </select>
+                </div>` : '';
 
             let bodyHtml = '';
+            let appTotalHtml = '';
+
             if (data === 'loading') {
-                bodyHtml = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">Loading leaderboard data…</td></tr>';
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-500 animate-pulse">Loading leaderboard data…</td></tr>';
             } else if (!data) {
-                bodyHtml = '<tr><td colspan="8" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
             } else {
                 const sorted = [...data].sort((a, b) => {
-                    if (sortKey === 'username') {
-                        return sortDir === 'asc' ? a.username.localeCompare(b.username) : b.username.localeCompare(a.username);
-                    }
-                    return sortDir === 'asc' ? a[sortKey] - b[sortKey] : b[sortKey] - a[sortKey];
+                    const av = getStatValue(a), bv = getStatValue(b);
+                    return sortDir === 'asc' ? av - bv : bv - av;
                 });
+
                 bodyHtml = sorted.map((r, i) => `
                     <tr class="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="viewUserProfile('${r.userId}'); closeUserLeaderboard();">
-                        <td class="px-3 py-2 text-xs text-gray-400 text-right">${i + 1}</td>
+                        <td class="px-3 py-2 text-xs text-gray-400 text-right w-8">${i + 1}</td>
                         <td class="px-3 py-2">
                             <div class="flex items-center gap-2">
                                 <img src="${r.avatar}" class="w-6 h-6 rounded-full shrink-0" />
-                                <span class="text-sm font-medium text-gray-800 truncate max-w-[130px]">${r.username}</span>
+                                <span class="text-sm font-medium text-gray-800 truncate max-w-[200px]">${r.username}</span>
                             </div>
                         </td>
-                        <td class="px-3 py-2 text-sm text-gray-700 text-right">${r.totalVotes.toLocaleString()}</td>
-                        <td class="px-3 py-2 text-sm text-gray-700 text-right">${r.totalContests.toLocaleString()}</td>
-                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#fecaca;color:#1f2937;">${r.score1}</span></td>
-                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#fed7aa;color:#1f2937;">${r.score2}</span></td>
-                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#fef08a;color:#1f2937;">${r.score3}</span></td>
-                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#bbf7d0;color:#1f2937;">${r.score4}</span></td>
-                        <td class="px-3 py-2 text-sm text-center"><span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold" style="background:#a7f3d0;color:#1f2937;">${r.score5}</span></td>
+                        <td class="px-3 py-2 text-sm text-gray-700 text-right font-medium">${formatStatValue(getStatValue(r))}</td>
                     </tr>`).join('');
+
+                if (hasAppTotal) {
+                    if (statType === 'totalVotes') {
+                        const total = data.reduce((s, r) => s + r.totalVotes, 0);
+                        appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} votes</span>`;
+                    } else if (statType === 'scoreCounter') {
+                        const sk = `score${selectedScore}`;
+                        const total = data.reduce((s, r) => s + (r[sk] || 0), 0);
+                        appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} score-${selectedScore} votes</span>`;
+                    } else if (statType === 'totalCreated') {
+                        const total = (state.contests?.length || 0) + (state.mergers?.length || 0) + (state.extracts?.length || 0);
+                        appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} items</span>`;
+                    }
+                }
             }
 
             return `
                 <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeUserLeaderboard()">
-                    <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col" onclick="event.stopPropagation()">
+                    <div class="bg-white rounded-xl shadow-xl w-full max-w-xl max-h-[85vh] flex flex-col" onclick="event.stopPropagation()">
+                        <!-- Header -->
                         <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                            <h2 class="text-xl font-bold text-gray-800">🏆 User Leaderboard</h2>
+                            <h2 class="text-xl font-bold text-gray-800">🏆 Leaderboard</h2>
                             <button onclick="closeUserLeaderboard()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
                         </div>
+                        <!-- Stat selector row -->
+                        <div class="px-6 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3 shrink-0">
+                            <div class="flex items-center gap-1.5">
+                                <label class="text-sm text-gray-600 shrink-0">View by:</label>
+                                <select onchange="state.leaderboardStatType=this.value;render()" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                                    ${statOptions.map(o => `<option value="${o.value}" ${statType === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+                                </select>
+                            </div>
+                            ${scoreSelectorHtml}
+                        </div>
+                        <!-- Table -->
                         <div class="overflow-auto flex-1">
                             <table class="w-full text-sm">
                                 <thead class="bg-gray-50 sticky top-0 z-10">
                                     <tr>
                                         <th class="${thClass} w-8 text-right">#</th>
-                                        <th class="${thClass}" onclick="setLeaderboardSort('username')">User ${sortArrow('username')}</th>
-                                        <th class="${thClass} text-right" onclick="setLeaderboardSort('totalVotes')">Votes ${sortArrow('totalVotes')}</th>
-                                        <th class="${thClass} text-right" onclick="setLeaderboardSort('totalContests')">Contests ${sortArrow('totalContests')}</th>
-                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score1')"><span title="Score 1">1⭐</span> ${sortArrow('score1')}</th>
-                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score2')"><span title="Score 2">2⭐</span> ${sortArrow('score2')}</th>
-                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score3')"><span title="Score 3">3⭐</span> ${sortArrow('score3')}</th>
-                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score4')"><span title="Score 4">4⭐</span> ${sortArrow('score4')}</th>
-                                        <th class="${thClass} text-center" onclick="setLeaderboardSort('score5')"><span title="Score 5">5⭐</span> ${sortArrow('score5')}</th>
+                                        <th class="${thClass}">User</th>
+                                        <th class="${thClass} text-right cursor-pointer hover:bg-gray-100 select-none"
+                                            onclick="state.leaderboardSortDir=state.leaderboardSortDir==='desc'?'asc':'desc';render()">
+                                            ${colLabel} ${sortArrow()}
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -9288,8 +9437,10 @@
                                 </tbody>
                             </table>
                         </div>
-                        <div class="px-6 py-3 border-t border-gray-100 text-xs text-gray-400 shrink-0">
-                            Click a column header to sort. Click a user row to view their profile.
+                        <!-- Footer -->
+                        <div class="px-6 py-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 shrink-0 flex-wrap gap-2">
+                            <span>${appTotalHtml}</span>
+                            <span>Click a user row to view their profile.</span>
                         </div>
                     </div>
                 </div>`;
@@ -11569,28 +11720,68 @@
                         Failed to compute global similarity. <button onclick="delete state.globalSimilarityResults['${userId}']; compareGlobally('${userId}')" class="underline font-medium">Try again</button>
                     </div>`;
             } else if (gsResult && gsResult.results) {
-                const rows = gsResult.results.length === 0
-                    ? `<p class="text-sm text-gray-500 text-center py-4">No other users share enough votes to compare.</p>`
-                    : gsResult.results.map((r, i) => {
+                const hideLow = state.hideLowConfidenceGlobal;
+                const visibleResults = hideLow ? gsResult.results.filter(r => !r.lowConfidence) : gsResult.results;
+
+                const rows = visibleResults.length === 0
+                    ? `<p class="text-sm text-gray-500 text-center py-4">${gsResult.results.length === 0 ? 'No other users share enough votes to compare.' : 'All results are low-confidence. Toggle the button above to show them.'}</p>`
+                    : visibleResults.map((r, i) => {
                         const rowOpacity = r.lowConfidence ? 'opacity-50' : '';
                         return `
                             <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer ${rowOpacity}" onclick="viewUserProfile('${r.userId}')">
                                 <span class="text-xs text-gray-400 w-5 shrink-0 text-right">${i + 1}.</span>
                                 <img src="${r.avatar}" class="w-7 h-7 rounded-full shrink-0" />
                                 <span class="font-medium text-sm flex-1 min-w-0 truncate">${r.username}</span>
-                                <span class="text-xs text-gray-400 shrink-0">(${r.sharedCount} votes)</span>
-                                ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 50 shared votes or fewer than 5 shared contests">⚠️</span>' : ''}
-                                <span class="ml-2 text-xs font-bold px-2 py-0.5 rounded shrink-0" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span>
-                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#bbf7d0;color:#1f2937;" title="Exact match">${r.exactPct}%</span>
-                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fef08a;color:#1f2937;" title="Close (±1)">${r.closePct}%</span>
-                                <span class="inline-block px-1.5 py-0.5 rounded text-xs font-bold shrink-0" style="background:#fecaca;color:#1f2937;" title="Wide (≥2)">${r.widePct}%</span>
+                                ${r.lowConfidence ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 200 shared votes or fewer than 5 shared contests">📮</span>' : ''}
+                                <span class="text-xs font-bold px-2 py-0.5 rounded shrink-0" style="background:#dbeafe;color:#1e40af;">${r.similarity}%</span>
+                                <span class="text-xs text-gray-400 shrink-0">(${r.sharedCount} votes/${r.sharedContests} contests)</span>
                             </div>`;
                     }).join('');
+
+                // Contest filter panel
+                const allContestIds = gsResult.allContestIds || [];
+                const excludedContests = (state.globalSimilarityExcludedContests || {})[userId] || [];
+                const numExcluded = excludedContests.length;
+                const filterOpen = (state.globalSimilarityContestFilterOpen || {})[userId];
+
+                const contestFilterHtml = allContestIds.length > 0 ? `
+                    <div class="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+                        <button onclick="toggleGlobalSimilarityContestFilter('${userId}')"
+                            class="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 transition">
+                            <span>Contest Filter ${numExcluded > 0 ? `<span class="ml-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">${numExcluded} excluded</span>` : '(all included)'}</span>
+                            <span>${filterOpen ? '▲' : '▼'}</span>
+                        </button>
+                        ${filterOpen ? `
+                        <div class="p-2 max-h-40 overflow-y-auto space-y-1 bg-white">
+                            ${allContestIds.map(cId => {
+                                const contest = state.contests.find(c => c.id === cId);
+                                const name = contest?.title || cId;
+                                const isExcluded = excludedContests.includes(cId);
+                                return `
+                                    <label class="flex items-center gap-2 cursor-pointer px-1 py-0.5 rounded hover:bg-gray-50 text-xs text-gray-700">
+                                        <input type="checkbox" ${!isExcluded ? 'checked' : ''}
+                                            onchange="toggleGlobalSimilarityContest('${userId}', '${cId}')"
+                                            class="rounded border-gray-300 text-blue-600 cursor-pointer" />
+                                        <span class="truncate">${name}</span>
+                                    </label>`;
+                            }).join('')}
+                        </div>` : ''}
+                    </div>` : '';
+
+                const lowConfCount = gsResult.results.filter(r => r.lowConfidence).length;
                 globalSimilaritySection = `
                     <div class="mb-6">
-                        <h3 class="text-lg font-bold text-gray-800 mb-3">Global Similarity (${gsResult.results.length} users)</h3>
-                        <p class="text-xs text-gray-400 mb-2">Blue = similarity score (exact% + close%÷2) &nbsp;·&nbsp; Green = exact &nbsp;·&nbsp; Yellow = close(±1) &nbsp;·&nbsp; Red = wide(≥2) &nbsp;·&nbsp; ⚠️ low confidence</p>
+                        <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                            <h3 class="text-lg font-bold text-gray-800">Global Similarity (${visibleResults.length}${hideLow && lowConfCount > 0 ? `+${lowConfCount} hidden` : ''} users)</h3>
+                            ${lowConfCount > 0 ? `
+                            <button onclick="state.hideLowConfidenceGlobal=!state.hideLowConfidenceGlobal;render()"
+                                class="text-xs px-2.5 py-1 rounded-full border transition ${hideLow ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-gray-100 border-gray-300 text-gray-600'} hover:opacity-80">
+                                ${hideLow ? '📮 Show low-confidence' : '📮 Hide low-confidence'}
+                            </button>` : ''}
+                        </div>
+                        <p class="text-xs text-gray-400 mb-2">Blue = similarity (exact% + close%÷2) &nbsp;·&nbsp; 📮 low confidence (&lt;200 shared votes or &lt;5 contests)</p>
                         <div class="space-y-1.5 max-h-80 overflow-y-auto pr-1">${rows}</div>
+                        ${contestFilterHtml}
                     </div>`;
             }
 
@@ -12406,49 +12597,45 @@
                                 </div>
                             </div>
 
-                            <!-- Filter and Sort Controls — always 2-column so it fits in one row on mobile too -->
-                            <div class="mt-3 grid grid-cols-2 gap-3">
-                                <!-- Filter by Score -->
-                                <div>
-                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Filter by Score</label>
-                                    <div class="flex gap-1.5 flex-wrap">
-                                        ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
-                                            const isSelected = state.multiModeFilter.includes(filter);
-                                            const label = filter === 'non-voted' ? '?' : filter;
-                                            const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
-                                            return `
-                                                <button
-                                                    onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
-                                                    class="px-2.5 py-1 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
-                                                    style="background-color: ${bgColor};"
-                                                    title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
-                                                >
-                                                    ${label}
-                                                </button>
-                                            `;
-                                        }).join('')}
-                                    </div>
-                                    ${state.multiModeFilter.length > 0
-                                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                                               Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}.
-                                               Click a button again to remove it.
-                                           </p>`
-                                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
-                                    }
-                                </div>
-
-                                <!-- Sort -->
-                                <div>
-                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Sort</label>
+                            <!-- Filter and Sort Controls — all in one row -->
+                            <div class="mt-3">
+                                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                                    <!-- Filter label + score buttons -->
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0">Filter:</span>
+                                    ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
+                                        const isSelected = state.multiModeFilter.includes(filter);
+                                        const label = filter === 'non-voted' ? '?' : filter;
+                                        const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
+                                        return `
+                                            <button
+                                                onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
+                                                class="px-2.5 py-1 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                                style="background-color: ${bgColor};"
+                                                title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
+                                            >
+                                                ${label}
+                                            </button>
+                                        `;
+                                    }).join('')}
+                                    <!-- Sort label + dropdown -->
+                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0 ml-1">Sort:</span>
                                     <select
                                         onchange="setMultiModeSort(this.value)"
-                                        class="w-auto px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                                        class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
                                     >
                                         <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default</option>
                                         <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>High → Low</option>
                                         <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
                                     </select>
                                 </div>
+                                <!-- Helper text spanning full width below the entire filter+sort row -->
+                                ${state.multiModeFilter.length > 0
+                                    ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                                           Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}.
+                                           Click a button again to remove it.
+                                       </p>`
+                                    : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
+                                }
                             </div>
                         </div>
 
