@@ -999,6 +999,8 @@
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
             isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
+            pinnedVisibleCount: 6,           // How many pinned items to show
+            allItemsVisibleCount: 6,         // How many items to show in All Votings flat list
             isCompleteVotingExpanded: false,  // Whether Complete Voting section is expanded (default: folded, show 1 item)
             showPinIcons: false,  // Whether to show pin icons (admin only, default: false)
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
@@ -3733,6 +3735,7 @@
             state.loadingMoreContests = true;
             render();
             state.contestsOffset += 10;
+            state.allItemsVisibleCount += 6;
             await loadContests({ offset: state.contestsOffset, limit: 10, append: true });
             render();
         }
@@ -3791,7 +3794,7 @@
 
         async function loadExtracts() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,source_contract_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -3807,7 +3810,7 @@
                         creatorName: e.creator.username,
                         creatorAvatar: e.creator.avatar,
                         createdAt: e.created_at,
-                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : (e.source_type === 'extract' ? e.source_contract_id : null),
+                        sourceContestId: e.source_type !== 'merger' ? e.source_contest_id : null,
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
@@ -3834,6 +3837,45 @@
                 const pinnedItems = await response.json();
                 if (Array.isArray(pinnedItems)) {
                     state.pinnedItems = pinnedItems;
+
+                    // Load any pinned contests not yet fetched by pagination
+                    const pinnedContestIds = pinnedItems
+                        .filter(p => p.item_type === 'contest')
+                        .map(p => p.item_id);
+                    const missingIds = pinnedContestIds.filter(
+                        id => !state.contests.find(c => c.id === id)
+                    );
+                    if (missingIds.length > 0) {
+                        try {
+                            const r = await fetchFromSupabase(
+                                `/rest/v1/contests?id=in.(${missingIds.join(',')})&select=id,contest_number,title,is_locked,results_public,created_by,voter_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)`
+                            );
+                            const missing = await r.json();
+                            if (Array.isArray(missing)) {
+                                const mapped = missing.map(contest => ({
+                                    id: contest.id,
+                                    contestNumber: contest.contest_number,
+                                    title: contest.title,
+                                    isLocked: contest.is_locked,
+                                    resultsPublic: contest.results_public,
+                                    createdBy: contest.created_by,
+                                    creatorName: contest.creator.username,
+                                    creatorAvatar: contest.creator.avatar,
+                                    createdAt: contest.created_at,
+                                    voterCount: contest.voter_count ?? 0,
+                                    _fullImagesLoaded: false,
+                                    images: contest.images
+                                        .sort((a, b) => a.image_order - b.image_order)
+                                        .map(img => ({ id: img.id, url: img.url }))
+                                }));
+                                const existingIds = new Set(state.contests.map(c => c.id));
+                                const newContests = mapped.filter(c => !existingIds.has(c.id));
+                                state.contests = [...state.contests, ...newContests];
+                            }
+                        } catch (e) {
+                            console.error('Error loading missing pinned contests:', e);
+                        }
+                    }
                 }
             } catch (error) {
                 console.error('Error loading pinned items:', error);
@@ -7080,10 +7122,22 @@
             render();
         }
 
+        function showMorePinnedItems() {
+            state.pinnedVisibleCount += 6;
+            render();
+        }
+
+        function showMoreAllItems() {
+            state.allItemsVisibleCount += 6;
+            render();
+        }
+
         // Make toggle functions globally accessible
         window.togglePinnedSection = togglePinnedSection;
         window.toggleCompleteVotingSection = toggleCompleteVotingSection;
         window.toggleAllContestsSection = toggleAllContestsSection;
+        window.showMorePinnedItems = showMorePinnedItems;
+        window.showMoreAllItems = showMoreAllItems;
 
         function setResultsView(view, userId = null) {
             state.resultsView = view;
@@ -10749,7 +10803,7 @@
                             .sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
 
                         if (allPinnedItems.length > 0) {
-                            const displayItems = state.isPinnedSectionExpanded ? allPinnedItems : allPinnedItems.slice(0, 3);
+                            const displayItems = allPinnedItems.slice(0, state.pinnedVisibleCount);
 
                             return `
                                 <div class="mb-4">
@@ -10778,12 +10832,12 @@
                                             return '';
                                         }).join('')}
                                     </div>
-                                    ${allPinnedItems.length > 3 && !state.isPinnedSectionExpanded ? `
+                                    ${allPinnedItems.length > state.pinnedVisibleCount ? `
                                         <button
-                                            onclick="togglePinnedSection()"
+                                            onclick="showMorePinnedItems()"
                                             class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
-                                            Show ${allPinnedItems.length - 3} more pinned items
+                                            Show 6 more items
                                         </button>
                                     ` : ''}
                                 </div>
@@ -11075,7 +11129,10 @@
                             `;
                         } else {
                             // Show flat list when not using default sort or when no folders exist
-                            const displayItems = state.isAllContestsSectionExpanded ? allItems : allItems.slice(0, 6);
+                            const visibleCount = state.isAllContestsSectionExpanded ? state.allItemsVisibleCount : 6;
+                            const displayItems = allItems.slice(0, visibleCount);
+                            const hasMoreClientItems = allItems.length > visibleCount;
+                            const hasMoreDbItems = !state.contestsExhausted && !hasMoreClientItems;
 
                             return `
                                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
@@ -11089,25 +11146,25 @@
                                         }
                                     }).join('')}
                                 </div>
-                                ${allItems.length > 6 && !state.isAllContestsSectionExpanded ? `
+                                ${hasMoreClientItems ? `
                                     <button
-                                        onclick="toggleAllContestsSection()"
+                                        onclick="${state.isAllContestsSectionExpanded ? 'showMoreAllItems()' : 'toggleAllContestsSection()'}"
                                         class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
                                     >
-                                        Show ${allItems.length - 6} more items
+                                        Show 6 more items
                                     </button>
                                 ` : ''}
-                                ${!state.contestsExhausted ? `
+                                ${hasMoreDbItems ? `
                                     ${state.loadingMoreContests ? `
                                         <div class="w-full text-center text-sm text-gray-500 py-3">
-                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more contests...
+                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more items...
                                         </div>
                                     ` : `
                                         <button
                                             onclick="loadMoreContests()"
                                             class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
-                                            Show more contests
+                                            Show 6 more items
                                         </button>
                                     `}
                                 ` : ''}
