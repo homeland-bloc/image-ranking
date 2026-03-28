@@ -850,6 +850,11 @@
     <div id="app"></div>
 
     <script>
+        function quadraticMean(scores) {
+          if (!scores.length) return 0;
+          return parseFloat(Math.sqrt(scores.reduce((acc, s) => acc + s * s, 0) / scores.length).toFixed(2));
+        }
+
         window.addEventListener('DOMContentLoaded', function() {
             // Emergency error handler to catch JavaScript errors
         window.addEventListener('error', function(e) {
@@ -1276,8 +1281,7 @@
                 // Map images with their scores
                 state.results = state.currentContest.images.map(img => {
                     const scores = imageScores[img.id]?.scores || [];
-                    const sum = scores.reduce((acc, s) => acc + s, 0);
-                    const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
+                    const average = quadraticMean(scores);
 
                     console.log(`🔍 DEBUG: Image ${img.id} - scores:`, scores, 'average:', average);
 
@@ -1369,8 +1373,7 @@
                     contestTitles[contest.id] = contest.title;
                     contest.images.forEach(img => {
                         const scores = imageScores[img.id]?.scores || [];
-                        const sum = scores.reduce((acc, s) => acc + s, 0);
-                        const average = scores.length > 0 ? parseFloat((sum / scores.length).toFixed(2)) : 0;
+                        const average = quadraticMean(scores);
 
                         allImages.push({
                             id: img.id,
