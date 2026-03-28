@@ -850,9 +850,11 @@
     <div id="app"></div>
 
     <script>
-        function quadraticMean(scores) {
-          if (!scores.length) return 0;
-          return parseFloat(Math.sqrt(scores.reduce((acc, s) => acc + s * s, 0) / scores.length).toFixed(2));
+        // Power mean (generalised mean): p=1 linear, p=2 squared (RMS), p=3 cubed
+        function powerMean(scores, p) {
+            if (!scores.length) return 0;
+            if (p === 1) return parseFloat((scores.reduce((acc, s) => acc + s, 0) / scores.length).toFixed(2));
+            return parseFloat(Math.pow(scores.reduce((acc, s) => acc + Math.pow(s, p), 0) / scores.length, 1 / p).toFixed(2));
         }
 
         window.addEventListener('DOMContentLoaded', function() {
@@ -921,6 +923,7 @@
             newContest: { title: '', images: [] },
             showMyVotes: false,  // Deprecated, use resultsView
             resultsView: 'average',  // 'average', 'divisive', 'count', 'userVotes', or 'byVoter'
+            scoringFormula: 2,       // Power mean exponent: 1=Linear, 2=Squared (default), 3=Cubed
             voterSortBy: 'scoreDesc',  // 'scoreDesc', 'scoreAsc', 'nameAsc', 'nameDesc' for byVoter view
             selectedVoterUserId: null,  // For user votes dropdown (null = current user)
             contestVoters: [],  // List of all users who voted in current contest(s)
@@ -999,6 +1002,8 @@
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
             isPinnedSectionExpanded: false,  // Whether pinned section is expanded (default: folded)
+            pinnedVisibleCount: 6,           // How many pinned items to show
+            allItemsVisibleCount: 6,         // How many items to show in All Votings flat list
             isCompleteVotingExpanded: false,  // Whether Complete Voting section is expanded (default: folded, show 1 item)
             showPinIcons: false,  // Whether to show pin icons (admin only, default: false)
             isAllContestsSectionExpanded: true,  // Whether All Contests section is expanded (default: expanded)
@@ -1282,7 +1287,7 @@
                 // Map images with their scores
                 state.results = state.currentContest.images.map(img => {
                     const scores = imageScores[img.id]?.scores || [];
-                    const average = quadraticMean(scores);
+                    const average = powerMean(scores, state.scoringFormula);
 
                     console.log(`🔍 DEBUG: Image ${img.id} - scores:`, scores, 'average:', average);
 
@@ -1374,7 +1379,7 @@
                     contestTitles[contest.id] = contest.title;
                     contest.images.forEach(img => {
                         const scores = imageScores[img.id]?.scores || [];
-                        const average = quadraticMean(scores);
+                        const average = powerMean(scores, state.scoringFormula);
 
                         allImages.push({
                             id: img.id,
@@ -1520,6 +1525,41 @@
 
         /**
          * Generate voter statistics from loaded results
+        // Recalculate averageScore for all in-memory results using the current scoringFormula.
+        // No network requests — operates entirely on already-loaded breakdown data.
+        function recalculateAverages() {
+            const p = state.scoringFormula;
+
+            if (state.results && state.results.length > 0) {
+                state.results = state.results.map(img => {
+                    const scores = (img.breakdown || [])
+                        .filter(v => !v.isBlocked && !v.isBanned)
+                        .map(v => v.score);
+                    return { ...img, averageScore: powerMean(scores, p) };
+                }).sort(compareWithTieBreaking);
+            }
+
+            if (state.mergedResults && state.mergedResults.images && state.mergedResults.images.length > 0) {
+                state.mergedResults = {
+                    ...state.mergedResults,
+                    images: state.mergedResults.images.map(img => {
+                        const scores = (img.voteBreakdown || [])
+                            .filter(v => !v.isBlocked && !v.isBanned)
+                            .map(v => v.score);
+                        return { ...img, averageScore: powerMean(scores, p) };
+                    }).sort(compareWithTieBreaking)
+                };
+            }
+
+            render();
+        }
+
+        function setScoringFormula(p) {
+            state.scoringFormula = parseInt(p);
+            recalculateAverages();
+        }
+
+        /**
          * Calculates each voter's average score across all images they voted on
          * Uses only data from state.results (already loaded from database)
          *
@@ -1562,8 +1602,8 @@
             const voters = Object.values(voterVotes)
                 .map(voter => ({
                     ...voter,
-                    averageScore: voter.totalImages > 0
-                        ? parseFloat((voter.totalScore / voter.totalImages).toFixed(2))
+                    averageScore: voter.votes.length > 0
+                        ? powerMean(voter.votes, state.scoringFormula)
                         : 0
                 }));
 
@@ -3733,6 +3773,7 @@
             state.loadingMoreContests = true;
             render();
             state.contestsOffset += 10;
+            state.allItemsVisibleCount += 6;
             await loadContests({ offset: state.contestsOffset, limit: 10, append: true });
             render();
         }
@@ -3791,7 +3832,7 @@
 
         async function loadExtracts() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,source_contract_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -3807,7 +3848,7 @@
                         creatorName: e.creator.username,
                         creatorAvatar: e.creator.avatar,
                         createdAt: e.created_at,
-                        sourceContestId: e.source_type === 'contest' ? e.source_contest_id : (e.source_type === 'extract' ? e.source_contract_id : null),
+                        sourceContestId: e.source_type !== 'merger' ? e.source_contest_id : null,
                         sourceMergerId: e.source_type === 'merger' ? e.source_contest_id : null,
                         sourceType: e.source_type,
                         imageIds: e.image_ids,
@@ -3834,6 +3875,45 @@
                 const pinnedItems = await response.json();
                 if (Array.isArray(pinnedItems)) {
                     state.pinnedItems = pinnedItems;
+
+                    // Load any pinned contests not yet fetched by pagination
+                    const pinnedContestIds = pinnedItems
+                        .filter(p => p.item_type === 'contest')
+                        .map(p => p.item_id);
+                    const missingIds = pinnedContestIds.filter(
+                        id => !state.contests.find(c => c.id === id)
+                    );
+                    if (missingIds.length > 0) {
+                        try {
+                            const r = await fetchFromSupabase(
+                                `/rest/v1/contests?id=in.(${missingIds.join(',')})&select=id,contest_number,title,is_locked,results_public,created_by,voter_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)`
+                            );
+                            const missing = await r.json();
+                            if (Array.isArray(missing)) {
+                                const mapped = missing.map(contest => ({
+                                    id: contest.id,
+                                    contestNumber: contest.contest_number,
+                                    title: contest.title,
+                                    isLocked: contest.is_locked,
+                                    resultsPublic: contest.results_public,
+                                    createdBy: contest.created_by,
+                                    creatorName: contest.creator.username,
+                                    creatorAvatar: contest.creator.avatar,
+                                    createdAt: contest.created_at,
+                                    voterCount: contest.voter_count ?? 0,
+                                    _fullImagesLoaded: false,
+                                    images: contest.images
+                                        .sort((a, b) => a.image_order - b.image_order)
+                                        .map(img => ({ id: img.id, url: img.url }))
+                                }));
+                                const existingIds = new Set(state.contests.map(c => c.id));
+                                const newContests = mapped.filter(c => !existingIds.has(c.id));
+                                state.contests = [...state.contests, ...newContests];
+                            }
+                        } catch (e) {
+                            console.error('Error loading missing pinned contests:', e);
+                        }
+                    }
                 }
             } catch (error) {
                 console.error('Error loading pinned items:', error);
@@ -7080,10 +7160,22 @@
             render();
         }
 
+        function showMorePinnedItems() {
+            state.pinnedVisibleCount += 6;
+            render();
+        }
+
+        function showMoreAllItems() {
+            state.allItemsVisibleCount += 6;
+            render();
+        }
+
         // Make toggle functions globally accessible
         window.togglePinnedSection = togglePinnedSection;
         window.toggleCompleteVotingSection = toggleCompleteVotingSection;
         window.toggleAllContestsSection = toggleAllContestsSection;
+        window.showMorePinnedItems = showMorePinnedItems;
+        window.showMoreAllItems = showMoreAllItems;
 
         function setResultsView(view, userId = null) {
             state.resultsView = view;
@@ -7279,7 +7371,7 @@
             return results.map(img => {
                 const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
                 const scores = filteredBreakdown.map(v => v.score);
-                const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
+                const avg = powerMean(scores, state.scoringFormula);
                 return {
                     ...img,
                     averageScore: avg,
@@ -7440,7 +7532,7 @@
                     if (userFilterIds !== null) scores = scores.filter(v => userFilterIds.has(v.userId));
                     const scoreVals = scores.map(v => v.score);
                     const sd = calculateSD(scoreVals);
-                    const avg = scoreVals.length > 0 ? parseFloat((scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length).toFixed(2)) : 0;
+                    const avg = powerMean(scoreVals, state.scoringFormula);
                     return { ...img, sd: parseFloat(sd.toFixed(2)), averageScore: avg, totalVotes: scoreVals.length };
                 })
                 .filter(img => img.totalVotes >= 2);
@@ -10749,7 +10841,7 @@
                             .sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
 
                         if (allPinnedItems.length > 0) {
-                            const displayItems = state.isPinnedSectionExpanded ? allPinnedItems : allPinnedItems.slice(0, 3);
+                            const displayItems = allPinnedItems.slice(0, state.pinnedVisibleCount);
 
                             return `
                                 <div class="mb-4">
@@ -10778,12 +10870,12 @@
                                             return '';
                                         }).join('')}
                                     </div>
-                                    ${allPinnedItems.length > 3 && !state.isPinnedSectionExpanded ? `
+                                    ${allPinnedItems.length > state.pinnedVisibleCount ? `
                                         <button
-                                            onclick="togglePinnedSection()"
+                                            onclick="showMorePinnedItems()"
                                             class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
-                                            Show ${allPinnedItems.length - 3} more pinned items
+                                            Show 6 more items
                                         </button>
                                     ` : ''}
                                 </div>
@@ -11075,7 +11167,10 @@
                             `;
                         } else {
                             // Show flat list when not using default sort or when no folders exist
-                            const displayItems = state.isAllContestsSectionExpanded ? allItems : allItems.slice(0, 6);
+                            const visibleCount = state.isAllContestsSectionExpanded ? state.allItemsVisibleCount : 6;
+                            const displayItems = allItems.slice(0, visibleCount);
+                            const hasMoreClientItems = allItems.length > visibleCount;
+                            const hasMoreDbItems = !state.contestsExhausted && !hasMoreClientItems;
 
                             return `
                                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
@@ -11089,25 +11184,25 @@
                                         }
                                     }).join('')}
                                 </div>
-                                ${allItems.length > 6 && !state.isAllContestsSectionExpanded ? `
+                                ${hasMoreClientItems ? `
                                     <button
-                                        onclick="toggleAllContestsSection()"
+                                        onclick="${state.isAllContestsSectionExpanded ? 'showMoreAllItems()' : 'toggleAllContestsSection()'}"
                                         class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
                                     >
-                                        Show ${allItems.length - 6} more items
+                                        Show 6 more items
                                     </button>
                                 ` : ''}
-                                ${!state.contestsExhausted ? `
+                                ${hasMoreDbItems ? `
                                     ${state.loadingMoreContests ? `
                                         <div class="w-full text-center text-sm text-gray-500 py-3">
-                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more contests...
+                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more items...
                                         </div>
                                     ` : `
                                         <button
                                             onclick="loadMoreContests()"
                                             class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
-                                            Show more contests
+                                            Show 6 more items
                                         </button>
                                     `}
                                 ` : ''}
@@ -12781,6 +12876,15 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                <div class="flex items-center gap-2 text-sm">
+                                    <span class="font-medium text-gray-600">Scoring formula:</span>
+                                    ${[{p:1,label:'Linear'},{p:2,label:'Squared'},{p:3,label:'Cubed'}].map(opt => `
+                                        <button
+                                            onclick="setScoringFormula(${opt.p})"
+                                            class="px-3 py-1 rounded-lg font-medium transition ${state.scoringFormula === ${opt.p} ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}"
+                                        >${opt.label}</button>
+                                    `).join('')}
+                                </div>
                                 ${renderGlobalFilters()}
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
                                     ${tabs.map(tab => `
@@ -12956,7 +13060,7 @@
             return results.map(img => {
                 const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
                 const scores = filteredBreakdown.map(v => v.score);
-                const avg = scores.length > 0 ? parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0;
+                const avg = powerMean(scores, state.scoringFormula);
                 return { ...img, averageScore: avg, totalVotes: scores.length };
             });
         }
@@ -13429,12 +13533,12 @@
 
             // Compute contest average respecting image filter
             const imageFilterIds = getFilteredImageIds();
-            let totalVotes = 0, totalScore = 0;
+            const allScores = [];
             state.results.forEach(img => {
                 if (imageFilterIds !== null && !imageFilterIds.has(img.id)) return;
-                (img.breakdown || []).forEach(vote => { if (!vote.isBlocked && !vote.isBanned) { totalVotes++; totalScore += vote.score; } });
+                (img.breakdown || []).forEach(vote => { if (!vote.isBlocked && !vote.isBanned) allScores.push(vote.score); });
             });
-            const contestAverage = totalVotes > 0 ? (totalScore / totalVotes).toFixed(2) : 0;
+            const contestAverage = powerMean(allScores, state.scoringFormula);
 
             return `
                 <div class="mb-4 flex justify-center">
@@ -13750,7 +13854,7 @@
 
             const scores = item.breakdown.filter(v => !v.isBlocked && !v.isBanned && (userFilterIds === null || userFilterIds.has(v.userId))).map(v => v.score);
             const sd = calculateSD(scores);
-            const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0;
+            const avg = powerMean(scores, state.scoringFormula);
 
             const voteCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
             scores.forEach(s => { voteCounts[s]++; });
@@ -13816,7 +13920,7 @@
 
             const scores = (item.voteBreakdown || []).filter(v => !v.isBlocked && !v.isBanned && (userFilterIds === null || userFilterIds.has(v.userId))).map(v => v.score);
             const sd = calculateSD(scores);
-            const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0;
+            const avg = powerMean(scores, state.scoringFormula);
 
             const voteCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
             scores.forEach(s => { voteCounts[s]++; });
@@ -13944,9 +14048,9 @@
                                 <div class="text-center">
                                     ${(() => {
                                         if (isFiltered) {
-                                            const filteredCount = Object.values(votesByScore).reduce((s, arr) => s + arr.length, 0);
-                                            const filteredAvg = filteredCount > 0
-                                                ? (Object.entries(votesByScore).reduce((s, [sc, arr]) => s + parseInt(sc) * arr.length, 0) / filteredCount).toFixed(2)
+                                            const filteredScores = Object.entries(votesByScore).flatMap(([sc, arr]) => arr.map(() => parseInt(sc)));
+                                            const filteredAvg = filteredScores.length > 0
+                                                ? powerMean(filteredScores, state.scoringFormula)
                                                 : '—';
                                             return `
                                                 <div class="text-2xl font-bold text-gray-400">${filteredAvg}*</div>
@@ -14979,6 +15083,7 @@
         window.adminToggleBlockVote = adminToggleBlockVote;
         window.executeToggleBlockVote = executeToggleBlockVote;
         window.confirmAddDuplicateImage = confirmAddDuplicateImage;
+        window.setScoringFormula = setScoringFormula;
         window.setResultsView = setResultsView;
         window.setVoterSortBy = setVoterSortBy;
         window.toggleCountScore = toggleCountScore;
