@@ -1032,7 +1032,10 @@
             isAutoSaving: false,  // Whether auto-save is in progress
             lastAutoSaveTime: null,  // Timestamp of last successful auto-save
             pendingDraftContext: null,  // Pending draft context for resume/discard confirmation modals
-            isAutosaveDraftExpanded: false  // Whether "Continue Drafts" section is expanded (default: folded)
+            isAutosaveDraftExpanded: false,  // Whether "Continue Drafts" section is expanded (default: folded)
+            contestsOffset: 0,          // Current pagination offset
+            contestsExhausted: false,   // True when no more contests to load
+            loadingMoreContests: false   // True while loading more contests
         };
 
         function shuffleArray(array) {
@@ -1070,9 +1073,7 @@
             const defaultHeaders = {
                 'apikey': SUPABASE_ANON_KEY,
                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                'Pragma': 'no-cache',
-                'Expires': '0'
+                'Cache-Control': 'no-cache'   // Validate with server but allow CDN caching
             };
 
             return fetch(`${SUPABASE_URL}${endpoint}`, {
@@ -1666,47 +1667,52 @@
         }
 
         // Helper function to recalculate voter count ranges for an item (contest, merger, or extract)
-        async function recalculateVoterCounts(itemType, itemId, imageIds, sourceContestIds) {
+        async function updateVoterCountInDB(itemType, itemId) {
             try {
-                // Fetch all votes for the specified images
-                const votesResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/votes?contest_id=in.(${sourceContestIds.join(',')})&image_id=in.(${imageIds.join(',')})&is_blocked=eq.false&select=user_id,image_id`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
-                    }
-                );
-
-                if (!votesResponse.ok) {
-                    console.error('Failed to fetch votes for voter count calculation');
+                // Determine the table and find the item in local state
+                let table, item, currentCount;
+                if (itemType === 'contest') {
+                    table = 'contests';
+                    item = state.contests.find(c => c.id === itemId);
+                    currentCount = item ? (item.voterCount || 0) : 0;
+                } else if (itemType === 'merger') {
+                    table = 'mergers';
+                    item = state.mergers.find(m => m.id === itemId);
+                    currentCount = item ? (item.voterCount || 0) : 0;
+                } else if (itemType === 'extract') {
+                    table = 'extracts';
+                    item = state.extracts.find(e => e.id === itemId);
+                    currentCount = item ? (item.voterCount || 0) : 0;
+                } else {
                     return;
                 }
 
-                const votes = await votesResponse.json();
+                const newCount = currentCount + 1;
 
-                // Group votes by user
-                const votesByUser = {};
-                votes.forEach(vote => {
-                    if (!votesByUser[vote.user_id]) {
-                        votesByUser[vote.user_id] = new Set();
-                    }
-                    votesByUser[vote.user_id].add(vote.image_id);
+                // PATCH the voter_count in the database
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Prefer': 'return=minimal',
+                        'Cache-Control': 'no-cache'
+                    },
+                    body: JSON.stringify({ voter_count: newCount })
                 });
 
-                // Count how many images each user has voted on
-                const voterCounts = Object.keys(votesByUser).map(userId => {
-                    const userVotedImages = votesByUser[userId];
-                    // Count only images in the specified imageIds array
-                    const votedInSet = imageIds.filter(imgId => userVotedImages.has(imgId)).length;
-                    return votedInSet === imageIds.length ? userId : null;
-                }).filter(userId => userId !== null);
+                if (!response.ok) {
+                    console.error(`Failed to update voter_count for ${itemType} ${itemId}`);
+                    return;
+                }
 
-                // Voter count calculation complete (no longer storing in database)
+                // Update local state so UI reflects immediately
+                if (item) {
+                    item.voterCount = newCount;
+                }
             } catch (error) {
-                console.error(`Error recalculating voter counts for ${itemType} ${itemId}:`, error);
+                console.error(`Error updating voter count for ${itemType} ${itemId}:`, error);
             }
         }
 
@@ -1862,6 +1868,16 @@
                     }
                 }
 
+                // Capture whether this is a first vote BEFORE reloading user votes
+                // (so we know whether to increment voter_count)
+                let isFirstVote = false;
+                if (isMergerVoting) {
+                    // First vote if user hasn't voted in ANY of the merger's contests
+                    isFirstVote = !state.mergerContestIds.some(cid => state.userVotedContests[cid]);
+                } else {
+                    isFirstVote = !state.userVotedContests[state.currentContest.id];
+                }
+
                 // Reload user votes to reflect new submissions
                 await loadUserVotes();
                 await loadAllUserAutosaves();
@@ -1874,77 +1890,12 @@
                     state.autosaveContext = { type: null, id: null };
                 }
 
-                // Update voter counts BEFORE loading results to ensure fresh data
-                // Check if we're voting on an extract (only if not in merger mode)
-                const isExtractVoting = !isMergerVoting && state.currentContest && state.currentContest.isExtract === true;
-
-                if (isExtractVoting) {
-                    // Extract voting - update both extract and source voter counts
-                    const extractId = state.currentContest.id;
-                    const extract = state.extracts.find(e => e.id === extractId);
-
-                    if (extract) {
-                        // Get source contest IDs
-                        let sourceContestIds = [];
-                        if (extract.sourceType === 'contest') {
-                            sourceContestIds = [extract.sourceContestId];
-                        } else if (extract.sourceType === 'merger') {
-                            const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                            if (merger) {
-                                sourceContestIds = merger.contestIds;
-                            }
-                        }
-
-                        // Update extract voter counts based on its specific images
-                        await recalculateVoterCounts('extract', extractId, extract.imageIds, sourceContestIds);
-
-                        // Update source contest/merger voter counts based on ALL their images
-                        if (extract.sourceType === 'contest') {
-                            const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                            if (sourceContest) {
-                                const allImageIds = sourceContest.images.map(img => img.id);
-                                await recalculateVoterCounts('contest', extract.sourceContestId, allImageIds, [extract.sourceContestId]);
-                            }
-                        } else if (extract.sourceType === 'merger') {
-                            const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                            if (merger) {
-                                const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                                const allImageIds = mergedContests.flatMap(c => c.images.map(img => img.id));
-                                await recalculateVoterCounts('merger', extract.sourceMergerId, allImageIds, merger.contestIds);
-                            }
-                        }
-
-                        // Reload extracts to get updated voter counts
-                        await loadExtracts();
-                    }
-                } else if (isMergerVoting) {
-                    // Merger voting - update merger and source contest voter counts
-                    const merger = state.mergers.find(m => m.id === state.currentMergerId);
-                    if (merger) {
-                        const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                        const allImageIds = mergedContests.flatMap(c => c.images.map(img => img.id));
-
-                        // Update merger voter counts
-                        await recalculateVoterCounts('merger', state.currentMergerId, allImageIds, merger.contestIds);
-
-                        // Update each source contest
-                        for (const contestId of merger.contestIds) {
-                            const contest = state.contests.find(c => c.id === contestId);
-                            if (contest) {
-                                const contestImageIds = contest.images.map(img => img.id);
-                                await recalculateVoterCounts('contest', contestId, contestImageIds, [contestId]);
-                            }
-                        }
-
-                        // Reload mergers to get updated voter counts
-                        await loadMergers();
-                    }
-                } else {
-                    // Regular contest voting - update contest voter counts
-                    const contest = state.contests.find(c => c.id === state.currentContest.id);
-                    if (contest) {
-                        const contestImageIds = contest.images.map(img => img.id);
-                        await recalculateVoterCounts('contest', state.currentContest.id, contestImageIds, [state.currentContest.id]);
+                // Increment voter_count only on first vote (not revotes)
+                if (isFirstVote) {
+                    if (isMergerVoting) {
+                        await updateVoterCountInDB('merger', state.currentMergerId);
+                    } else {
+                        await updateVoterCountInDB('contest', state.currentContest.id);
                     }
                 }
 
@@ -1967,9 +1918,6 @@
                         showToast('Merger results loaded successfully', 'success');
                     }
                 } else {
-                    // Refresh contest list to update voter counts FIRST
-                    await loadContests();
-
                     // Switch to single contest results view
                     // If this was partial voting, load results for the original full contest
                     if (state.currentContest.isPartialVoting && state.currentContest.originalContestId) {
@@ -1985,11 +1933,6 @@
 
                     // Update URL hash
                     window.location.hash = `contest=${state.currentContest.id}`;
-                }
-
-                // Refresh contest list one more time if it was merger voting
-                if (isMergerVoting) {
-                    await loadContests();
                 }
 
                 // Clear processing state and clear loading before final render
@@ -2081,7 +2024,8 @@
             setLoading('Deleting contest...');
 
             try {
-                // First, fetch contest images to clean up storage
+                // Ensure full image data is loaded (need isFileUpload to clean up storage)
+                await loadContestImages(contestId);
                 const contest = state.contests.find(c => c.id === contestId);
                 if (contest && contest.images) {
                     const filesToDelete = [];
@@ -2437,7 +2381,7 @@
                 const { data, error } = await supabase.storage
                     .from('contest-images')
                     .upload(fileName, file, {
-                        cacheControl: '3600',
+                        cacheControl: '604800',  // 7 days — contest images never change
                         upsert: false
                     });
 
@@ -3154,6 +3098,7 @@
                     creatorName: contestData.creator.username,
                     creatorAvatar: contestData.creator.avatar,
                     createdAt: contestData.created_at,
+                    _fullImagesLoaded: true,
                     images: contestData.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
@@ -3275,7 +3220,6 @@
                 await loadContests();
                 await loadMergers();
                 await loadExtracts();
-                await loadVoterCounts();
 
                 // Find the merger in state
                 const merger = state.mergers.find(m => m.id === mergerId);
@@ -3340,7 +3284,6 @@
                 await loadContests();
                 await loadMergers();
                 await loadExtracts();
-                await loadVoterCounts();
 
                 // Find the extract in state
                 const extract = state.extracts.find(e => e.id === extractId);
@@ -3353,36 +3296,11 @@
                     return;
                 }
 
-                // Check if user has voted on the source
-                let hasVotedOnSource = false;
-
-                if (extract.sourceType === 'contest') {
-                    // For contest source, check if user has voted on the contest
-                    hasVotedOnSource = !!state.userVotedContests[extract.sourceContestId];
-                } else if (extract.sourceType === 'merger') {
-                    // For merger source, check if user has voted on all contests in the merger
-                    const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                    if (sourceMerger) {
-                        const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
-                        const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
-                        hasVotedOnSource = votedContests.length === mergedContests.length && mergedContests.length > 0;
-                    }
-                }
-
                 // Clear the hash to avoid issues on reload
                 window.location.hash = '';
 
-                // Route user based on their voting status
-                const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-                const isCreator = state.user && state.user.id === extract.createdBy;
-
-                if (extract.isLocked || hasVotedOnSource || isAdmin || isCreator) {
-                    // Extract is locked, user has voted on source, or is admin/creator -> show extract results
-                    await viewExtractResults(extractId);
-                } else {
-                    // User hasn't voted on source -> show redirect modal
-                    showExtractVotingRedirectModal(extractId);
-                }
+                // Extracts are view-only — always show results directly
+                await viewExtractResults(extractId);
             } catch (error) {
                 console.error('Error loading shared extract:', error);
                 showAlert('Failed to load extract: ' + error.message, '❌');
@@ -3686,80 +3604,64 @@
             showLogoutConfirmation();
         }
 
-        async function loadVoterCounts() {
-            // Only show loading modal if not in initialization phase
-            if (!state.isInitializing) {
-                setLoading('Loading voter counts...');
-            }
+        // loadVoterCounts() removed — voter_count columns are now read directly from DB rows
+
+        // ==================== ARCHIVE CACHE FOR OLD CONTESTS ====================
+        const ARCHIVE_CACHE_KEY = 'peony_archived_contests_v1';
+        const ARCHIVE_AGE_DAYS = 30;
+
+        function isArchiveable(contest) {
+            const age = (Date.now() - new Date(contest.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+            return age >= ARCHIVE_AGE_DAYS;
+        }
+
+        function saveArchivedContestsToCache(contests) {
             try {
-                // Fetch all votes using pagination to avoid row limit
-                const votes = await fetchAllVotesPaginated('', 'contest_id,user_id');
-
-                if (Array.isArray(votes)) {
-                    // Calculate voter counts for each contest
-                    const contestVoterCounts = new Map();
-                    votes.forEach(vote => {
-                        if (!contestVoterCounts.has(vote.contest_id)) {
-                            contestVoterCounts.set(vote.contest_id, new Set());
-                        }
-                        contestVoterCounts.get(vote.contest_id).add(vote.user_id);
-                    });
-
-                    // Update contest voter counts
-                    state.contests.forEach(contest => {
-                        const voters = contestVoterCounts.get(contest.id);
-                        contest.voterCount = voters ? voters.size : 0;
-                    });
-
-                    // Update merger voter counts (count unique voters across all merged contests)
-                    state.mergers.forEach(merger => {
-                        const allVoters = new Set();
-                        merger.contestIds.forEach(contestId => {
-                            const voters = contestVoterCounts.get(contestId);
-                            if (voters) {
-                                voters.forEach(voterId => allVoters.add(voterId));
-                            }
-                        });
-                        merger.voterCount = allVoters.size;
-                    });
-
-                    // Update extract voter counts (count unique voters from source)
-                    state.extracts.forEach(extract => {
-                        const allVoters = new Set();
-                        if (extract.sourceType === 'contest') {
-                            const voters = contestVoterCounts.get(extract.sourceContestId);
-                            if (voters) {
-                                voters.forEach(voterId => allVoters.add(voterId));
-                            }
-                        } else if (extract.sourceType === 'merger') {
-                            const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                            if (merger) {
-                                merger.contestIds.forEach(contestId => {
-                                    const voters = contestVoterCounts.get(contestId);
-                                    if (voters) {
-                                        voters.forEach(voterId => allVoters.add(voterId));
-                                    }
-                                });
-                            }
-                        }
-                        extract.voterCount = allVoters.size;
-                    });
-                }
-            } catch (error) {
-                console.error('Error loading voter counts:', error);
-                // Don't throw - just log the error and continue with 0 voter counts
-            } finally {
-                // Only clear loading if not in initialization phase
-                if (!state.isInitializing) {
-                    clearLoading();
-                }
+                const toCache = contests.filter(isArchiveable);
+                if (toCache.length === 0) return;
+                const existing = loadArchivedContestsFromCache();
+                const existingMap = new Map(existing.map(c => [c.id, c]));
+                toCache.forEach(c => existingMap.set(c.id, c));
+                localStorage.setItem(ARCHIVE_CACHE_KEY, JSON.stringify({
+                    version: 1,
+                    savedAt: Date.now(),
+                    contests: Array.from(existingMap.values())
+                }));
+            } catch (e) {
+                console.warn('Failed to cache archived contests:', e);
             }
         }
 
-        async function loadContests() {
-            setLoading('Loading contests...');
+        function loadArchivedContestsFromCache() {
             try {
-                const response = await fetchFromSupabase('/rest/v1/contests?select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc');
+                const raw = localStorage.getItem(ARCHIVE_CACHE_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return parsed.contests || [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function bustArchivedContestCache() {
+            localStorage.removeItem(ARCHIVE_CACHE_KEY);
+            showToast('Archive cache cleared — will re-fetch on next load', 'success');
+        }
+        window.bustArchivedContestCache = bustArchivedContestCache;
+
+        async function loadContests({ offset = 0, limit = 10, append = false } = {}) {
+            if (!append) setLoading('Loading contests...');
+
+            // On initial load, pre-populate from archive cache for instant rendering
+            if (offset === 0 && !append) {
+                const cached = loadArchivedContestsFromCache();
+                if (cached.length > 0) {
+                    state.contests = cached;
+                }
+            }
+
+            try {
+                const response = await fetchFromSupabase(`/rest/v1/contests?select=id,contest_number,title,is_locked,results_public,created_by,voter_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)&order=created_at.desc&limit=${limit}&offset=${offset}`);
 
                 const contests = await response.json();
 
@@ -3769,8 +3671,12 @@
                     throw new Error(contests.message || 'Failed to load contests');
                 }
 
-                // Map contests with their voter counts from database fields
-                state.contests = contests.map(contest => ({
+                // Mark as exhausted if fewer than limit returned
+                if (contests.length < limit) {
+                    state.contestsExhausted = true;
+                }
+
+                const mapped = contests.map(contest => ({
                     id: contest.id,
                     contestNumber: contest.contest_number,
                     title: contest.title,
@@ -3780,20 +3686,34 @@
                     creatorName: contest.creator.username,
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
-                    voterCount: 0, // Will be updated after fetching voter counts
+                    voterCount: contest.voter_count ?? 0,
+                    _fullImagesLoaded: false,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
                         .map(img => ({
                             id: img.id,
-                            url: img.url,
-                            author: img.author,
-                            isFileUpload: img.is_file_upload
+                            url: img.url
                         }))
                 }));
 
-                // Load voter counts after loading contests (unless in initialization phase)
+                if (append) {
+                    // Append new contests, dedup by id
+                    const existingIds = new Set(state.contests.map(c => c.id));
+                    const newContests = mapped.filter(c => !existingIds.has(c.id));
+                    state.contests = [...state.contests, ...newContests];
+                } else {
+                    // Merge fresh data with cached data (fresh takes priority)
+                    const freshIds = new Set(mapped.map(c => c.id));
+                    const cachedOnly = state.contests.filter(c => !freshIds.has(c.id));
+                    state.contests = [...mapped, ...cachedOnly];
+                    state.contestsOffset = 0;
+                    state.contestsExhausted = contests.length < limit;
+                }
+
+                // Persist old contests to archive cache
+                saveArchivedContestsToCache(state.contests);
+
                 if (!state.isInitializing) {
-                    await loadVoterCounts();
                     render();
                 }
             } catch (error) {
@@ -3801,6 +3721,7 @@
                 console.error('Error message:', error.message);
                 showAlert('Error: ' + error.message, '❌');
             } finally {
+                state.loadingMoreContests = false;
                 // Only clear loading if not in initialization phase
                 if (!state.isInitializing) {
                     clearLoading();
@@ -3808,9 +3729,39 @@
             }
         }
 
+        async function loadMoreContests() {
+            state.loadingMoreContests = true;
+            render();
+            state.contestsOffset += 10;
+            await loadContests({ offset: state.contestsOffset, limit: 10, append: true });
+            render();
+        }
+
+        async function loadContestImages(contestId) {
+            const contest = state.contests.find(c => c.id === contestId);
+            if (!contest) return;
+            if (contest._fullImagesLoaded) return; // Already loaded full image data
+
+            try {
+                const response = await fetchFromSupabase(`/rest/v1/images?contest_id=eq.${contestId}&select=id,url,author,is_file_upload,image_order&order=image_order.asc`);
+                const images = await response.json();
+                if (Array.isArray(images)) {
+                    contest.images = images.map(img => ({
+                        id: img.id,
+                        url: img.url,
+                        author: img.author,
+                        isFileUpload: img.is_file_upload
+                    }));
+                    contest._fullImagesLoaded = true;
+                }
+            } catch (error) {
+                console.error('Error loading contest images:', error);
+            }
+        }
+
         async function loadMergers() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?select=*,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -3829,7 +3780,7 @@
                         contestIds: m.contest_ids,
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
-                        voterCount: 0, // Will be updated by loadVoterCounts
+                        voterCount: m.voter_count ?? 0,
                         type: 'merger'
                     }));
                 }
@@ -3840,7 +3791,7 @@
 
         async function loadExtracts() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=*,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,source_contract_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -3862,7 +3813,7 @@
                         imageIds: e.image_ids,
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
-                        voterCount: 0, // Will be updated by loadVoterCounts
+                        voterCount: e.voter_count ?? 0,
                         type: 'extract'
                     }));
                 }
@@ -4826,7 +4777,11 @@
             });
         }
 
-        function startVoting(contest, loadAutosaves = false) {
+        async function startVoting(contest, loadAutosaves = false) {
+            // Ensure full image data (author, isFileUpload) is loaded
+            if (!contest.isExtract) {
+                await loadContestImages(contest.id);
+            }
             state.currentContest = contest;
             state.shuffledImages = shuffleArray(contest.images);
             state.votes = {};
@@ -4892,10 +4847,15 @@
             // Skip database check for extracts
             const isExtract = contest.isExtract === true;
 
+            // Ensure full image data is loaded before viewing results
+            if (!isExtract) {
+                await loadContestImages(contest.id);
+            }
+
             if (!isExtract) {
                 // Check if contest still exists in the database
                 try {
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=*`, {
+                    const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=id,results_public,is_locked`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -4970,6 +4930,7 @@
                 return;
             }
 
+            await loadContestImages(contest.id);
             state.currentContest = contest;
             state.votes = {};
             await loadResults();
@@ -4995,6 +4956,7 @@
                     contest = contestOrId;
                 }
 
+                await loadContestImages(contest.id);
                 state.currentContest = contest;
                 state.votes = {};
                 await loadResults();
@@ -5020,6 +4982,7 @@
                     return;
                 }
 
+                await Promise.all(merger.contestIds.map(cid => loadContestImages(cid)));
                 state.currentMergerId = mergerId;
                 state.mergerContestIds = merger.contestIds;
                 state.votes = {};
@@ -5035,27 +4998,10 @@
             }
         }
 
-        async function adminViewExtractResults(extractId) {
-            setLoading('Loading extract results...');
-            try {
-                const extract = state.extracts.find(e => e.id === extractId);
-                if (!extract) {
-                    showAlert('Extract not found', '❌');
-                    clearLoading();
-                    return;
-                }
 
-                // Navigate to the extract's results view
-                await viewExtractResults(extractId);
-                clearLoading();
-            } catch (error) {
-                console.error('Error loading extract results:', error);
-                clearLoading();
-                showAlert('Error loading extract results: ' + error.message, '❌');
-            }
-        }
-
-        function startRevoteFromHome(contest) {
+        async function startRevoteFromHome(contest) {
+            // Ensure full image data is loaded before revoting
+            await loadContestImages(contest.id);
             // Set the current contest first
             state.currentContest = contest;
             // Then call the standard revote flow
@@ -5782,6 +5728,9 @@
                 }
             }
 
+            // Ensure full image data is loaded for all merger contests
+            await Promise.all(merger.contestIds.map(cid => loadContestImages(cid)));
+
             // Store current merger for revote functionality
             state.currentMergerId = mergerId;
 
@@ -5804,6 +5753,9 @@
                 showToast('This merger is locked', 'error');
                 return;
             }
+
+            // Ensure full image data is loaded for all merger contests
+            await Promise.all(merger.contestIds.map(cid => loadContestImages(cid)));
 
             // Get all contests in the merger
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
@@ -6123,88 +6075,6 @@
             };
 
             startVoting(votingContest);
-        }
-
-        // Extract voting redirect modal
-        function showExtractVotingRedirectModal(extractId) {
-            const extract = state.extracts.find(e => e.id === extractId);
-            if (!extract) {
-                showToast('Extract not found', 'error');
-                return;
-            }
-
-            // Determine the source
-            let sourceName = '';
-            let sourceType = '';
-            if (extract.sourceType === 'contest') {
-                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                sourceName = sourceContest ? sourceContest.title : 'Unknown Contest';
-                sourceType = 'contest';
-            } else if (extract.sourceType === 'merger') {
-                const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                sourceName = sourceMerger ? sourceMerger.name : 'Unknown Merger';
-                sourceType = 'merger';
-            }
-
-            const message = `In order to be able to see this extract's results, you will be prompted to vote in the original ${sourceType}: ${sourceName}`;
-
-            // Store the extractId for the action function
-            state.pendingExtractId = extractId;
-
-            state.modal = {
-                icon: '📋',
-                title: 'Vote on Extract',
-                message: message,
-                buttons: [
-                    { text: 'OK', action: 'redirectToExtractSource', primary: true }
-                ]
-            };
-            document.body.classList.add('modal-open');
-            render();
-        }
-
-        function redirectToExtractSource() {
-            const extractId = state.pendingExtractId;
-            const extract = state.extracts.find(e => e.id === extractId);
-
-            state.modal = null;
-            state.pendingExtractId = null;
-            document.body.classList.remove('modal-open');
-
-            if (!extract) {
-                showToast('Extract not found', 'error');
-                return;
-            }
-
-            // Redirect to source contest or merger voting
-            if (extract.sourceType === 'contest') {
-                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                if (sourceContest) {
-                    // Check if user has partially voted
-                    const userVotes = state.userVotedContests[sourceContest.id] || {};
-                    const votedImageCount = Object.keys(userVotes).length;
-                    const hasVotedSome = votedImageCount > 0 && votedImageCount < sourceContest.images.length;
-
-                    // Start voting on the contest
-                    startVoting(sourceContest);
-                }
-            } else if (extract.sourceType === 'merger') {
-                const sourceMerger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                if (sourceMerger) {
-                    // Check if user has partially voted on the merger
-                    const mergedContests = state.contests.filter(c => sourceMerger.contestIds.includes(c.id));
-                    const votedContests = mergedContests.filter(c => state.userVotedContests[c.id]);
-                    const hasVotedSome = votedContests.length > 0 && votedContests.length < mergedContests.length;
-
-                    if (hasVotedSome) {
-                        // Show merger "Complete Voting" modal
-                        showMergerVoteModal(sourceMerger.id);
-                    } else {
-                        // Start voting on the merger
-                        startMergerVoting(sourceMerger.id, false);
-                    }
-                }
-            }
         }
 
         // ==================== END MERGER SYSTEM FUNCTIONS ====================
@@ -6641,114 +6511,22 @@
             }
         }
 
-        async function startExtractVoting(extractId, revoteAll = true) {
-            const extract = state.extracts.find(e => e.id === extractId);
-            if (!extract) {
-                showToast('Extract not found', 'error');
-                return;
-            }
-
-            if (extract.isLocked) {
-                showToast('This extract is locked', 'error');
-                return;
-            }
-
-            // Get source contest to find the images
-            let sourceContest = null;
-            let sourceImages = [];
-
-            if (extract.sourceType === 'contest') {
-                sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                if (sourceContest) {
-                    sourceImages = sourceContest.images;
-                }
-            } else if (extract.sourceType === 'merger') {
-                // For mergers, we need to get all images from all merged contests
-                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                if (merger) {
-                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                    sourceImages = mergedContests.flatMap(c => c.images);
-                    // Create a pseudo source contest for ID purposes
-                    sourceContest = {
-                        id: merger.contestIds[0], // Use first contest ID for vote storage
-                        title: extract.name,
-                        createdBy: extract.createdBy,
-                        creatorName: extract.creatorName,
-                        creatorAvatar: extract.creatorAvatar
-                    };
-                }
-            } else if (extract.sourceType === 'extract') {
-                // Get images from source extract
-                const sourceExtract = state.extracts.find(e => e.id === extract.sourceContestId);
-                if (sourceExtract && sourceExtract.sourceType === 'contest') {
-                    const originalContest = state.contests.find(c => c.id === sourceExtract.sourceContestId);
-                    if (originalContest) {
-                        sourceImages = originalContest.images;
-                        sourceContest = originalContest;
-                    }
-                }
-            }
-
-            if (!sourceContest || sourceImages.length === 0) {
-                showToast('Source not found', 'error');
-                return;
-            }
-
-            // Filter images to only those in the extract
-            const extractImages = sourceImages.filter(img => extract.imageIds.includes(img.id));
-
-            // If revoteAll is false, filter to only unvoted images
-            let imagesToVote = extractImages;
-            if (!revoteAll) {
-                // Get user's voted images from source contest(s)
-                let votedImageIds = [];
-                if (extract.sourceType === 'contest' && extract.sourceContestId) {
-                    const userVotes = state.userVotedContests[extract.sourceContestId] || {};
-                    votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
-                } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
-                    const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                    if (merger) {
-                        let allVotedImageIds = [];
-                        merger.contestIds.forEach(contestId => {
-                            const userVotes = state.userVotedContests[contestId] || {};
-                            allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
-                        });
-                        votedImageIds = allVotedImageIds;
-                    }
-                }
-                imagesToVote = extractImages.filter(img => !votedImageIds.includes(img.id));
-            }
-
-            if (imagesToVote.length === 0) {
-                showToast('No images to vote on', 'info');
-                return;
-            }
-
-            // Create a temporary contest object for voting
-            const extractContest = {
-                id: extractId,
-                title: extract.name,
-                images: imagesToVote,
-                createdBy: extract.createdBy,
-                creatorName: extract.creatorName,
-                creatorAvatar: extract.creatorAvatar,
-                isExtract: true,
-                extractSourceType: extract.sourceType,
-                extractSourceContestId: extract.sourceContestId,
-                extractSourceMergerId: extract.sourceMergerId,
-                extractImageIds: extract.imageIds,
-                isPartialVoting: !revoteAll,
-                originalContestId: extractId
-            };
-
-            startVoting(extractContest);
-        }
 
         async function viewExtractResults(extractId) {
             const extract = state.extracts.find(e => e.id === extractId);
             if (!extract) {
                 showToast('Extract not found', 'error');
                 return;
+            }
+
+            // Ensure full image data is loaded for source contests
+            if (extract.sourceType === 'contest') {
+                await loadContestImages(extract.sourceContestId);
+            } else if (extract.sourceType === 'merger') {
+                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
+                if (merger) {
+                    await Promise.all(merger.contestIds.map(cid => loadContestImages(cid)));
+                }
             }
 
             // Check if user can view results (admin, creator, or source has public results)
@@ -7165,11 +6943,7 @@
                 return;
             }
 
-            // Refresh contest list (this now includes fresh voter counts)
-            console.log('🔄 [CLEANUP] Refreshing contest list');
-            await loadContests();
-
-            // Reset all contest-related state
+            // Reset all contest-related state (voter counts already updated in local state)
             state.view = 'home';
             window.location.hash = ''; // Clear hash to avoid confusion on reload
             state.currentContest = null;
@@ -8181,15 +7955,14 @@
                 // Count unique voters from users table
                 const totalUniqueVoters = users.length;
 
-                // Count total votes using COUNT(*)
-                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=*`, {
+                // Count total votes using COUNT(*) with minimal payload
+                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=id`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Prefer': 'count=exact',
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
+                        'Range': '0-0',
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
                     }
                 });
 
@@ -10897,36 +10670,6 @@
                             }
                         });
 
-                        // Check extracts for partial votes (skip locked or older than 1 month)
-                        filteredExtracts.forEach(extract => {
-                            if (extract.isLocked) return;
-                            if (isOlderThanMonth(extract)) return;
-                            const extractImageIds = extract.imageIds || [];
-                            const totalImages = extractImageIds.length;
-
-                            // Get the source contest ID for this extract
-                            let sourceContestId = null;
-                            if (extract.sourceType === 'contest') {
-                                sourceContestId = extract.sourceId;
-                            } else if (extract.sourceType === 'merger') {
-                                // For mergers, we need to check all merged contests
-                                const merger = state.mergers.find(m => m.id === extract.sourceId);
-                                if (merger && merger.contestIds && merger.contestIds.length > 0) {
-                                    sourceContestId = merger.contestIds[0]; // Use first contest for simplicity
-                                }
-                            }
-
-                            if (sourceContestId) {
-                                const userVotes = state.userVotedContests[sourceContestId];
-                                if (userVotes) {
-                                    // Count how many extract images have been voted on
-                                    const votedImages = extractImageIds.filter(imgId => userVotes[imgId]).length;
-                                    if (votedImages > 0 && votedImages < totalImages) {
-                                        itemsToComplete.push({ item: extract, type: 'extract', votedImages, totalImages });
-                                    }
-                                }
-                            }
-                        });
 
                         // Sort items by created_at (newest first)
                         itemsToComplete.sort((a, b) => {
@@ -10966,7 +10709,7 @@
 
                                             if (type === 'contest') return renderContestCard(item, false, unvotedLabel);
                                             if (type === 'merger') return renderMergerCard(item, false, unvotedLabel);
-                                            if (type === 'extract') return renderExtractCard(item, false, unvotedLabel);
+
                                             return '';
                                         }).join('')}
                                     </div>
@@ -11353,6 +11096,20 @@
                                     >
                                         Show ${allItems.length - 6} more items
                                     </button>
+                                ` : ''}
+                                ${!state.contestsExhausted ? `
+                                    ${state.loadingMoreContests ? `
+                                        <div class="w-full text-center text-sm text-gray-500 py-3">
+                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more contests...
+                                        </div>
+                                    ` : `
+                                        <button
+                                            onclick="loadMoreContests()"
+                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                        >
+                                            Show more contests
+                                        </button>
+                                    `}
                                 ` : ''}
                             `;
                         }
@@ -12304,7 +12061,7 @@
             `;
         }
 
-        function renderExtractCard(extract, isPinned = false, unvotedLabel = null) {
+        function renderExtractCard(extract, isPinned = false) {
             // Get source reference
             let sourceRef = 'Unknown';
             if (extract.sourceType === 'contest') {
@@ -12318,57 +12075,7 @@
                 sourceRef = sourceExtract ? sourceExtract.name : 'Unknown Extract';
             }
 
-            // Check if user has voted on this extract
-            // For extracts, we need to check if user has voted on ALL images in the extract
-            let hasVotedAll = false;
-            let hasVotedSome = false;
-            let hasVotedNone = true;
-            let sourceFullyVoted = false; // Track if origin contest/merger was already fully voted
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-
-            if (extract.sourceType === 'contest' && extract.sourceContestId) {
-                const sourceContest = state.contests.find(c => c.id === extract.sourceContestId);
-                const userVotes = state.userVotedContests[extract.sourceContestId] || {};
-                const votedImageIds = Object.keys(userVotes).map(id => parseInt(id));
-                const votedCount = extract.imageIds.filter(imageId => votedImageIds.includes(imageId)).length;
-
-                // Check if the source contest itself has been fully voted
-                if (sourceContest) {
-                    const totalVotedInContest = Object.keys(userVotes).length;
-                    sourceFullyVoted = totalVotedInContest === sourceContest.images.length && sourceContest.images.length > 0;
-                }
-
-                hasVotedAll = votedCount === extract.imageIds.length && extract.imageIds.length > 0;
-                hasVotedSome = votedCount > 0 && votedCount < extract.imageIds.length;
-                hasVotedNone = votedCount === 0;
-            } else if (extract.sourceType === 'merger' && extract.sourceMergerId) {
-                // For mergers, check if user has voted on all images from any of the merged contests
-                const merger = state.mergers.find(m => m.id === extract.sourceMergerId);
-                if (merger) {
-                    // Check if the source merger itself has been fully voted
-                    const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
-                    const contestVotingStatus = mergedContests.map(c => {
-                        const userVotes = state.userVotedContests[c.id] || {};
-                        const votedImageCount = Object.keys(userVotes).length;
-                        const totalImageCount = c.images.length;
-                        return votedImageCount === totalImageCount && totalImageCount > 0;
-                    });
-                    sourceFullyVoted = contestVotingStatus.every(voted => voted) && mergedContests.length > 0;
-
-                    // Check if user has voted on all extract images across all merged contests
-                    let allVotedImageIds = [];
-                    merger.contestIds.forEach(contestId => {
-                        const userVotes = state.userVotedContests[contestId] || {};
-                        allVotedImageIds.push(...Object.keys(userVotes).map(id => parseInt(id)));
-                    });
-                    const votedCount = extract.imageIds.filter(imageId => allVotedImageIds.includes(imageId)).length;
-
-                    hasVotedAll = votedCount === extract.imageIds.length && extract.imageIds.length > 0;
-                    hasVotedSome = votedCount > 0 && votedCount < extract.imageIds.length;
-                    hasVotedNone = votedCount === 0;
-                }
-            }
-
             const imageCount = extract.imageIds.length;
             const isBanned = state.bannedUsers.includes(state.user.id);
             const createdDate = formatDate(extract.createdAt);
@@ -12389,11 +12096,6 @@
 
             return `
                 <div class="bg-yellow-50 border-2 border-yellow-400 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
-                    ${unvotedLabel ? `
-                        <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
-                            ${unvotedLabel}
-                        </div>
-                    ` : ''}
                     ${isAdmin && state.appSettings.show_pin_icons ? `
                         <button
                             onclick="togglePin(event, 'extract', '${extract.id}', ${isPinned})"
@@ -12435,59 +12137,6 @@
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
-                        ` : extract.isLocked ? `
-                            <button
-                                onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
-                            >
-                                View Results
-                            </button>
-                        ` : sourceFullyVoted ? `
-                            <button
-                                onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
-                            >
-                                View Results
-                            </button>
-                        ` : hasVotedAll ? `
-                            <button
-                                onclick='startExtractVoting("${extract.id}", true)'
-                                class="flex-[0.5] bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm"
-                            >
-                                Revote
-                            </button>
-                            <button
-                                onclick='viewExtractResults("${extract.id}")'
-                                class="flex-[1.5] bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
-                            >
-                                View Results
-                            </button>
-                        ` : hasVotedSome ? `
-                            <button
-                                onclick='startExtractVoting("${extract.id}", false)'
-                                class="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white py-2 rounded-lg font-semibold hover:from-yellow-600 hover:to-yellow-700 transition shadow-md text-sm"
-                            >
-                                Complete Voting
-                            </button>
-                            <button
-                                onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
-                            >
-                                View Results
-                            </button>
-                        ` : hasVotedNone ? `
-                            <button
-                                onclick='showExtractVotingRedirectModal("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm"
-                            >
-                                Start Voting
-                            </button>
-                            <button
-                                onclick='viewExtractResults("${extract.id}")'
-                                class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
-                            >
-                                View Results
-                            </button>
                         ` : `
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
@@ -14484,6 +14133,14 @@
                                         </div>
                                     ` : '<p class="text-sm text-gray-500 italic">No users have logged in yet</p>'}
                                 </div>
+
+                                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
+                                    <h4 class="font-bold text-gray-800 mb-2">Cache Management</h4>
+                                    <button onclick="bustArchivedContestCache()" class="bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-orange-600 transition">
+                                        Clear Archive Cache
+                                    </button>
+                                    <p class="text-xs text-gray-500 mt-1">Clears locally cached contests older than 30 days. They will be re-fetched from the database on next load.</p>
+                                </div>
                             </div>
                             `}
                         </div>
@@ -15250,11 +14907,11 @@
         window.finishCreateContest = finishCreateContest;
         window.confirmFinishCreateContest = confirmFinishCreateContest;
         window.startVoting = startVoting;
+        window.loadMoreContests = loadMoreContests;
         window.viewResults = viewResults;
         window.viewLockedResults = viewLockedResults;
         window.adminViewResults = adminViewResults;
         window.adminViewMergerResults = adminViewMergerResults;
-        window.adminViewExtractResults = adminViewExtractResults;
         window.startRevote = startRevote;
         window.startRevoteFromHome = startRevoteFromHome;
         window.confirmRevote = confirmRevote;
@@ -15350,8 +15007,6 @@
         window.showContestVoteModal = showContestVoteModal;
         window.confirmContestVoteMissingOnly = confirmContestVoteMissingOnly;
         window.confirmContestRevoteAll = confirmContestRevoteAll;
-        window.showExtractVotingRedirectModal = showExtractVotingRedirectModal;
-        window.redirectToExtractSource = redirectToExtractSource;
         window.setExtractContestFilter = setExtractContestFilter;
         window.startContestVoting = startContestVoting;
         window.openCreateExtractModal = openCreateExtractModal;
@@ -15359,7 +15014,6 @@
         window.openUnifiedCreateModal = openUnifiedCreateModal;
         window.closeUnifiedCreateModal = closeUnifiedCreateModal;
         window.deleteExtract = deleteExtract;
-        window.startExtractVoting = startExtractVoting;
         window.viewExtractResults = viewExtractResults;
         window.selectExtractSource = selectExtractSource;
         window.toggleExtractImage = toggleExtractImage;
@@ -15465,16 +15119,27 @@
                 try {
                     const user = JSON.parse(storedUser);
 
-                    // Check if user is banned and get ban reason, also load dark theme preference
-                    // Only clear auth on confirmed ban, not on network errors
+                    // Restore session immediately so UI renders logged-in state
+                    state.user = {
+                        id: user.id,
+                        username: user.username,
+                        avatar: user.avatar
+                    };
+                    state.isLoggedIn = true;
+
+                    // Check if user is banned (with 5s timeout so it never blocks the app)
                     try {
-                        const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
+                        const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                                 'Cache-Control': 'no-cache'
                             }
                         });
+                        const timeoutPromise = new Promise((_, reject) =>
+                            setTimeout(() => reject(new Error('Ban check timed out')), 5000)
+                        );
+                        const banCheckResponse = await Promise.race([banCheckPromise, timeoutPromise]);
 
                         if (banCheckResponse.ok) {
                             const userData = await banCheckResponse.json();
@@ -15483,6 +15148,8 @@
                             if (userData && userData.length > 0 && userData[0].is_banned === true) {
                                 const banReason = userData[0].ban_reason || 'No reason provided';
                                 localStorage.removeItem('peony_user');
+                                state.isLoggedIn = false;
+                                state.user = null;
                                 showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
                                 return; // Exit early, don't proceed with login
                             }
@@ -15493,45 +15160,20 @@
                                 document.body.classList.add('dark-theme');
                             }
                         } else {
-                            // Network error or API issue - don't log out, just warn
                             console.warn('Failed to check ban status, proceeding with cached session');
                         }
                     } catch (banCheckError) {
-                        // Network error checking ban status - don't log out the user
                         console.warn('Ban check failed, proceeding with cached session:', banCheckError);
                     }
 
-                    // User not banned (or ban check failed), proceed with login
-                    state.isLoggedIn = true;
-                    // AFTER: ensure user exists, then continue
-                    state.user = {
-                        id: user.id,
-                        username: user.username,
-                        avatar: user.avatar
-                    };
-
-                    // Ensure the row exists in public.users, then continue
-                    ensureLocalUser(state.user)
-                        .then(async () => {
-                            // proceed normally once the user row is present (or insertion attempted)
-                            await loadContests();
-                            await loadPinnedItems();
-
-                            render();
-                        })
-                        .catch(async (err) => {
-                            // should not happen because ensureLocalUser swallows errors, but safe fallback
-                            console.error('ensureLocalUser unexpected error:', err);
-                            await loadContests();
-                            await loadPinnedItems();
-                            render();
-                        });
+                    // Ensure the user row exists in public.users
+                    await ensureLocalUser(state.user).catch(err => {
+                        console.error('ensureLocalUser unexpected error:', err);
+                    });
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
-                    // Don't clear on network errors or other transient issues
                     console.error('Error loading user session:', e);
                     if (e instanceof SyntaxError) {
-                        // JSON parse error - clear corrupted data
                         localStorage.removeItem('peony_user');
                     }
                 }
@@ -15547,19 +15189,19 @@
             state.isInitializing = true;
             setLoading('Loading...');
 
-            await Promise.all([
-                loadContests(),
-                loadMergers(),
-                loadExtracts(),
-                loadAppSettings()
-            ]);
+            // Always load app settings (tiny payload, needed for UI)
+            await loadAppSettings();
 
-            // Load voter counts after all contests, mergers, and extracts are loaded
-            await loadVoterCounts();
-
-            if (state.user) {
-                await loadUserVotes();
-                await loadAllUserAutosaves();
+            // Only load data if user is logged in
+            if (state.isLoggedIn) {
+                await Promise.all([
+                    loadContests(),
+                    loadMergers(),
+                    loadExtracts(),
+                    loadUserVotes(),
+                    loadAllUserAutosaves(),
+                    loadPinnedItems()
+                ]);
             }
 
             // Parse URL search parameter
@@ -15581,6 +15223,36 @@
             if (window.location.hash && state.isLoggedIn) {
                 handleHashChange();
             }
+
+            // Re-check ban status when tab regains focus
+            document.addEventListener('visibilitychange', async () => {
+                if (document.visibilityState !== 'visible' || !state.isLoggedIn || !state.user) return;
+                try {
+                    const resp = await Promise.race([
+                        fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${state.user.id}&select=is_banned,ban_reason`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+                    ]);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data && data.length > 0 && data[0].is_banned === true) {
+                            const banReason = data[0].ban_reason || 'No reason provided';
+                            localStorage.removeItem('peony_user');
+                            state.isLoggedIn = false;
+                            state.user = null;
+                            showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
+                            render();
+                        }
+                    }
+                } catch (e) {
+                    // Silently ignore - don't disrupt the session
+                }
+            });
         })();
         }); // End DOMContentLoaded event listener
     </script>
