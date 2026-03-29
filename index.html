@@ -1592,6 +1592,7 @@
             if (!state.showScoringFormulaModal) return '';
             const p = state.scoringFormula;
             const formulaNames = { 1: 'Linear', 2: 'Squared', 3: 'Cubed' };
+            const formulaFormalNames = { 1: 'Arithmetic Mean', 2: 'Root Mean Square (RMS)', 3: 'Cubic Mean' };
             const formulaDescriptions = {
                 1: 'Simple average. All scores contribute equally.',
                 2: 'Higher scores are weighted more heavily. A single low vote has less impact on the final ranking.',
@@ -1673,7 +1674,8 @@
                         </div>
 
                         <div class="bg-gray-50 rounded-lg p-3">
-                            <div class="text-sm font-semibold text-gray-800 mb-1">${formulaNames[p]} Average${p === 2 ? ' (Default)' : ''}</div>
+                            <div class="text-sm font-semibold text-gray-800 mb-0.5">${formulaNames[p]} Average${p === 2 ? ' (Default)' : ''}</div>
+                            <div class="text-xs text-mauve-600 font-medium mb-1">Also known as ${formulaFormalNames[p]}</div>
                             <div class="text-xs text-gray-600 mb-2">${formulaDescriptions[p]}</div>
                             <div class="text-xs font-mono text-mauve-600 bg-white rounded px-2 py-1 inline-block">${formulaLabels[p]}</div>
                             ${sampleHTML}
