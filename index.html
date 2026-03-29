@@ -1023,7 +1023,7 @@
             countMode: 'images',  // 'images' or 'users' for Count tab toggle
             comparisonView: null,  // null, 'table', or 'detail' for By User comparison
             comparisonDetailUserId: null,  // User whose detail comparison is being viewed
-            comparisonDetailView: 'match',  // 'match' or 'relative' toggle in comparison detail (drill-down always opens match)
+            comparisonDetailView: 'unified',  // 'unified', 'match', or 'relative' toggle in comparison detail
             comparisonDetailCollapsed: {},  // Collapsed state for comparison detail categories
             comparisonTableView: 'unified',  // 'unified', 'match', or 'relative' for comparison table columns
             comparisonAvgView: 'unified',  // 'unified', 'match', or 'relative' for contest average comparison
@@ -7038,8 +7038,8 @@
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
-            state.comparisonTableView = 'match';
-            state.comparisonAvgView = 'match';
+            state.comparisonTableView = 'unified';
+            state.comparisonAvgView = 'unified';
             state.comparisonTableSortKeys = [];
             state.collapsedSections = {};
 
@@ -7079,8 +7079,8 @@
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
-            state.comparisonTableView = 'match';
-            state.comparisonAvgView = 'match';
+            state.comparisonTableView = 'unified';
+            state.comparisonAvgView = 'unified';
             state.comparisonTableSortKeys = [];
             state.collapsedSections = {};
 
@@ -7647,7 +7647,7 @@
         function showComparisonDetail(targetUserId) {
             state.comparisonDetailUserId = targetUserId;
             state.comparisonView = 'detail';
-            state.comparisonDetailView = targetUserId === '__contest_average__' ? 'match' : 'match';
+            state.comparisonDetailView = 'unified';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -7699,7 +7699,7 @@
         function startAverageCompareAll() {
             state.averageTabCompareAll = true;
             state.averageTabCompareUserId = null;
-            state.comparisonAvgView = 'match';
+            state.comparisonAvgView = 'unified';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -7712,7 +7712,7 @@
 
         function showAverageCompareUser(userId) {
             state.averageTabCompareUserId = userId;
-            state.comparisonAvgView = 'match';
+            state.comparisonAvgView = 'unified';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -7883,6 +7883,18 @@
                 }));
             }
 
+            if (viewMode === 'unified') {
+                // Unified: single sorted list by absolute difference (closest first)
+                const sorted = [...comparisons].sort((a, b) => a.absDiff - b.absDiff);
+                const total = sorted.length;
+                const exact = comparisons.filter(c => c.absDiff <= 0.50).length;
+                const close = comparisons.filter(c => c.absDiff > 0.50 && c.absDiff <= 1.00).length;
+                const unifiedPct = total > 0 ? (((exact + close * 0.5) / total) * 100).toFixed(0) : '0';
+                return [
+                    { key: 'cmp_unified', label: `All Images — Unified ${unifiedPct}%`, range: 'Sorted by closeness to average', color: '#c4b5fd', darkColor: '#2d1a5e', items: sorted, subcategories: buildUserScoreSubs(sorted, 'cmp_unified') }
+                ];
+            }
+
             if (viewMode === 'relative') {
                 // Relative: Near Exact (±0.50), Above Average, Below Average
                 const nearExact = comparisons.filter(c => c.absDiff <= 0.50);
@@ -7972,7 +7984,15 @@
                 { key: 'uvu_below', label: 'Below Yours', color: '#fdba74', darkColor: '#4a3a1a', items: belowItems, subcategories: buildScorePairSubs(belowItems, 'uvu_below') }
             ];
 
-            return { matchBased, relativeBased };
+            // Unified: single sorted list by absolute difference
+            const unifiedSorted = [...comparisons].sort((a, b) => a.absDiff - b.absDiff);
+            const total = comparisons.length;
+            const unifiedPct = total > 0 ? (((exactItems.length + closeItems.length * 0.5) / total) * 100).toFixed(0) : '0';
+            const unified = [
+                { key: 'uvu_unified', label: `All Images — Unified ${unifiedPct}%`, color: '#c4b5fd', darkColor: '#2d1a5e', items: unifiedSorted, subcategories: buildScorePairSubs(unifiedSorted, 'uvu_unified') }
+            ];
+
+            return { matchBased, relativeBased, unified };
         }
 
         function updateScale(value) {
@@ -13410,6 +13430,7 @@
 
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonAvgView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
@@ -13742,7 +13763,8 @@
                 const targetVoter = state.contestVoters.find(v => v.userId === targetId);
                 targetName = targetVoter ? targetVoter.username : 'Unknown';
                 const data = generateUserVsUserComparison(targetId);
-                categories = state.comparisonDetailView === 'match' ? data.matchBased : data.relativeBased;
+                const dvMode = state.comparisonDetailView;
+                categories = dvMode === 'unified' ? data.unified : dvMode === 'match' ? data.matchBased : data.relativeBased;
             }
 
             return `
@@ -13758,12 +13780,14 @@
                         ${isContestAvg ? `
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonAvgView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
                         ` : `
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonDetailView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonDetailView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonDetailView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
