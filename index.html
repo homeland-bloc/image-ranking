@@ -980,9 +980,14 @@
             userLeaderboardData: null, // null | 'loading' | Array of user stat objects
             leaderboardSortKey: 'totalVotes',
             leaderboardSortDir: 'desc',
-            leaderboardStatType: 'totalVotes', // 'totalVotes'|'totalContests'|'totalCreated'|'scoreCounter'|'avgScoreCounter'|'totalAvg'|'highestAvg'|'lowestAvg'
-            leaderboardSelectedScore: 1, // 1-5 for scoreCounter / avgScoreCounter
+            leaderboardStatType: 'totalVotes', // 'totalVotes'|'totalContests'|'totalCreated'|'scoreFrequency'|'totalAvg'
+            leaderboardSelectedScore: 1, // 1-5 for scoreFrequency
             hideLowConfidenceGlobal: false, // Hide low-confidence rows in global similarity
+            voteSpreadShowCount: true, // true = show counts, false = show % in vote spread
+            showVoteSpread: false, // Whether vote spread section is visible in user profile
+            averageTabShowCount: true, // true = show counts, false = show % in Average tab voter cards
+            leaderboardShowCount: true, // true = show counts, false = show % in leaderboard score frequency
+            hideLowConfidenceLeaderboard: false, // Hide low-confidence rows in leaderboard
             showVoteContestCounts: null, // null = auto (true on desktop, false on mobile), true/false = user override
             globalSimilarityExcludedContests: {}, // userId -> [] of excluded contest IDs
             globalSimilarityContestFilterOpen: {}, // userId -> bool (contest filter panel open)
@@ -1591,8 +1596,8 @@
             const p = state.scoringFormula;
             const isDark = document.body.classList.contains('dark-theme');
             const formulaNames = { 1: 'Linear', 2: 'Squared', 3: 'Cubed' };
-            const formulaEmojis = { 1: '📏', 2: '🟦', 3: '🧊' };
-            const formulaFormalNames = { 1: 'Arithmetic Mean', 2: 'Root Mean Square (RMS)', 3: 'Cubic Mean' };
+            const formulaEmojis = { 1: '📏', 2: '🧱', 3: '🧊' };
+            const formulaFormalNames = { 1: 'Arithmetic Mean', 2: 'Quadratic Mean, or Root Mean Square (RMS)', 3: 'Cubic Mean' };
             const formulaDescriptions = {
                 1: 'Simple average. All scores contribute equally.',
                 2: 'Higher scores are weighted more heavily. A single low vote has less impact on the final ranking.',
@@ -1695,11 +1700,11 @@
                         <p class="text-sm ${textSub} mb-4">Choose how image scores are calculated. Higher-power formulas reward top scores more and reduce the impact of low outlier votes.</p>
 
                         <div class="flex gap-2 mb-4">
-                            ${[{p:1,label:'📏 Linear'},{p:2,label:'🟦 Squared'},{p:3,label:'🧊 Cubed'}].map(opt => `
+                            ${[{p:1,label:'📏 Linear'},{p:2,label:'🧱 Squared'},{p:3,label:'🧊 Cubed'}].map(opt => `
                                 <button
                                     onclick="setScoringFormula(${opt.p})"
                                     class="flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${state.scoringFormula === opt.p ? 'bg-mauve-400 text-white' : btnInactive}"
-                                >${opt.label}${opt.p === 2 ? ' ★' : ''}</button>
+                                >${opt.label}</button>
                             `).join('')}
                         </div>
 
@@ -1763,7 +1768,7 @@
                 .map(voter => ({
                     ...voter,
                     averageScore: voter.votes.length > 0
-                        ? powerMean(voter.votes, state.scoringFormula)
+                        ? powerMean(voter.votes, 1)
                         : 0
                 }));
 
@@ -7811,7 +7816,8 @@
         function showComparisonDetail(targetUserId) {
             state.comparisonDetailUserId = targetUserId;
             state.comparisonView = 'detail';
-            state.comparisonDetailView = 'unified';
+            // User-vs-user defaults to 'match' (no unified), contest avg keeps 'unified'
+            state.comparisonDetailView = targetUserId === '__contest_average__' ? 'unified' : 'match';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -9018,6 +9024,11 @@
             state.contestInfoModal = null;
             state.modal = null;
 
+            // Clear cached data if switching to a different user
+            if (state.viewingUserId !== userId) {
+                state.userProfileVoteDistribution = null;
+                state.showVoteSpread = false;
+            }
             state.viewingUserId = userId;
             state.showUserProfileModal = true;
             document.body.classList.add('modal-open');
@@ -9072,10 +9083,16 @@
                 const dist = {1:0,2:0,3:0,4:0,5:0};
                 votes.forEach(v => { if (v.score >= 1 && v.score <= 5) dist[v.score]++; });
                 state.userProfileVoteDistribution = dist;
+                state.showVoteSpread = true;
             } catch (e) {
                 console.error('Error loading vote distribution:', e);
                 state.userProfileVoteDistribution = null;
             }
+            render();
+        }
+
+        function toggleVoteSpread() {
+            state.showVoteSpread = !state.showVoteSpread;
             render();
         }
 
@@ -9084,7 +9101,8 @@
             state.showUserProfileModal = false;
             state.viewingUserId = null;
             state.userProfileVotedContests = [];
-            state.userProfileVoteDistribution = null;
+            // Note: userProfileVoteDistribution is NOT cleared — it persists for reopen
+            state.showVoteSpread = false;
             document.body.classList.remove('modal-open');
             render();
             // Restore admin user list scroll position after re-render
@@ -9426,52 +9444,77 @@
             render();
         }
 
+        function toggleHideLowConfidenceLeaderboard() {
+            state.hideLowConfidenceLeaderboard = !state.hideLowConfidenceLeaderboard;
+            render();
+        }
+
         function renderUserLeaderboard() {
             if (!state.showUserLeaderboard) return '';
             const data = state.userLeaderboardData;
             const statType = state.leaderboardStatType || 'totalVotes';
             const selectedScore = state.leaderboardSelectedScore || 1;
             const sortDir = state.leaderboardSortDir || 'desc';
+            const showCount = state.leaderboardShowCount;
 
-            const thClass = 'px-3 py-2 text-left text-xs font-semibold text-gray-600 whitespace-nowrap';
+            const thClass = 'px-2 py-2 text-left text-xs font-semibold text-gray-600 whitespace-nowrap';
 
             const statOptions = [
                 { value: 'totalVotes',       label: 'Total Votes' },
                 { value: 'totalContests',    label: 'Contests Voted In' },
                 { value: 'totalCreated',     label: 'Items Created' },
-                { value: 'scoreCounter',     label: 'Score Counter' },
-                { value: 'avgScoreCounter',  label: 'Avg Score Count / Contest' },
+                { value: 'scoreFrequency',   label: 'Score Frequency' },
                 { value: 'totalAvg',         label: 'Total Average Score' },
-                { value: 'highestAvg',       label: 'Highest Contest Average' },
-                { value: 'lowestAvg',        label: 'Lowest Contest Average' },
             ];
 
-            const isAvgType = ['totalAvg', 'highestAvg', 'lowestAvg', 'avgScoreCounter'].includes(statType);
-            const needsScoreSelector = ['scoreCounter', 'avgScoreCounter'].includes(statType);
-            const hasAppTotal = ['totalVotes', 'scoreCounter', 'totalCreated'].includes(statType);
+            const isAvgType = ['totalAvg'].includes(statType);
+            const isFrequency = statType === 'scoreFrequency';
+            const needsScoreSelector = isFrequency;
+            const scoreColors = { 1: 'rgb(220, 38, 38)', 2: 'rgb(249, 115, 22)', 3: 'rgb(234, 179, 8)', 4: 'rgb(132, 204, 22)', 5: 'rgb(34, 197, 94)' };
+
+            const isLowConfidence = (r) => r.totalVotes < 200 || r.totalContests < 5;
+            const showLowConfidenceToggle = isFrequency || isAvgType;
 
             const getStatValue = (r) => {
                 switch (statType) {
                     case 'totalVotes':      return r.totalVotes;
                     case 'totalContests':   return r.totalContests;
                     case 'totalCreated':    return r.totalCreated;
-                    case 'scoreCounter':    return r[`score${selectedScore}`] || 0;
-                    case 'avgScoreCounter': return r.totalContests > 0 ? (r[`score${selectedScore}`] || 0) / r.totalContests : 0;
+                    case 'scoreFrequency':  return showCount
+                        ? (r.totalContests > 0 ? (r[`score${selectedScore}`] || 0) / r.totalContests : 0)
+                        : (r.totalVotes > 0 ? ((r[`score${selectedScore}`] || 0) / r.totalVotes) * 100 : 0);
                     case 'totalAvg':        return r.totalAvg || 0;
-                    case 'highestAvg':      return r.highestAvg || 0;
-                    case 'lowestAvg':       return r.lowestAvg || 0;
                     default:                return r.totalVotes;
                 }
             };
 
-            const formatStatValue = (v) => {
+            const formatStatValue = (v, r) => {
                 if (v === undefined || v === null) return '—';
-                return isAvgType ? v.toFixed(2) : v.toLocaleString();
+                if (isAvgType) return v.toFixed(2);
+                if (isFrequency) return showCount ? v.toFixed(2) : v.toFixed(1) + '%';
+                return v.toLocaleString();
+            };
+
+            const getValueColor = (r) => {
+                if (isFrequency) return scoreColors[selectedScore] || '';
+                if (isAvgType) {
+                    const v = r.totalAvg;
+                    if (v <= 1.5) return scoreColors[1];
+                    if (v <= 2.5) return scoreColors[2];
+                    if (v <= 3.5) return scoreColors[3];
+                    if (v <= 4.5) return scoreColors[4];
+                    return scoreColors[5];
+                }
+                return '';
             };
 
             const colLabel = (() => {
+                if (isFrequency) {
+                    const suffix = showCount ? '/contest' : '%';
+                    return `${selectedScore}★ ${suffix}`;
+                }
                 const base = statOptions.find(o => o.value === statType)?.label || 'Value';
-                return needsScoreSelector ? `${base} (${selectedScore}★)` : base;
+                return base;
             })();
 
             const sortArrow = () => sortDir === 'desc'
@@ -9486,6 +9529,12 @@
                     </select>
                 </div>` : '';
 
+            const countPctToggle = (isFrequency) ? `
+                <div class="flex items-center gap-1">
+                    <button onclick="state.leaderboardShowCount=true;render();" class="px-2 py-0.5 rounded text-[10px] font-medium transition ${showCount ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">#</button>
+                    <button onclick="state.leaderboardShowCount=false;render();" class="px-2 py-0.5 rounded text-[10px] font-medium transition ${!showCount ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">%</button>
+                </div>` : '';
+
             let bodyHtml = '';
             let appTotalHtml = '';
 
@@ -9494,37 +9543,58 @@
             } else if (!data) {
                 bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
             } else {
-                const sorted = [...data].sort((a, b) => {
+                let rows = [...data];
+                if (showLowConfidenceToggle && state.hideLowConfidenceLeaderboard) {
+                    rows = rows.filter(r => !isLowConfidence(r));
+                }
+                const sorted = rows.sort((a, b) => {
                     const av = getStatValue(a), bv = getStatValue(b);
                     return sortDir === 'asc' ? av - bv : bv - av;
                 });
 
-                bodyHtml = sorted.map((r, i) => `
-                    <tr class="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="viewUserProfile('${r.userId}'); closeUserLeaderboard();">
-                        <td class="px-3 py-2 text-xs text-gray-400 text-right w-8">${i + 1}</td>
-                        <td class="px-3 py-2">
-                            <div class="flex items-center gap-2">
-                                <img src="${r.avatar}" class="w-6 h-6 rounded-full shrink-0" />
-                                <span class="text-sm font-medium text-gray-800 truncate max-w-[200px]">${r.username}</span>
+                bodyHtml = sorted.map((r, i) => {
+                    const lowConf = showLowConfidenceToggle && isLowConfidence(r);
+                    const valColor = getValueColor(r);
+                    return `
+                    <tr class="border-t border-gray-100 hover:bg-gray-50 cursor-pointer ${lowConf ? 'opacity-50' : ''}" onclick="viewUserProfile('${r.userId}'); closeUserLeaderboard();">
+                        <td class="px-2 py-2 text-xs text-gray-400 text-right" style="width: 32px;">${i + 1}</td>
+                        <td class="px-2 py-2">
+                            <div class="flex items-center gap-1.5">
+                                <img src="${r.avatar}" class="w-5 h-5 rounded-full shrink-0" />
+                                <span class="text-sm font-medium text-gray-800 truncate" style="max-width: min(160px, 40vw);">${r.username}</span>
                             </div>
                         </td>
-                        <td class="px-3 py-2 text-sm text-gray-700 text-right font-medium">${formatStatValue(getStatValue(r))}</td>
-                    </tr>`).join('');
+                        <td class="px-2 py-2 text-sm text-right font-medium" style="${valColor ? 'color:' + valColor : ''}">${formatStatValue(getStatValue(r), r)}</td>
+                    </tr>`;
+                }).join('');
 
-                if (hasAppTotal) {
-                    if (statType === 'totalVotes') {
-                        const total = data.reduce((s, r) => s + r.totalVotes, 0);
-                        appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} votes</span>`;
-                    } else if (statType === 'scoreCounter') {
-                        const sk = `score${selectedScore}`;
-                        const total = data.reduce((s, r) => s + (r[sk] || 0), 0);
-                        appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} score-${selectedScore} votes</span>`;
-                    } else if (statType === 'totalCreated') {
-                        const total = (state.contests?.length || 0) + (state.mergers?.length || 0) + (state.extracts?.length || 0);
-                        appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} items</span>`;
-                    }
+                // App totals
+                if (statType === 'totalVotes') {
+                    const total = data.reduce((s, r) => s + r.totalVotes, 0);
+                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} votes</span>`;
+                } else if (statType === 'totalCreated') {
+                    const total = (state.contests?.length || 0) + (state.mergers?.length || 0) + (state.extracts?.length || 0);
+                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} items</span>`;
+                } else if (statType === 'totalAvg') {
+                    const totalSum = data.reduce((s, r) => s + (r.totalAvg * r.totalVotes), 0);
+                    const totalVotes = data.reduce((s, r) => s + r.totalVotes, 0);
+                    const globalAvg = totalVotes > 0 ? (totalSum / totalVotes).toFixed(2) : '—';
+                    appTotalHtml = `<span class="font-medium text-gray-700">App average: <span class="score-text">${globalAvg}</span></span>`;
+                } else if (isFrequency) {
+                    const sk = `score${selectedScore}`;
+                    const totalScoreCount = data.reduce((s, r) => s + (r[sk] || 0), 0);
+                    const totalVotes = data.reduce((s, r) => s + r.totalVotes, 0);
+                    const globalVal = showCount
+                        ? `${totalScoreCount.toLocaleString()} total ${selectedScore}★ votes`
+                        : `${totalVotes > 0 ? ((totalScoreCount / totalVotes) * 100).toFixed(1) : 0}% globally`;
+                    appTotalHtml = `<span class="font-medium" style="color: ${scoreColors[selectedScore]}">${globalVal}</span>`;
                 }
             }
+
+            const lowConfToggleHtml = showLowConfidenceToggle && data && data !== 'loading' ? `
+                <button onclick="toggleHideLowConfidenceLeaderboard()" class="text-xs px-2 py-0.5 rounded font-medium transition ${state.hideLowConfidenceLeaderboard ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
+                    ${state.hideLowConfidenceLeaderboard ? 'Show' : 'Hide'} low confidence
+                </button>` : '';
 
             return `
                 <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeUserLeaderboard()">
@@ -9543,13 +9613,15 @@
                                 </select>
                             </div>
                             ${scoreSelectorHtml}
+                            ${countPctToggle}
+                            ${lowConfToggleHtml}
                         </div>
                         <!-- Table -->
                         <div class="overflow-auto flex-1">
                             <table class="w-full text-sm">
                                 <thead class="bg-gray-50 sticky top-0 z-10">
                                     <tr>
-                                        <th class="${thClass} w-8 text-right">#</th>
+                                        <th class="${thClass} text-right" style="width: 32px;">#</th>
                                         <th class="${thClass}">User</th>
                                         <th class="${thClass} text-right cursor-pointer hover:bg-gray-100 select-none"
                                             onclick="toggleLeaderboardSortDir()">
@@ -12001,11 +12073,13 @@
                                         <button onclick="compareGlobally('${userId}')" class="text-xs px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-full font-medium transition" ${gsResult === 'loading' ? 'disabled' : ''}>
                                             ${gsResult === 'loading' ? 'Computing...' : 'Compare Globally 🌐'}
                                         </button>
-                                        ${!state.userProfileVoteDistribution || state.userProfileVoteDistribution === 'loading' ? `
-                                            <button onclick="loadUserVoteDistribution('${userId}')" class="text-xs px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-full font-medium transition" ${state.userProfileVoteDistribution === 'loading' ? 'disabled' : ''}>
-                                                ${state.userProfileVoteDistribution === 'loading' ? 'Loading...' : 'Vote Spread 📊'}
-                                            </button>
-                                        ` : ''}
+                                        ${state.userProfileVoteDistribution === 'loading' ? `
+                                            <button disabled class="text-xs px-3 py-1 bg-blue-100 text-blue-800 rounded-full font-medium transition opacity-70">Loading...</button>
+                                        ` : !state.userProfileVoteDistribution ? `
+                                            <button onclick="loadUserVoteDistribution('${userId}')" class="text-xs px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-full font-medium transition">Vote Spread 📊</button>
+                                        ` : `
+                                            <button onclick="toggleVoteSpread()" class="text-xs px-3 py-1 ${state.showVoteSpread ? 'bg-blue-200 text-blue-900' : 'bg-blue-100 text-blue-800 hover:bg-blue-200'} rounded-full font-medium transition">${state.showVoteSpread ? 'Hide' : 'Show'} Vote Spread 📊</button>
+                                        `}
                                     </div>
                                 </div>
                             </div>
@@ -12019,25 +12093,35 @@
                                 if (dist === 'loading') {
                                     return '<div class="mb-6 text-center text-sm text-gray-500 py-3"><span class="inline-block animate-spin mr-2">⏳</span> Loading vote distribution...</div>';
                                 }
-                                if (dist && typeof dist === 'object') {
+                                if (dist && typeof dist === 'object' && state.showVoteSpread) {
                                     const total = Object.values(dist).reduce((a,b) => a+b, 0);
                                     const mx = Math.max(...Object.values(dist), 1);
                                     const allScores = [];
                                     [1,2,3,4,5].forEach(s => { for (let i = 0; i < dist[s]; i++) allScores.push(s); });
-                                    const avg = powerMean(allScores, state.scoringFormula);
+                                    const avg = powerMean(allScores, 1);
+                                    const showCount = state.voteSpreadShowCount;
                                     return `
                                         <div class="mb-6 bg-gray-50 rounded-lg p-4">
-                                            <h3 class="text-sm font-bold text-gray-700 mb-2">Global Vote Distribution — Avg: <span class="score-text">${avg}</span></h3>
+                                            <div class="flex items-center justify-between mb-2">
+                                                <h3 class="text-sm font-bold text-gray-700">Global Vote Distribution — Avg: <span class="score-text">${avg}</span></h3>
+                                                <div class="flex items-center gap-1">
+                                                    <button onclick="state.voteSpreadShowCount=true;render();" class="px-2 py-0.5 rounded text-[10px] font-medium transition ${showCount ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">#</button>
+                                                    <button onclick="state.voteSpreadShowCount=false;render();" class="px-2 py-0.5 rounded text-[10px] font-medium transition ${!showCount ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">%</button>
+                                                </div>
+                                            </div>
                                             <div class="space-y-1">
-                                                ${[5,4,3,2,1].map(s => `
+                                                ${[5,4,3,2,1].map(s => {
+                                                    const val = showCount ? dist[s] : (total > 0 ? ((dist[s]/total)*100).toFixed(1) + '%' : '0%');
+                                                    return `
                                                     <div class="flex items-center gap-2">
-                                                        <span class="text-xs w-8 text-right font-bold" style="color: ${getScoreColor(s)};">${'★'.repeat(s)}</span>
+                                                        <span class="text-xs font-bold shrink-0" style="color: ${getScoreColor(s)}; width: 16px; text-align: center; font-size: 14px; line-height: 1;">★</span>
+                                                        <span class="text-xs font-bold shrink-0" style="color: ${getScoreColor(s)}; width: 8px;">${s}</span>
                                                         <div class="flex-1 bg-gray-200 rounded-full h-4 relative">
                                                             <div class="h-4 rounded-full transition-all" style="width: ${mx > 0 ? (dist[s]/mx)*100 : 0}%; background-color: ${getScoreColor(s)};"></div>
                                                         </div>
-                                                        <span class="text-xs font-bold w-6 text-gray-700">${dist[s]}</span>
-                                                    </div>
-                                                `).join('')}
+                                                        <span class="text-xs font-bold text-gray-700" style="min-width: ${showCount ? '24px' : '40px'}; text-align: right;">${val}</span>
+                                                    </div>`;
+                                                }).join('')}
                                             </div>
                                             <div class="mt-2 text-center text-xs text-gray-500">${total} total votes across all contests</div>
                                         </div>
@@ -13146,7 +13230,7 @@
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <button onclick="openScoringFormulaModal()" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 hover:bg-gray-300 flex items-center gap-1.5">
-                                    Scoring Formula: ${{1:'📏',2:'🟦',3:'🧊'}[state.scoringFormula]}
+                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
                                 ${renderGlobalFilters()}
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
@@ -13808,11 +13892,11 @@
                 if (imageFilterIds !== null && !imageFilterIds.has(img.id)) return;
                 (img.breakdown || []).forEach(vote => { if (!vote.isBlocked && !vote.isBanned) allScores.push(vote.score); });
             });
-            const contestAverage = powerMean(allScores, state.scoringFormula);
+            const contestAverage = powerMean(allScores, 1);
             const totalVotes = allScores.length;
 
             return `
-                <div class="mb-4 flex justify-center">
+                <div class="mb-4 flex justify-center flex-wrap gap-3">
                     <div class="flex items-center gap-2">
                         <label class="text-xs font-medium text-gray-700">Sort by:</label>
                         <select onchange="setVoterSortBy(this.value)" class="px-3 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm">
@@ -13821,6 +13905,11 @@
                             <option value="nameAsc" ${state.voterSortBy === 'nameAsc' ? 'selected' : ''}>Name: A-Z</option>
                             <option value="nameDesc" ${state.voterSortBy === 'nameDesc' ? 'selected' : ''}>Name: Z-A</option>
                         </select>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <label class="text-xs font-medium text-gray-700">Show:</label>
+                        <button onclick="state.averageTabShowCount=true;render();" class="px-2 py-0.5 rounded text-xs font-medium transition ${state.averageTabShowCount ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">#</button>
+                        <button onclick="state.averageTabShowCount=false;render();" class="px-2 py-0.5 rounded text-xs font-medium transition ${!state.averageTabShowCount ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">%</button>
                     </div>
                 </div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
@@ -13835,6 +13924,7 @@
                         const vc = {1:0,2:0,3:0,4:0,5:0};
                         voter.votes.forEach(s => { vc[s]++; });
                         const mx = Math.max(...Object.values(vc), 1);
+                        const vTotal = voter.votes.length;
                         return `
                         <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
                             <img src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
@@ -13842,7 +13932,10 @@
                             <div class="text-xl font-bold text-white score-text">${voter.averageScore}</div>
                             <div class="text-xs text-gray-500 mb-1">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
                             <div class="flex items-end gap-px w-full justify-center" style="height: 20px;">
-                                ${[1,2,3,4,5].map(s => `<div title="${s}★: ${vc[s]}" style="width: 14%; height: ${mx > 0 ? Math.max((vc[s]/mx)*100, vc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${vc[s]>0?'2px':'0'};"></div>`).join('')}
+                                ${[1,2,3,4,5].map(s => {
+                                    const label = state.averageTabShowCount ? vc[s] : (vTotal > 0 ? ((vc[s]/vTotal)*100).toFixed(0) + '%' : '0%');
+                                    return `<div title="${s}★: ${label}" style="width: 14%; height: ${mx > 0 ? Math.max((vc[s]/mx)*100, vc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${vc[s]>0?'2px':'0'};"></div>`;
+                                }).join('')}
                             </div>
                         </div>`;
                     }).join('')}
@@ -14041,7 +14134,6 @@
                         ` : `
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
-                                <button onclick="setComparisonDetailView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonDetailView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonDetailView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
@@ -15443,6 +15535,7 @@
         window.closeUserProfileModal = closeUserProfileModal;
         window.compareGlobally = compareGlobally;
         window.loadUserVoteDistribution = loadUserVoteDistribution;
+        window.toggleVoteSpread = toggleVoteSpread;
         window.toggleHideLowConfidenceGlobal = toggleHideLowConfidenceGlobal;
         window.toggleShowVoteContestCounts = toggleShowVoteContestCounts;
         window.toggleGlobalSimilarityContestFilter = toggleGlobalSimilarityContestFilter;
@@ -15460,6 +15553,7 @@
         window.setLeaderboardStatType = setLeaderboardStatType;
         window.setLeaderboardScore = setLeaderboardScore;
         window.toggleLeaderboardSortDir = toggleLeaderboardSortDir;
+        window.toggleHideLowConfidenceLeaderboard = toggleHideLowConfidenceLeaderboard;
         window.confirmDeleteMerger = confirmDeleteMerger;
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
