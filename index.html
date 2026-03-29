@@ -9064,11 +9064,27 @@
             render();
         }
 
+        async function loadUserVoteDistribution(userId) {
+            state.userProfileVoteDistribution = 'loading';
+            render();
+            try {
+                const votes = await fetchAllVotesPaginated(`user_id=eq.${userId}`, 'score');
+                const dist = {1:0,2:0,3:0,4:0,5:0};
+                votes.forEach(v => { if (v.score >= 1 && v.score <= 5) dist[v.score]++; });
+                state.userProfileVoteDistribution = dist;
+            } catch (e) {
+                console.error('Error loading vote distribution:', e);
+                state.userProfileVoteDistribution = null;
+            }
+            render();
+        }
+
         function closeUserProfileModal() {
             const savedScroll = state.adminUserListScroll || 0;
             state.showUserProfileModal = false;
             state.viewingUserId = null;
             state.userProfileVotedContests = [];
+            state.userProfileVoteDistribution = null;
             document.body.classList.remove('modal-open');
             render();
             // Restore admin user list scroll position after re-render
@@ -11981,45 +11997,51 @@
                                         Voted in ${allVotedItems.length} ${allVotedItems.length === 1 ? 'item' : 'items'} •
                                         ${state.userProfileTotalVotes || 0} image${(state.userProfileTotalVotes || 0) !== 1 ? 's' : ''} voted on
                                     </p>
-                                    <button onclick="compareGlobally('${userId}')" class="mt-2 text-xs px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-full font-medium transition" ${gsResult === 'loading' ? 'disabled' : ''}>
-                                        ${gsResult === 'loading' ? 'Computing...' : 'Compare Globally 🌐'}
-                                    </button>
+                                    <div class="flex gap-2 mt-2 flex-wrap">
+                                        <button onclick="compareGlobally('${userId}')" class="text-xs px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-full font-medium transition" ${gsResult === 'loading' ? 'disabled' : ''}>
+                                            ${gsResult === 'loading' ? 'Computing...' : 'Compare Globally 🌐'}
+                                        </button>
+                                        <button onclick="loadUserVoteDistribution('${userId}')" class="text-xs px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-full font-medium transition" ${state.userProfileVoteDistribution === 'loading' ? 'disabled' : ''}>
+                                            ${state.userProfileVoteDistribution === 'loading' ? 'Loading...' : state.userProfileVoteDistribution && typeof state.userProfileVoteDistribution === 'object' ? 'Refresh 📊' : 'Vote Spread 📊'}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Scrollable content -->
                         <div class="flex-1 overflow-y-auto p-6" data-preserve-scroll="user-profile-content">
-                            <!-- Score Distribution (from current contest) -->
+                            <!-- Global Vote Distribution -->
                             ${(() => {
-                                const dataSource = state.results || (state.mergedResults && state.mergedResults.images) || [];
-                                const userScores = [];
-                                dataSource.forEach(img => {
-                                    const bd = img.breakdown || img.voteBreakdown || [];
-                                    bd.forEach(v => { if (v.userId === userId && !v.isBlocked && !v.isBanned) userScores.push(v.score); });
-                                });
-                                if (userScores.length === 0) return '';
-                                const vc = {1:0,2:0,3:0,4:0,5:0};
-                                userScores.forEach(s => { vc[s]++; });
-                                const mx = Math.max(...Object.values(vc), 1);
-                                const avg = powerMean(userScores, state.scoringFormula);
-                                return `
-                                    <div class="mb-6 bg-gray-50 rounded-lg p-4">
-                                        <h3 class="text-sm font-bold text-gray-700 mb-2">Score Distribution (Current Contest) — Avg: <span class="score-text">${avg}</span></h3>
-                                        <div class="space-y-1">
-                                            ${[5,4,3,2,1].map(s => `
-                                                <div class="flex items-center gap-2">
-                                                    <span class="text-xs w-8 text-right font-bold" style="color: ${getScoreColor(s)};">${'★'.repeat(s)}</span>
-                                                    <div class="flex-1 bg-gray-200 rounded-full h-4 relative">
-                                                        <div class="h-4 rounded-full transition-all" style="width: ${mx > 0 ? (vc[s]/mx)*100 : 0}%; background-color: ${getScoreColor(s)};"></div>
+                                const dist = state.userProfileVoteDistribution;
+                                if (dist === 'loading') {
+                                    return '<div class="mb-6 text-center text-sm text-gray-500 py-3"><span class="inline-block animate-spin mr-2">⏳</span> Loading vote distribution...</div>';
+                                }
+                                if (dist && typeof dist === 'object') {
+                                    const total = Object.values(dist).reduce((a,b) => a+b, 0);
+                                    const mx = Math.max(...Object.values(dist), 1);
+                                    const allScores = [];
+                                    [1,2,3,4,5].forEach(s => { for (let i = 0; i < dist[s]; i++) allScores.push(s); });
+                                    const avg = powerMean(allScores, state.scoringFormula);
+                                    return `
+                                        <div class="mb-6 bg-gray-50 rounded-lg p-4">
+                                            <h3 class="text-sm font-bold text-gray-700 mb-2">Global Vote Distribution — Avg: <span class="score-text">${avg}</span></h3>
+                                            <div class="space-y-1">
+                                                ${[5,4,3,2,1].map(s => `
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-xs w-8 text-right font-bold" style="color: ${getScoreColor(s)};">${'★'.repeat(s)}</span>
+                                                        <div class="flex-1 bg-gray-200 rounded-full h-4 relative">
+                                                            <div class="h-4 rounded-full transition-all" style="width: ${mx > 0 ? (dist[s]/mx)*100 : 0}%; background-color: ${getScoreColor(s)};"></div>
+                                                        </div>
+                                                        <span class="text-xs font-bold w-6 text-gray-700">${dist[s]}</span>
                                                     </div>
-                                                    <span class="text-xs font-bold w-6 text-gray-700">${vc[s]}</span>
-                                                </div>
-                                            `).join('')}
+                                                `).join('')}
+                                            </div>
+                                            <div class="mt-2 text-center text-xs text-gray-500">${total} total votes across all contests</div>
                                         </div>
-                                        <div class="mt-2 text-center text-xs text-gray-500">${userScores.length} votes in this contest</div>
-                                    </div>
-                                `;
+                                    `;
+                                }
+                                return '';
                             })()}
                             <!-- Global Similarity Results -->
                             ${globalSimilaritySection}
@@ -15418,6 +15440,7 @@
         window.viewUserProfile = viewUserProfile;
         window.closeUserProfileModal = closeUserProfileModal;
         window.compareGlobally = compareGlobally;
+        window.loadUserVoteDistribution = loadUserVoteDistribution;
         window.toggleHideLowConfidenceGlobal = toggleHideLowConfidenceGlobal;
         window.toggleShowVoteContestCounts = toggleShowVoteContestCounts;
         window.toggleGlobalSimilarityContestFilter = toggleGlobalSimilarityContestFilter;
