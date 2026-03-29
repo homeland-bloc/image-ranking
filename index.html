@@ -1023,10 +1023,10 @@
             countMode: 'images',  // 'images' or 'users' for Count tab toggle
             comparisonView: null,  // null, 'table', or 'detail' for By User comparison
             comparisonDetailUserId: null,  // User whose detail comparison is being viewed
-            comparisonDetailView: 'match',  // 'match' or 'relative' toggle in comparison detail
+            comparisonDetailView: 'match',  // 'match' or 'relative' toggle in comparison detail (drill-down always opens match)
             comparisonDetailCollapsed: {},  // Collapsed state for comparison detail categories
-            comparisonTableView: 'match',  // 'match' or 'relative' for comparison table columns
-            comparisonAvgView: 'match',  // 'match' or 'relative' for contest average comparison
+            comparisonTableView: 'unified',  // 'unified', 'match', or 'relative' for comparison table columns
+            comparisonAvgView: 'unified',  // 'unified', 'match', or 'relative' for contest average comparison
             imageFilterSelectedImages: null,  // null = all, Set of imageIds when filtered
             imageFilterDropdownOpen: false,  // Whether image filter dropdown is open
             comparisonTableSortKeys: [],  // Array of {key, direction} for multi-sort
@@ -4491,53 +4491,48 @@
                     offset += limit;
                 }
 
-                // Query contest creations from the date range
-                const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                const [contestsResponse, mergersResponse, extractsResponse, usersResponse] = await Promise.all([
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
-
-                // Query merger creations from the date range
-                const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                    ),
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
-
-                // Query extract creations from the date range
-                const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                    ),
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
-
-                // Query user signups from the date range
-                const usersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                    ),
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
+                    )
+                ]);
 
                 const contests = contestsResponse.ok ? await contestsResponse.json() : [];
                 const mergers = mergersResponse.ok ? await mergersResponse.json() : [];
@@ -7794,9 +7789,10 @@
                     closePct: ((close / total) * 100).toFixed(0),
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((aboveAll / total) * 100).toFixed(0),
-                    belowPct: ((belowAll / total) * 100).toFixed(0)
+                    belowPct: ((belowAll / total) * 100).toFixed(0),
+                    unifiedPct: (((exact + close * 0.5) / total) * 100).toFixed(0)
                 };
-            }).filter(Boolean).sort((a, b) => parseFloat(b.exactPct) - parseFloat(a.exactPct));
+            }).filter(Boolean).sort((a, b) => parseFloat(b.unifiedPct) - parseFloat(a.unifiedPct));
         }
 
         function generateContestAvgComparisonTable() {
@@ -7837,9 +7833,10 @@
                     closePct: ((close / total) * 100).toFixed(0),
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((above / total) * 100).toFixed(0),
-                    belowPct: ((below / total) * 100).toFixed(0)
+                    belowPct: ((below / total) * 100).toFixed(0),
+                    unifiedPct: (((exact + close * 0.5) / total) * 100).toFixed(0)
                 };
-            }).filter(Boolean).sort((a, b) => parseFloat(b.exactPct) - parseFloat(a.exactPct));
+            }).filter(Boolean).sort((a, b) => parseFloat(b.unifiedPct) - parseFloat(a.unifiedPct));
         }
 
         function generateContestAverageComparison(viewMode) {
@@ -8825,7 +8822,7 @@
             // Ensure allUsers is loaded
             if (!state.allUsers || state.allUsers.length === 0) {
                 try {
-                    const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*`, {
+                    const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -12881,7 +12878,7 @@
                                     ${[{p:1,label:'Linear'},{p:2,label:'Squared'},{p:3,label:'Cubed'}].map(opt => `
                                         <button
                                             onclick="setScoringFormula(${opt.p})"
-                                            class="px-3 py-1 rounded-lg font-medium transition ${state.scoringFormula === ${opt.p} ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}"
+                                            class="px-3 py-1 rounded-lg font-medium transition ${state.scoringFormula === opt.p ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}"
                                         >${opt.label}</button>
                                     `).join('')}
                                 </div>
@@ -13437,8 +13434,13 @@
 
             // Table view: all users vs contest average
             let comparisonData = generateContestAvgComparisonTable();
-            const isMatch = state.comparisonTableView === 'match';
+            const viewMode = state.comparisonTableView;
+            const isMatch = viewMode === 'match';
+            const isUnified = viewMode === 'unified';
 
+            const unifiedColumns = [
+                { key: 'unifiedPct', label: 'Unified %', bg: '#c4b5fd' }
+            ];
             const matchColumns = [
                 { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
                 { key: 'closePct', label: 'Close (±0.51-1.00)', bg: '#fef08a' },
@@ -13449,7 +13451,7 @@
                 { key: 'abovePct', label: 'Above', bg: '#bfdbfe' },
                 { key: 'belowPct', label: 'Below', bg: '#fed7aa' }
             ];
-            const columns = isMatch ? matchColumns : relativeColumns;
+            const columns = isUnified ? unifiedColumns : isMatch ? matchColumns : relativeColumns;
 
             const getSortIndicator = (key) => {
                 const sort = state.comparisonTableSortKeys.find(s => s.key === key);
@@ -13487,8 +13489,9 @@
 
                         <div class="flex items-center gap-2 mb-4">
                             <label class="text-xs font-medium text-gray-700">View:</label>
+                            <button onclick="setComparisonTableView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${isUnified ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                             <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
-                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${viewMode === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                         </div>
 
                         <div class="overflow-x-auto">
@@ -13577,7 +13580,9 @@
             let comparisonData = generateComparisonTable();
             const selectedVoter = state.contestVoters.find(v => v.userId === state.selectedVoterUserId);
             const selectedName = selectedVoter ? selectedVoter.username : 'Unknown';
-            const isMatch = state.comparisonTableView === 'match';
+            const viewMode = state.comparisonTableView;
+            const isMatch = viewMode === 'match';
+            const isUnified = viewMode === 'unified';
 
             // Compute contest average percentages
             const contestAvgPcts = (() => {
@@ -13607,7 +13612,8 @@
                     closePct: ((close / total) * 100).toFixed(0),
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((above / total) * 100).toFixed(0),
-                    belowPct: ((below / total) * 100).toFixed(0)
+                    belowPct: ((below / total) * 100).toFixed(0),
+                    unifiedPct: (((exact + close * 0.5) / total) * 100).toFixed(0)
                 };
             })();
 
@@ -13636,6 +13642,9 @@
                 return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
             };
 
+            const unifiedColumns = [
+                { key: 'unifiedPct', label: 'Unified %', bg: '#c4b5fd', darkBg: '#2d1a5e' }
+            ];
             const matchColumns = [
                 { key: 'exactPct', label: 'Exact', bg: '#bbf7d0', darkBg: '#1a3a1a' },
                 { key: 'closePct', label: 'Close (±1)', bg: '#fef08a', darkBg: '#3a3510' },
@@ -13646,7 +13655,7 @@
                 { key: 'abovePct', label: 'Above', bg: '#bfdbfe', darkBg: '#1a2a3a' },
                 { key: 'belowPct', label: 'Below', bg: '#fed7aa', darkBg: '#3a2a1a' }
             ];
-            const columns = isMatch ? matchColumns : relativeColumns;
+            const columns = isUnified ? unifiedColumns : isMatch ? matchColumns : relativeColumns;
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
@@ -13660,8 +13669,9 @@
 
                         <div class="flex items-center gap-2 mb-4">
                             <label class="text-xs font-medium text-gray-700">View:</label>
+                            <button onclick="setComparisonTableView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${isUnified ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                             <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
-                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${viewMode === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                         </div>
 
                         <div class="overflow-x-auto">
