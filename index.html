@@ -924,6 +924,8 @@
             showMyVotes: false,  // Deprecated, use resultsView
             resultsView: 'average',  // 'average', 'divisive', 'count', 'userVotes', or 'byVoter'
             scoringFormula: 2,       // Power mean exponent: 1=Linear, 2=Squared (default), 3=Cubed
+            showScoringFormulaModal: false,
+            scoringFormulaSampleImage: null,  // Random sample image for formula demo
             voterSortBy: 'scoreDesc',  // 'scoreDesc', 'scoreAsc', 'nameAsc', 'nameDesc' for byVoter view
             selectedVoterUserId: null,  // For user votes dropdown (null = current user)
             contestVoters: [],  // List of all users who voted in current contest(s)
@@ -1023,10 +1025,10 @@
             countMode: 'images',  // 'images' or 'users' for Count tab toggle
             comparisonView: null,  // null, 'table', or 'detail' for By User comparison
             comparisonDetailUserId: null,  // User whose detail comparison is being viewed
-            comparisonDetailView: 'match',  // 'match' or 'relative' toggle in comparison detail
+            comparisonDetailView: 'unified',  // 'unified', 'match', or 'relative' toggle in comparison detail
             comparisonDetailCollapsed: {},  // Collapsed state for comparison detail categories
-            comparisonTableView: 'match',  // 'match' or 'relative' for comparison table columns
-            comparisonAvgView: 'match',  // 'match' or 'relative' for contest average comparison
+            comparisonTableView: 'unified',  // 'unified', 'match', or 'relative' for comparison table columns
+            comparisonAvgView: 'unified',  // 'unified', 'match', or 'relative' for contest average comparison
             imageFilterSelectedImages: null,  // null = all, Set of imageIds when filtered
             imageFilterDropdownOpen: false,  // Whether image filter dropdown is open
             comparisonTableSortKeys: [],  // Array of {key, direction} for multi-sort
@@ -1557,6 +1559,134 @@
         function setScoringFormula(p) {
             state.scoringFormula = parseInt(p);
             recalculateAverages();
+        }
+
+        function openScoringFormulaModal() {
+            // Pick a random sample image with at least 2 votes
+            let candidates = [];
+            if (state.results && state.results.length > 0) {
+                candidates = state.results.filter(img => {
+                    const scores = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned);
+                    return scores.length >= 2;
+                });
+            } else if (state.mergedResults && state.mergedResults.images) {
+                candidates = state.mergedResults.images.filter(img => {
+                    const scores = (img.voteBreakdown || []).filter(v => !v.isBlocked && !v.isBanned);
+                    return scores.length >= 2;
+                });
+            }
+            state.scoringFormulaSampleImage = candidates.length > 0
+                ? candidates[Math.floor(Math.random() * candidates.length)]
+                : null;
+            state.showScoringFormulaModal = true;
+            render();
+        }
+
+        function closeScoringFormulaModal() {
+            state.showScoringFormulaModal = false;
+            state.scoringFormulaSampleImage = null;
+            render();
+        }
+
+        function renderScoringFormulaModal() {
+            if (!state.showScoringFormulaModal) return '';
+            const p = state.scoringFormula;
+            const formulaNames = { 1: 'Linear', 2: 'Squared', 3: 'Cubed' };
+            const formulaFormalNames = { 1: 'Arithmetic Mean', 2: 'Root Mean Square (RMS)', 3: 'Cubic Mean' };
+            const formulaDescriptions = {
+                1: 'Simple average. All scores contribute equally.',
+                2: 'Higher scores are weighted more heavily. A single low vote has less impact on the final ranking.',
+                3: 'Strongest emphasis on high scores. Low outlier votes have minimal effect on rankings.'
+            };
+
+            // Build sample image breakdown
+            let sampleHTML = '';
+            const img = state.scoringFormulaSampleImage;
+            if (img) {
+                const breakdown = (img.breakdown || img.voteBreakdown || []).filter(v => !v.isBlocked && !v.isBanned);
+                const scores = breakdown.map(v => v.score);
+                const n = scores.length;
+                const url = img.url;
+
+                if (n > 0) {
+                    const scoresStr = scores.join(', ');
+                    let formulaSteps = '';
+                    if (p === 1) {
+                        const sum = scores.reduce((a, s) => a + s, 0);
+                        formulaSteps = `
+                            <div class="text-xs text-gray-600 font-mono mt-2 space-y-1">
+                                <div>scores = [${scoresStr}]</div>
+                                <div>average = (${scores.join(' + ')}) ÷ ${n}</div>
+                                <div>average = ${sum} ÷ ${n} = <span class="font-bold text-gray-800">${powerMean(scores, 1)}</span></div>
+                            </div>
+                        `;
+                    } else {
+                        const powered = scores.map(s => Math.pow(s, p));
+                        const poweredStr = scores.map(s => s + '<sup>' + p + '</sup>').join(' + ');
+                        const poweredVals = powered.map(v => v.toFixed(0));
+                        const sum = powered.reduce((a, v) => a + v, 0);
+                        const mean = sum / n;
+                        const root = p === 2 ? '√' : '∛';
+                        formulaSteps = `
+                            <div class="text-xs text-gray-600 font-mono mt-2 space-y-1">
+                                <div>scores = [${scoresStr}]</div>
+                                <div>powered = ${poweredStr} = ${poweredVals.join(' + ')}</div>
+                                <div>mean = ${sum} ÷ ${n} = ${mean.toFixed(2)}</div>
+                                <div>result = ${root}(${mean.toFixed(2)}) = <span class="font-bold text-gray-800">${powerMean(scores, p)}</span></div>
+                            </div>
+                        `;
+                    }
+
+                    sampleHTML = `
+                        <div class="mt-4 pt-4 border-t border-gray-200">
+                            <div class="text-xs font-semibold text-gray-700 mb-2">Example from this contest:</div>
+                            <div class="flex items-start gap-3">
+                                <img src="${url}" class="w-16 h-16 object-cover rounded-lg flex-shrink-0" />
+                                <div class="flex-1 min-w-0">${formulaSteps}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            const formulaLabels = {
+                1: '(s₁ + s₂ + … + sₙ) ÷ n',
+                2: '√( (s₁² + s₂² + … + sₙ²) ÷ n )',
+                3: '∛( (s₁³ + s₂³ + … + sₙ³) ÷ n )'
+            };
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeScoringFormulaModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">⚖️ Scoring Formula</h3>
+                            <button onclick="closeScoringFormulaModal()" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center transition">✕</button>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-4">Choose how image scores are calculated. Higher-power formulas reward top scores more and reduce the impact of low outlier votes.</p>
+
+                        <div class="flex gap-2 mb-4">
+                            ${[{p:1,label:'Linear'},{p:2,label:'Squared'},{p:3,label:'Cubed'}].map(opt => `
+                                <button
+                                    onclick="setScoringFormula(${opt.p})"
+                                    class="flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${state.scoringFormula === opt.p ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}"
+                                >${opt.label}${opt.p === 2 ? ' ★' : ''}</button>
+                            `).join('')}
+                        </div>
+
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <div class="text-sm font-semibold text-gray-800 mb-0.5">${formulaNames[p]} Average${p === 2 ? ' (Default)' : ''}</div>
+                            <div class="text-xs text-mauve-600 font-medium mb-1">Also known as ${formulaFormalNames[p]}</div>
+                            <div class="text-xs text-gray-600 mb-2">${formulaDescriptions[p]}</div>
+                            <div class="text-xs font-mono text-mauve-600 bg-white rounded px-2 py-1 inline-block">${formulaLabels[p]}</div>
+                            ${sampleHTML}
+                        </div>
+
+                        <div class="mt-4 flex justify-end">
+                            <button onclick="closeScoringFormulaModal()" class="px-5 py-2 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700">Done</button>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         /**
@@ -3770,6 +3900,7 @@
         }
 
         async function loadMoreContests() {
+            if (state.contestsExhausted || state.loadingMoreContests) return;
             state.loadingMoreContests = true;
             render();
             state.contestsOffset += 10;
@@ -4491,53 +4622,48 @@
                     offset += limit;
                 }
 
-                // Query contest creations from the date range
-                const contestsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                const [contestsResponse, mergersResponse, extractsResponse, usersResponse] = await Promise.all([
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
-
-                // Query merger creations from the date range
-                const mergersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                    ),
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
-
-                // Query extract creations from the date range
-                const extractsResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                    ),
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
-
-                // Query user signups from the date range
-                const usersResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
+                    ),
+                    fetch(
+                        `${SUPABASE_URL}/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`,
+                        {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Cache-Control': 'no-cache'
+                            }
                         }
-                    }
-                );
+                    )
+                ]);
 
                 const contests = contestsResponse.ok ? await contestsResponse.json() : [];
                 const mergers = mergersResponse.ok ? await mergersResponse.json() : [];
@@ -7043,8 +7169,8 @@
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
-            state.comparisonTableView = 'match';
-            state.comparisonAvgView = 'match';
+            state.comparisonTableView = 'unified';
+            state.comparisonAvgView = 'unified';
             state.comparisonTableSortKeys = [];
             state.collapsedSections = {};
 
@@ -7084,8 +7210,8 @@
             state.comparisonView = null;
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
-            state.comparisonTableView = 'match';
-            state.comparisonAvgView = 'match';
+            state.comparisonTableView = 'unified';
+            state.comparisonAvgView = 'unified';
             state.comparisonTableSortKeys = [];
             state.collapsedSections = {};
 
@@ -7327,7 +7453,10 @@
                 } else {
                     state.userFilterSelectedUsers.add(userId);
                 }
-                // Don't automatically reset to null - user may want explicit control
+                // Auto-deactivate filter when all users are manually reselected
+                if (state.userFilterSelectedUsers.size === allVoters.length) {
+                    state.userFilterSelectedUsers = null;
+                }
             }
             render();
             window.scrollTo(0, scrollY);
@@ -7652,7 +7781,7 @@
         function showComparisonDetail(targetUserId) {
             state.comparisonDetailUserId = targetUserId;
             state.comparisonView = 'detail';
-            state.comparisonDetailView = targetUserId === '__contest_average__' ? 'match' : 'match';
+            state.comparisonDetailView = 'unified';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -7704,7 +7833,7 @@
         function startAverageCompareAll() {
             state.averageTabCompareAll = true;
             state.averageTabCompareUserId = null;
-            state.comparisonAvgView = 'match';
+            state.comparisonAvgView = 'unified';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -7717,7 +7846,7 @@
 
         function showAverageCompareUser(userId) {
             state.averageTabCompareUserId = userId;
-            state.comparisonAvgView = 'match';
+            state.comparisonAvgView = 'unified';
             state.comparisonDetailCollapsed = {};
             render();
         }
@@ -7729,17 +7858,36 @@
 
         function getComparisonDataSource() {
             // Use state.results for contests, or build from mergedResults for mergers
-            if (state.results && state.results.length > 0) return state.results;
-            if (state.mergedResults && state.mergedResults.images) {
-                return state.mergedResults.images.map(img => ({
+            let results;
+            if (state.results && state.results.length > 0) {
+                results = state.results;
+            } else if (state.mergedResults && state.mergedResults.images) {
+                results = state.mergedResults.images.map(img => ({
                     id: img.id,
                     url: img.url,
                     averageScore: parseFloat(img.averageScore),
                     totalVotes: img.totalVotes,
                     breakdown: img.voteBreakdown || []
                 }));
+            } else {
+                return [];
             }
-            return [];
+
+            // Apply user filter: recalculate averages and filter breakdown
+            const filterIds = getFilteredUserIds();
+            if (filterIds === null) return results;
+
+            return results.map(img => {
+                const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
+                const scores = filteredBreakdown.map(v => v.score);
+                const avg = powerMean(scores, state.scoringFormula);
+                return {
+                    ...img,
+                    averageScore: avg,
+                    totalVotes: scores.length,
+                    breakdown: filteredBreakdown
+                };
+            });
         }
 
         function generateComparisonTable() {
@@ -7794,9 +7942,10 @@
                     closePct: ((close / total) * 100).toFixed(0),
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((aboveAll / total) * 100).toFixed(0),
-                    belowPct: ((belowAll / total) * 100).toFixed(0)
+                    belowPct: ((belowAll / total) * 100).toFixed(0),
+                    unifiedPct: (((exact + close * 0.5) / total) * 100).toFixed(0)
                 };
-            }).filter(Boolean).sort((a, b) => parseFloat(b.exactPct) - parseFloat(a.exactPct));
+            }).filter(Boolean).sort((a, b) => parseFloat(b.unifiedPct) - parseFloat(a.unifiedPct));
         }
 
         function generateContestAvgComparisonTable() {
@@ -7837,9 +7986,10 @@
                     closePct: ((close / total) * 100).toFixed(0),
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((above / total) * 100).toFixed(0),
-                    belowPct: ((below / total) * 100).toFixed(0)
+                    belowPct: ((below / total) * 100).toFixed(0),
+                    unifiedPct: (((exact + close * 0.5) / total) * 100).toFixed(0)
                 };
-            }).filter(Boolean).sort((a, b) => parseFloat(b.exactPct) - parseFloat(a.exactPct));
+            }).filter(Boolean).sort((a, b) => parseFloat(b.unifiedPct) - parseFloat(a.unifiedPct));
         }
 
         function generateContestAverageComparison(viewMode) {
@@ -7884,6 +8034,18 @@
                     label: `Score ${s}`,
                     items: scoreMap[s]
                 }));
+            }
+
+            if (viewMode === 'unified') {
+                // Unified: single sorted list by absolute difference (closest first)
+                const sorted = [...comparisons].sort((a, b) => a.absDiff - b.absDiff);
+                const total = sorted.length;
+                const exact = comparisons.filter(c => c.absDiff <= 0.50).length;
+                const close = comparisons.filter(c => c.absDiff > 0.50 && c.absDiff <= 1.00).length;
+                const unifiedPct = total > 0 ? (((exact + close * 0.5) / total) * 100).toFixed(0) : '0';
+                return [
+                    { key: 'cmp_unified', label: `All Images — Unified ${unifiedPct}%`, range: 'Sorted by closeness to average', color: '#c4b5fd', darkColor: '#2d1a5e', items: sorted, subcategories: buildUserScoreSubs(sorted, 'cmp_unified') }
+                ];
             }
 
             if (viewMode === 'relative') {
@@ -7975,7 +8137,15 @@
                 { key: 'uvu_below', label: 'Below Yours', color: '#fdba74', darkColor: '#4a3a1a', items: belowItems, subcategories: buildScorePairSubs(belowItems, 'uvu_below') }
             ];
 
-            return { matchBased, relativeBased };
+            // Unified: single sorted list by absolute difference
+            const unifiedSorted = [...comparisons].sort((a, b) => a.absDiff - b.absDiff);
+            const total = comparisons.length;
+            const unifiedPct = total > 0 ? (((exactItems.length + closeItems.length * 0.5) / total) * 100).toFixed(0) : '0';
+            const unified = [
+                { key: 'uvu_unified', label: `All Images — Unified ${unifiedPct}%`, color: '#c4b5fd', darkColor: '#2d1a5e', items: unifiedSorted, subcategories: buildScorePairSubs(unifiedSorted, 'uvu_unified') }
+            ];
+
+            return { matchBased, relativeBased, unified };
         }
 
         function updateScale(value) {
@@ -8825,7 +8995,7 @@
             // Ensure allUsers is loaded
             if (!state.allUsers || state.allUsers.length === 0) {
                 try {
-                    const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*`, {
+                    const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -11164,13 +11334,27 @@
                                     }
                                     return output;
                                 })()}
+                                ${!state.contestsExhausted ? `
+                                    ${state.loadingMoreContests ? `
+                                        <div class="w-full text-center text-sm text-gray-500 py-3">
+                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more items...
+                                        </div>
+                                    ` : `
+                                        <button
+                                            onclick="loadMoreContests()"
+                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                        >
+                                            Load more contests from server
+                                        </button>
+                                    `}
+                                ` : ''}
                             `;
                         } else {
                             // Show flat list when not using default sort or when no folders exist
                             const visibleCount = state.isAllContestsSectionExpanded ? state.allItemsVisibleCount : 6;
                             const displayItems = allItems.slice(0, visibleCount);
                             const hasMoreClientItems = allItems.length > visibleCount;
-                            const hasMoreDbItems = !state.contestsExhausted && !hasMoreClientItems;
+                            const hasMoreDbItems = !state.contestsExhausted && !hasMoreClientItems && state.isAllContestsSectionExpanded;
 
                             return `
                                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
@@ -12876,16 +13060,12 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
-                                <div class="flex items-center gap-2 text-sm">
-                                    <span class="font-medium text-gray-600">Scoring formula:</span>
-                                    ${[{p:1,label:'Linear'},{p:2,label:'Squared'},{p:3,label:'Cubed'}].map(opt => `
-                                        <button
-                                            onclick="setScoringFormula(${opt.p})"
-                                            class="px-3 py-1 rounded-lg font-medium transition ${state.scoringFormula === ${opt.p} ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}"
-                                        >${opt.label}</button>
-                                    `).join('')}
-                                </div>
                                 ${renderGlobalFilters()}
+                                <div class="flex items-center justify-center gap-2 flex-wrap mb-1">
+                                    <button onclick="openScoringFormulaModal()" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 hover:bg-gray-300 flex items-center gap-1.5">
+                                        <span>⚖️</span> Scoring: ${{1:'Linear',2:'Squared',3:'Cubed'}[state.scoringFormula]}
+                                    </button>
+                                </div>
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
                                     ${tabs.map(tab => `
                                         <button
@@ -13413,6 +13593,7 @@
 
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonAvgView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
@@ -13437,8 +13618,13 @@
 
             // Table view: all users vs contest average
             let comparisonData = generateContestAvgComparisonTable();
-            const isMatch = state.comparisonTableView === 'match';
+            const viewMode = state.comparisonTableView;
+            const isMatch = viewMode === 'match';
+            const isUnified = viewMode === 'unified';
 
+            const unifiedColumns = [
+                { key: 'unifiedPct', label: 'Unified %', bg: '#c4b5fd' }
+            ];
             const matchColumns = [
                 { key: 'exactPct', label: 'Near Exact', bg: '#bbf7d0' },
                 { key: 'closePct', label: 'Close (±0.51-1.00)', bg: '#fef08a' },
@@ -13449,7 +13635,7 @@
                 { key: 'abovePct', label: 'Above', bg: '#bfdbfe' },
                 { key: 'belowPct', label: 'Below', bg: '#fed7aa' }
             ];
-            const columns = isMatch ? matchColumns : relativeColumns;
+            const columns = isUnified ? unifiedColumns : isMatch ? matchColumns : relativeColumns;
 
             const getSortIndicator = (key) => {
                 const sort = state.comparisonTableSortKeys.find(s => s.key === key);
@@ -13487,8 +13673,9 @@
 
                         <div class="flex items-center gap-2 mb-4">
                             <label class="text-xs font-medium text-gray-700">View:</label>
+                            <button onclick="setComparisonTableView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${isUnified ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                             <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
-                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${viewMode === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                         </div>
 
                         <div class="overflow-x-auto">
@@ -13577,7 +13764,9 @@
             let comparisonData = generateComparisonTable();
             const selectedVoter = state.contestVoters.find(v => v.userId === state.selectedVoterUserId);
             const selectedName = selectedVoter ? selectedVoter.username : 'Unknown';
-            const isMatch = state.comparisonTableView === 'match';
+            const viewMode = state.comparisonTableView;
+            const isMatch = viewMode === 'match';
+            const isUnified = viewMode === 'unified';
 
             // Compute contest average percentages
             const contestAvgPcts = (() => {
@@ -13607,7 +13796,8 @@
                     closePct: ((close / total) * 100).toFixed(0),
                     widePct: ((wide / total) * 100).toFixed(0),
                     abovePct: ((above / total) * 100).toFixed(0),
-                    belowPct: ((below / total) * 100).toFixed(0)
+                    belowPct: ((below / total) * 100).toFixed(0),
+                    unifiedPct: (((exact + close * 0.5) / total) * 100).toFixed(0)
                 };
             })();
 
@@ -13636,6 +13826,9 @@
                 return ` ${sort.direction === 'desc' ? '▼' : '▲'}`;
             };
 
+            const unifiedColumns = [
+                { key: 'unifiedPct', label: 'Unified %', bg: '#c4b5fd', darkBg: '#2d1a5e' }
+            ];
             const matchColumns = [
                 { key: 'exactPct', label: 'Exact', bg: '#bbf7d0', darkBg: '#1a3a1a' },
                 { key: 'closePct', label: 'Close (±1)', bg: '#fef08a', darkBg: '#3a3510' },
@@ -13646,7 +13839,7 @@
                 { key: 'abovePct', label: 'Above', bg: '#bfdbfe', darkBg: '#1a2a3a' },
                 { key: 'belowPct', label: 'Below', bg: '#fed7aa', darkBg: '#3a2a1a' }
             ];
-            const columns = isMatch ? matchColumns : relativeColumns;
+            const columns = isUnified ? unifiedColumns : isMatch ? matchColumns : relativeColumns;
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4">
@@ -13660,8 +13853,9 @@
 
                         <div class="flex items-center gap-2 mb-4">
                             <label class="text-xs font-medium text-gray-700">View:</label>
+                            <button onclick="setComparisonTableView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${isUnified ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                             <button onclick="setComparisonTableView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
-                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isMatch ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
+                            <button onclick="setComparisonTableView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${viewMode === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                         </div>
 
                         <div class="overflow-x-auto">
@@ -13732,7 +13926,8 @@
                 const targetVoter = state.contestVoters.find(v => v.userId === targetId);
                 targetName = targetVoter ? targetVoter.username : 'Unknown';
                 const data = generateUserVsUserComparison(targetId);
-                categories = state.comparisonDetailView === 'match' ? data.matchBased : data.relativeBased;
+                const dvMode = state.comparisonDetailView;
+                categories = dvMode === 'unified' ? data.unified : dvMode === 'match' ? data.matchBased : data.relativeBased;
             }
 
             return `
@@ -13748,12 +13943,14 @@
                         ${isContestAvg ? `
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonAvgView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonAvgView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonAvgView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonAvgView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
                         ` : `
                             <div class="flex items-center gap-2 mb-4">
                                 <label class="text-xs font-medium text-gray-700">View:</label>
+                                <button onclick="setComparisonDetailView('unified')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'unified' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Unified</button>
                                 <button onclick="setComparisonDetailView('match')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'match' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Match-based</button>
                                 <button onclick="setComparisonDetailView('relative')" class="px-3 py-1 rounded-lg text-xs font-medium ${state.comparisonDetailView === 'relative' ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Relative</button>
                             </div>
@@ -14974,7 +15171,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal();
 
             // Restore scroll positions
             savedScrolls.forEach(({ key, top }) => {
