@@ -7322,7 +7322,10 @@
                 } else {
                     state.userFilterSelectedUsers.add(userId);
                 }
-                // Don't automatically reset to null - user may want explicit control
+                // Auto-deactivate filter when all users are manually reselected
+                if (state.userFilterSelectedUsers.size === allVoters.length) {
+                    state.userFilterSelectedUsers = null;
+                }
             }
             render();
             window.scrollTo(0, scrollY);
@@ -7724,17 +7727,36 @@
 
         function getComparisonDataSource() {
             // Use state.results for contests, or build from mergedResults for mergers
-            if (state.results && state.results.length > 0) return state.results;
-            if (state.mergedResults && state.mergedResults.images) {
-                return state.mergedResults.images.map(img => ({
+            let results;
+            if (state.results && state.results.length > 0) {
+                results = state.results;
+            } else if (state.mergedResults && state.mergedResults.images) {
+                results = state.mergedResults.images.map(img => ({
                     id: img.id,
                     url: img.url,
                     averageScore: parseFloat(img.averageScore),
                     totalVotes: img.totalVotes,
                     breakdown: img.voteBreakdown || []
                 }));
+            } else {
+                return [];
             }
-            return [];
+
+            // Apply user filter: recalculate averages and filter breakdown
+            const filterIds = getFilteredUserIds();
+            if (filterIds === null) return results;
+
+            return results.map(img => {
+                const filteredBreakdown = (img.breakdown || []).filter(v => !v.isBlocked && !v.isBanned && filterIds.has(v.userId));
+                const scores = filteredBreakdown.map(v => v.score);
+                const avg = powerMean(scores, state.scoringFormula);
+                return {
+                    ...img,
+                    averageScore: avg,
+                    totalVotes: scores.length,
+                    breakdown: filteredBreakdown
+                };
+            });
         }
 
         function generateComparisonTable() {
