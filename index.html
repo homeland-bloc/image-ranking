@@ -3900,6 +3900,7 @@
         }
 
         async function loadMoreContests() {
+            if (state.contestsExhausted || state.loadingMoreContests) return;
             state.loadingMoreContests = true;
             render();
             state.contestsOffset += 10;
@@ -11333,13 +11334,27 @@
                                     }
                                     return output;
                                 })()}
+                                ${!state.contestsExhausted ? `
+                                    ${state.loadingMoreContests ? `
+                                        <div class="w-full text-center text-sm text-gray-500 py-3">
+                                            <span class="inline-block animate-spin mr-2">⏳</span> Loading more items...
+                                        </div>
+                                    ` : `
+                                        <button
+                                            onclick="loadMoreContests()"
+                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                        >
+                                            Load more contests from server
+                                        </button>
+                                    `}
+                                ` : ''}
                             `;
                         } else {
                             // Show flat list when not using default sort or when no folders exist
                             const visibleCount = state.isAllContestsSectionExpanded ? state.allItemsVisibleCount : 6;
                             const displayItems = allItems.slice(0, visibleCount);
                             const hasMoreClientItems = allItems.length > visibleCount;
-                            const hasMoreDbItems = !state.contestsExhausted && !hasMoreClientItems;
+                            const hasMoreDbItems = !state.contestsExhausted && !hasMoreClientItems && state.isAllContestsSectionExpanded;
 
                             return `
                                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-2 mb-2">
