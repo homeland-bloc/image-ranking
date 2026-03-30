@@ -916,7 +916,7 @@
             isAnimating: false,
             modal: null,
             modalProcessing: false,
-            imageScale: 100,
+            imageScale: window.innerWidth < 640 ? 70 : 100,
             results: null,
             scaleUpdateTimeout: null,
             extractScaleUpdateTimeout: null,
@@ -2106,6 +2106,7 @@
                 // Invalidate global votes cache since new votes were submitted
                 state.globalVotesCache = null;
                 state.globalSimilarityAllVotes = null;
+                state.globalSimilarityResults = {};
                 state.userLeaderboardData = null;
 
                 // Reload user votes to reflect new submissions
