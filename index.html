@@ -13953,23 +13953,22 @@
                 </div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                     <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 border-yellow-500">
-                        <div class="flex flex-col items-center justify-center w-12 h-12 mb-2">
-                            <div class="text-[10px] font-semibold text-gray-800 text-center leading-tight whitespace-nowrap">🏆 Contest Average</div>
-                            <button onclick="startAverageCompareAll()" class="mt-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
+                        <div class="w-full flex flex-col items-center mb-2">
+                            <div class="text-xs font-bold text-gray-800 text-center leading-tight mb-1.5">🏆 Contest Average</div>
+                            <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare all</button>
                         </div>
-                        <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1">&nbsp;</div>
                         <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
                         <div class="text-xs text-gray-500 mb-1">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
-                        <div class="flex items-end gap-px w-full justify-center" style="height: 20px;">
+                        <div class="flex items-end gap-px w-full" style="height: 20px;">
                             ${[1,2,3,4,5].map(s => {
                                 const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? Math.round((contestVc[s]/totalVotes)*100) + '%' : '0%');
-                                return `<div title="${s}★: ${label}" style="width: 14%; height: ${contestMx > 0 ? Math.max((contestVc[s]/contestMx)*100, contestVc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${contestVc[s]>0?'2px':'0'};"></div>`;
+                                return `<div title="${s}★: ${label}" style="flex: 1; height: ${contestMx > 0 ? Math.max((contestVc[s]/contestMx)*100, contestVc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${contestVc[s]>0?'2px':'0'};"></div>`;
                             }).join('')}
                         </div>
-                        <div class="flex gap-px w-full justify-center">
+                        <div class="flex gap-px w-full">
                             ${[1,2,3,4,5].map(s => {
                                 const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? Math.round((contestVc[s]/totalVotes)*100) + '%' : '');
-                                return `<div class="text-center" style="width: 14%; font-size: 8px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
+                                return `<div class="text-center overflow-hidden" style="flex: 1; font-size: 7px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
                             }).join('')}
                         </div>
                     </div>
@@ -13984,16 +13983,16 @@
                             <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}</div>
                             <div class="text-xl font-bold text-white score-text">${voter.averageScore}</div>
                             <div class="text-xs text-gray-500 mb-1">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
-                            <div class="flex items-end gap-px w-full justify-center" style="height: 20px;">
+                            <div class="flex items-end gap-px w-full" style="height: 20px;">
                                 ${[1,2,3,4,5].map(s => {
                                     const label = state.averageTabShowCount ? vc[s] : (vTotal > 0 ? Math.round((vc[s]/vTotal)*100) + '%' : '0%');
-                                    return `<div title="${s}★: ${label}" style="width: 14%; height: ${mx > 0 ? Math.max((vc[s]/mx)*100, vc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${vc[s]>0?'2px':'0'};"></div>`;
+                                    return `<div title="${s}★: ${label}" style="flex: 1; height: ${mx > 0 ? Math.max((vc[s]/mx)*100, vc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${vc[s]>0?'2px':'0'};"></div>`;
                                 }).join('')}
                             </div>
-                            <div class="flex gap-px w-full justify-center">
+                            <div class="flex gap-px w-full">
                                 ${[1,2,3,4,5].map(s => {
                                     const label = state.averageTabShowCount ? vc[s] : (vTotal > 0 ? Math.round((vc[s]/vTotal)*100) + '%' : '');
-                                    return `<div class="text-center" style="width: 14%; font-size: 8px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
+                                    return `<div class="text-center overflow-hidden" style="flex: 1; font-size: 7px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
                                 }).join('')}
                             </div>
                         </div>`;
