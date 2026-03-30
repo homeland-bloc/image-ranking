@@ -911,6 +911,7 @@
             userVotedContests: {},
             hasSubmitted: false,
             showBreakdownModal: null,
+            breakdownModalView: null, // null = auto (follows resultsView), 'image' or 'divisive' = override
             showTickAnimation: false,
             isAnimating: false,
             modal: null,
@@ -3167,7 +3168,10 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <button onclick="switchBreakdownView('divisive')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Divisive Breakdown">📊</button>
+                                </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -7006,7 +7010,13 @@
 
         function closeBreakdown() {
             state.showBreakdownModal = null;
+            state.breakdownModalView = null;
             document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function switchBreakdownView(view) {
+            state.breakdownModalView = view;
             render();
         }
 
@@ -13250,7 +13260,7 @@
 
                         ${renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator)}
                     </div>
-                    ${state.showBreakdownModal ? (state.resultsView === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal()) : ''}
+                    ${state.showBreakdownModal ? ((() => { const bv = state.breakdownModalView || (state.resultsView === 'divisive' ? 'divisive' : 'image'); return bv === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal(); })()) : ''}
                 </div>
             `;
         }
@@ -13894,6 +13904,9 @@
             });
             const contestAverage = powerMean(allScores, 1);
             const totalVotes = allScores.length;
+            const contestVc = {1:0,2:0,3:0,4:0,5:0};
+            allScores.forEach(s => { contestVc[s]++; });
+            const contestMx = Math.max(...Object.values(contestVc), 1);
 
             return `
                 <div class="mb-4 flex justify-center flex-wrap gap-3">
@@ -13913,11 +13926,16 @@
                     </div>
                 </div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
-                    <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center border-2 border-yellow-500">
-                        <div class="text-2xl mb-1">🏆</div>
-                        <div class="text-xs font-semibold text-gray-800 text-center mb-1 leading-tight">Contest<br class="sm:hidden"> Average</div>
+                    <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-2 sm:p-3 flex flex-col items-center border-2 border-yellow-500">
+                        <div class="text-xs font-semibold text-gray-800 text-center mb-0.5 leading-tight whitespace-nowrap">🏆 Average</div>
                         <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
-                        <div class="text-xs text-gray-500 mb-1">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
+                        <div class="text-[10px] text-gray-500 mb-0.5">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
+                        <div class="flex items-end gap-px w-full justify-center mb-1" style="height: 20px;">
+                            ${[1,2,3,4,5].map(s => {
+                                const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? ((contestVc[s]/totalVotes)*100).toFixed(0) + '%' : '0%');
+                                return `<div title="${s}★: ${label}" style="width: 14%; height: ${contestMx > 0 ? Math.max((contestVc[s]/contestMx)*100, contestVc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${contestVc[s]>0?'2px':'0'};"></div>`;
+                            }).join('')}
+                        </div>
                         <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
                     </div>
                     ${voterStats.map(voter => {
@@ -14245,7 +14263,10 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <button onclick="switchBreakdownView('image')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Vote Breakdown">👥</button>
+                                </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
@@ -14311,7 +14332,10 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <button onclick="switchBreakdownView('image')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Vote Breakdown">👥</button>
+                                </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
@@ -14405,7 +14429,10 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
-                                <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <button onclick="switchBreakdownView('divisive')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Divisive Breakdown">📊</button>
+                                </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -15413,6 +15440,7 @@
         window.submitVotes = submitVotes;
         window.showBreakdown = showBreakdown;
         window.closeBreakdown = closeBreakdown;
+        window.switchBreakdownView = switchBreakdownView;
         window.backToHome = backToHome;
         window.confirmBackToHome = confirmBackToHome;
         window.closeModal = closeModal;
