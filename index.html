@@ -9501,7 +9501,7 @@
             const formatStatValue = (v, r) => {
                 if (v === undefined || v === null) return '—';
                 if (isAvgType) return v.toFixed(2);
-                if (isFrequency) return showCount ? v.toFixed(2) : v.toFixed(1) + '%';
+                if (isFrequency) return showCount ? v.toFixed(2) : Math.round(v) + '%';
                 return v.toLocaleString();
             };
 
@@ -9596,7 +9596,7 @@
                     const totalVotes = data.reduce((s, r) => s + r.totalVotes, 0);
                     const globalVal = showCount
                         ? `${totalScoreCount.toLocaleString()} total ${selectedScore}★ votes`
-                        : `${totalVotes > 0 ? ((totalScoreCount / totalVotes) * 100).toFixed(1) : 0}% globally`;
+                        : `${totalVotes > 0 ? Math.round((totalScoreCount / totalVotes) * 100) : 0}% globally`;
                     appTotalHtml = `<span class="font-medium" style="color: ${scoreColors[selectedScore]}">${globalVal}</span>`;
                 }
             }
@@ -12121,7 +12121,7 @@
                                             </div>
                                             <div class="space-y-1">
                                                 ${[5,4,3,2,1].map(s => {
-                                                    const val = showCount ? dist[s] : (total > 0 ? ((dist[s]/total)*100).toFixed(1) + '%' : '0%');
+                                                    const val = showCount ? dist[s] : (total > 0 ? Math.round((dist[s]/total)*100) + '%' : '0%');
                                                     return `
                                                     <div class="flex items-center gap-2">
                                                         <span class="text-xs font-bold shrink-0" style="color: ${getScoreColor(s)}; width: 16px; text-align: center; font-size: 14px; line-height: 1;">★</span>
@@ -13930,10 +13930,16 @@
                         <div class="text-xs font-semibold text-gray-800 text-center mb-0.5 leading-tight whitespace-nowrap">🏆 Average</div>
                         <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
                         <div class="text-[10px] text-gray-500 mb-0.5">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
-                        <div class="flex items-end gap-px w-full justify-center mb-1" style="height: 20px;">
+                        <div class="flex items-end gap-px w-full justify-center" style="height: 20px;">
                             ${[1,2,3,4,5].map(s => {
-                                const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? ((contestVc[s]/totalVotes)*100).toFixed(0) + '%' : '0%');
+                                const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? Math.round((contestVc[s]/totalVotes)*100) + '%' : '0%');
                                 return `<div title="${s}★: ${label}" style="width: 14%; height: ${contestMx > 0 ? Math.max((contestVc[s]/contestMx)*100, contestVc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${contestVc[s]>0?'2px':'0'};"></div>`;
+                            }).join('')}
+                        </div>
+                        <div class="flex gap-px w-full justify-center mb-1">
+                            ${[1,2,3,4,5].map(s => {
+                                const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? Math.round((contestVc[s]/totalVotes)*100) + '%' : '');
+                                return `<div class="text-center" style="width: 14%; font-size: 8px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
                             }).join('')}
                         </div>
                         <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
@@ -13951,8 +13957,14 @@
                             <div class="text-xs text-gray-500 mb-1">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
                             <div class="flex items-end gap-px w-full justify-center" style="height: 20px;">
                                 ${[1,2,3,4,5].map(s => {
-                                    const label = state.averageTabShowCount ? vc[s] : (vTotal > 0 ? ((vc[s]/vTotal)*100).toFixed(0) + '%' : '0%');
+                                    const label = state.averageTabShowCount ? vc[s] : (vTotal > 0 ? Math.round((vc[s]/vTotal)*100) + '%' : '0%');
                                     return `<div title="${s}★: ${label}" style="width: 14%; height: ${mx > 0 ? Math.max((vc[s]/mx)*100, vc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${vc[s]>0?'2px':'0'};"></div>`;
+                                }).join('')}
+                            </div>
+                            <div class="flex gap-px w-full justify-center">
+                                ${[1,2,3,4,5].map(s => {
+                                    const label = state.averageTabShowCount ? vc[s] : (vTotal > 0 ? Math.round((vc[s]/vTotal)*100) + '%' : '');
+                                    return `<div class="text-center" style="width: 14%; font-size: 8px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
                                 }).join('')}
                             </div>
                         </div>`;
