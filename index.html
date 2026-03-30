@@ -9205,12 +9205,15 @@
                     return;
                 }
 
-                // Build target user's vote map: image_id -> score, and full contest list
+                // Build target user's vote map: image_id -> score, and contest -> image vote maps
                 const targetVoteMap = {};
                 const targetContestIds = new Set();
+                const targetContestVotes = {}; // contest_id -> { image_id -> score }
                 targetVotes.forEach(v => {
                     targetVoteMap[v.image_id] = v.score;
                     targetContestIds.add(v.contest_id);
+                    if (!targetContestVotes[v.contest_id]) targetContestVotes[v.contest_id] = {};
+                    targetContestVotes[v.contest_id][v.image_id] = v.score;
                 });
 
                 const results = [];
@@ -9222,16 +9225,28 @@
                     const userInfo = state.allUsers.find(u => u.id === otherUserId);
                     if (!userInfo || userInfo.isBanned) continue;
 
-                    let exact = 0, close = 0, wide = 0;
+                    // First pass: find which contests the other user voted in
+                    const otherContestIds = new Set();
+                    otherVotes.forEach(v => otherContestIds.add(v.contest_id));
+
+                    // Intersect with target user's contests
                     const sharedContestIds = new Set();
+                    otherContestIds.forEach(cid => {
+                        if (targetContestIds.has(cid)) sharedContestIds.add(cid);
+                    });
+
+                    if (sharedContestIds.size === 0) continue;
+
+                    // Second pass: compare only votes within shared contests
+                    let exact = 0, close = 0, wide = 0;
 
                     otherVotes.forEach(v => {
+                        if (!sharedContestIds.has(v.contest_id)) return;
                         if (targetVoteMap[v.image_id] !== undefined) {
                             const diff = Math.abs(targetVoteMap[v.image_id] - v.score);
                             if (diff === 0) exact++;
                             else if (diff === 1) close++;
                             else wide++;
-                            sharedContestIds.add(v.contest_id);
                         }
                     });
 
@@ -9240,7 +9255,6 @@
 
                     const exactPct = (exact / sharedCount) * 100;
                     const closePct = (close / sharedCount) * 100;
-                    const widePct = (wide / sharedCount) * 100;
                     // Unified similarity: exact + half of close
                     const similarity = exactPct + (closePct / 2);
                     const lowConfidence = sharedCount < 200 || sharedContestIds.size < 5;
