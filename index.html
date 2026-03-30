@@ -2601,18 +2601,10 @@
 
                 if (progressCallback) progressCallback(95);
 
-                // Get public URL
-                const { data: urlData } = supabase.storage
-                    .from('contest-images')
-                    .getPublicUrl(fileName);
-
-                if (!urlData || !urlData.publicUrl) {
-                    throw new Error('Failed to get public URL for uploaded image');
-                }
-
                 if (progressCallback) progressCallback(100);
 
-                return urlData.publicUrl;
+                // Return ImageKit URL instead of Supabase CDN URL
+                return `https://ik.imagekit.io/bicipikay/${fileName}`;
             } catch (error) {
                 if (progressInterval) clearInterval(progressInterval);
                 console.error('Upload error:', error);
