@@ -986,6 +986,7 @@
             hideLowConfidenceGlobal: false, // Hide low-confidence rows in global similarity
             voteSpreadShowCount: true, // true = show counts, false = show % in vote spread
             showVoteSpread: false, // Whether vote spread section is visible in user profile
+            showGlobalSimilarity: false, // Whether global similarity section is visible in user profile
             averageTabShowCount: true, // true = show counts, false = show % in Average tab voter cards
             leaderboardShowCount: true, // true = show counts, false = show % in leaderboard score frequency
             hideLowConfidenceLeaderboard: false, // Hide low-confidence rows in leaderboard
@@ -9038,6 +9039,7 @@
             if (state.viewingUserId !== userId) {
                 state.userProfileVoteDistribution = null;
                 state.showVoteSpread = false;
+                state.showGlobalSimilarity = false;
             }
             state.viewingUserId = userId;
             state.showUserProfileModal = true;
@@ -9106,13 +9108,19 @@
             render();
         }
 
+        function toggleGlobalSimilarity() {
+            state.showGlobalSimilarity = !state.showGlobalSimilarity;
+            render();
+        }
+
         function closeUserProfileModal() {
             const savedScroll = state.adminUserListScroll || 0;
             state.showUserProfileModal = false;
             state.viewingUserId = null;
             state.userProfileVotedContests = [];
-            // Note: userProfileVoteDistribution is NOT cleared — it persists for reopen
+            // Note: userProfileVoteDistribution and globalSimilarityResults are NOT cleared — they persist for reopen
             state.showVoteSpread = false;
+            state.showGlobalSimilarity = false;
             document.body.classList.remove('modal-open');
             render();
             // Restore admin user list scroll position after re-render
@@ -9123,9 +9131,14 @@
         async function compareGlobally(userId) {
             // Return immediately if already cached (results or loading)
             const cached = state.globalSimilarityResults[userId];
-            if (cached && cached !== 'error') return;
+            if (cached && cached !== 'error') {
+                state.showGlobalSimilarity = true;
+                render();
+                return;
+            }
 
             state.globalSimilarityResults[userId] = 'loading';
+            state.showGlobalSimilarity = true;
             render();
 
             try {
@@ -12080,9 +12093,13 @@
                                         ${state.userProfileTotalVotes || 0} image${(state.userProfileTotalVotes || 0) !== 1 ? 's' : ''} voted on
                                     </p>
                                     <div class="flex gap-2 mt-2 flex-wrap">
-                                        <button onclick="compareGlobally('${userId}')" class="text-xs px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-full font-medium transition" ${gsResult === 'loading' ? 'disabled' : ''}>
-                                            ${gsResult === 'loading' ? 'Computing...' : 'Compare Globally 🌐'}
-                                        </button>
+                                        ${gsResult === 'loading' ? `
+                                            <button disabled class="text-xs px-3 py-1 bg-purple-100 text-purple-800 rounded-full font-medium transition opacity-70">Computing...</button>
+                                        ` : gsResult && (gsResult.results || gsResult.tooFewVotes || gsResult.error) ? `
+                                            <button onclick="toggleGlobalSimilarity()" class="text-xs px-3 py-1 ${state.showGlobalSimilarity ? 'bg-purple-200 text-purple-900' : 'bg-purple-100 text-purple-800 hover:bg-purple-200'} rounded-full font-medium transition">${state.showGlobalSimilarity ? 'Hide' : 'Show'} Global Similarity 🌐</button>
+                                        ` : `
+                                            <button onclick="compareGlobally('${userId}')" class="text-xs px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-full font-medium transition">Compare Globally 🌐</button>
+                                        `}
                                         ${state.userProfileVoteDistribution === 'loading' ? `
                                             <button disabled class="text-xs px-3 py-1 bg-blue-100 text-blue-800 rounded-full font-medium transition opacity-70">Loading...</button>
                                         ` : !state.userProfileVoteDistribution ? `
@@ -12140,7 +12157,7 @@
                                 return '';
                             })()}
                             <!-- Global Similarity Results -->
-                            ${globalSimilaritySection}
+                            ${state.showGlobalSimilarity ? globalSimilaritySection : ''}
                             <!-- Created Items Section -->
                             ${allCreatedItems.length > 0 ? `
                                 <div class="mb-6">
@@ -15576,6 +15593,7 @@
         window.compareGlobally = compareGlobally;
         window.loadUserVoteDistribution = loadUserVoteDistribution;
         window.toggleVoteSpread = toggleVoteSpread;
+        window.toggleGlobalSimilarity = toggleGlobalSimilarity;
         window.toggleHideLowConfidenceGlobal = toggleHideLowConfidenceGlobal;
         window.toggleShowVoteContestCounts = toggleShowVoteContestCounts;
         window.toggleGlobalSimilarityContestFilter = toggleGlobalSimilarityContestFilter;
