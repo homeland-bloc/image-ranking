@@ -994,6 +994,7 @@
             globalSimilarityExcludedContests: {}, // userId -> [] of excluded contest IDs
             globalSimilarityContestFilterOpen: {}, // userId -> bool (contest filter panel open)
             globalSimilarityAllVotes: null, // Cached allVotes for global comparison (avoids re-fetching on filter change)
+            globalVotesCache: null, // Cached global votes data (reused across leaderboard and global similarity)
             toast: null, // Toast notification { message, icon }
             isLoading: false,
             loadingMessage: '',
@@ -2084,6 +2085,11 @@
                 } else {
                     isFirstVote = !state.userVotedContests[state.currentContest.id];
                 }
+
+                // Invalidate global votes cache since new votes were submitted
+                state.globalVotesCache = null;
+                state.globalSimilarityAllVotes = null;
+                state.userLeaderboardData = null;
 
                 // Reload user votes to reflect new submissions
                 await loadUserVotes();
@@ -9147,7 +9153,12 @@
 
                 // Fetch all votes app-wide — use cached copy if available to avoid re-fetching on contest filter changes
                 if (!state.globalSimilarityAllVotes) {
-                    state.globalSimilarityAllVotes = await fetchAllVotesPaginated('', 'user_id,image_id,score,contest_id');
+                    if (state.globalVotesCache) {
+                        state.globalSimilarityAllVotes = state.globalVotesCache;
+                    } else {
+                        state.globalSimilarityAllVotes = await fetchAllVotesPaginated('', 'user_id,image_id,score,contest_id');
+                        state.globalVotesCache = state.globalSimilarityAllVotes;
+                    }
                 }
                 const allVotes = state.globalSimilarityAllVotes;
 
@@ -9357,7 +9368,13 @@
                     }
                 }
 
-                const allVotes = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
+                let allVotes;
+                if (state.globalVotesCache) {
+                    allVotes = state.globalVotesCache;
+                } else {
+                    allVotes = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
+                    state.globalVotesCache = allVotes;
+                }
 
                 // Build per-user stats
                 const statsMap = {};
@@ -9556,7 +9573,7 @@
             if (data === 'loading') {
                 bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-500 animate-pulse">Loading leaderboard data…</td></tr>';
             } else if (!data) {
-                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;state.globalVotesCache=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
             } else {
                 let rows = [...data];
                 if (showLowConfidenceToggle && state.hideLowConfidenceLeaderboard) {
@@ -13935,23 +13952,26 @@
                     </div>
                 </div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
-                    <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-2 sm:p-3 flex flex-col items-center border-2 border-yellow-500">
-                        <div class="text-xs font-semibold text-gray-800 text-center mb-0.5 leading-tight whitespace-nowrap">🏆 Average</div>
+                    <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 border-yellow-500">
+                        <div class="flex flex-col items-center justify-center w-12 h-12 mb-2">
+                            <div class="text-[10px] font-semibold text-gray-800 text-center leading-tight whitespace-nowrap">🏆 Contest Average</div>
+                            <button onclick="startAverageCompareAll()" class="mt-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
+                        </div>
+                        <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1">&nbsp;</div>
                         <div class="text-xl font-bold text-white score-text">${contestAverage}</div>
-                        <div class="text-[10px] text-gray-500 mb-0.5">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
+                        <div class="text-xs text-gray-500 mb-1">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>
                         <div class="flex items-end gap-px w-full justify-center" style="height: 20px;">
                             ${[1,2,3,4,5].map(s => {
                                 const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? Math.round((contestVc[s]/totalVotes)*100) + '%' : '0%');
                                 return `<div title="${s}★: ${label}" style="width: 14%; height: ${contestMx > 0 ? Math.max((contestVc[s]/contestMx)*100, contestVc[s]>0?8:0) : 0}%; background-color: ${getScoreColor(s)}; border-radius: 2px 2px 0 0; min-height: ${contestVc[s]>0?'2px':'0'};"></div>`;
                             }).join('')}
                         </div>
-                        <div class="flex gap-px w-full justify-center mb-1">
+                        <div class="flex gap-px w-full justify-center">
                             ${[1,2,3,4,5].map(s => {
                                 const label = state.averageTabShowCount ? contestVc[s] : (totalVotes > 0 ? Math.round((contestVc[s]/totalVotes)*100) + '%' : '');
                                 return `<div class="text-center" style="width: 14%; font-size: 8px; line-height: 1.2; color: ${getScoreColor(s)}; font-weight: 600;">${label}</div>`;
                             }).join('')}
                         </div>
-                        <button onclick="startAverageCompareAll()" class="px-2 py-0.5 rounded text-[10px] sm:text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition whitespace-nowrap">Compare all</button>
                     </div>
                     ${voterStats.map(voter => {
                         const vc = {1:0,2:0,3:0,4:0,5:0};
