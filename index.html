@@ -844,6 +844,35 @@
         body.dark-theme .modal-content .text-gray-600 {
             color: #d1d5db !important;
         }
+
+        /* Scrollable results tabs — hide scrollbar while keeping functionality */
+        .tabs-scroll-container {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .tabs-scroll-container::-webkit-scrollbar { display: none; }
+
+        /* Pairs tab dark-theme */
+        body.dark-theme .pairs-anchor-header {
+            background-color: #252535 !important;
+            border-color: #3a3a4a !important;
+        }
+        body.dark-theme .pairs-corr-row:hover {
+            background-color: #252535 !important;
+        }
+        body.dark-theme .pairs-corr-row {
+            border-bottom-color: #2a2a3a !important;
+        }
+        body.dark-theme .pairs-center-tick {
+            background: #4a4a5a !important;
+        }
+        /* Pairs breakdown modal: pair-group borders and voter-row dividers */
+        body.dark-theme .modal-content .pairs-pair-group {
+            border-color: #3a3a4a !important;
+        }
+        body.dark-theme .modal-content .pairs-pair-group .divide-y > * + * {
+            border-top-color: #3a3a4a !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -13385,12 +13414,12 @@
             } = options;
 
             const tabs = [
-                { key: 'average', label: 'Total' },
+                { key: 'average',  label: 'Total' },
+                { key: 'pairs',    label: 'Pairs' },
                 { key: 'divisive', label: 'Divisive' },
-                { key: 'count', label: 'Count' },
+                { key: 'count',    label: 'Count' },
                 { key: 'userVotes', label: 'By User' },
-                { key: 'byVoter', label: 'Average' },
-                { key: 'pairs', label: 'Pairs' }
+                { key: 'byVoter',  label: 'Average' }
             ];
 
             const canSwitchTabs = !isPrivate || isAdmin || isCreator;
@@ -13430,13 +13459,17 @@
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
                                 ${renderGlobalFilters()}
-                                <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
-                                    ${tabs.map(tab => `
-                                        <button
-                                            ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
-                                        >${tab.label}</button>
-                                    `).join('')}
+                                <div class="flex items-center justify-center gap-1 max-w-full">
+                                    <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:-120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll left" aria-label="Scroll tabs left">&#8249;</button>
+                                    <div class="tabs-scroll-container flex items-center gap-1 overflow-x-auto flex-nowrap py-0.5">
+                                        ${tabs.map(tab => `
+                                            <button
+                                                ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
+                                                class="flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
+                                            >${tab.label}</button>
+                                        `).join('')}
+                                    </div>
+                                    <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll right" aria-label="Scroll tabs right">&#8250;</button>
                                 </div>
 
                                 ${renderTabControls(isPrivate, isAdmin, isCreator)}
@@ -13473,7 +13506,7 @@
                             </div>
                             <div class="mt-3 flex flex-col items-center justify-center gap-2 mb-4">
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap opacity-50">
-                                    ${['Total','Divisive','Count','By User','Average','Pairs'].map(t => `<button class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-gray-200 cursor-not-allowed text-sm sm:text-base font-medium" disabled>${t}</button>`).join('')}
+                                    ${['Total','Pairs','Divisive','Count','By User','Average'].map(t => `<button class="px-3 py-1.5 rounded-lg bg-gray-200 cursor-not-allowed text-sm font-medium" disabled>${t}</button>`).join('')}
                                 </div>
                             </div>
                             <div class="text-center py-16">
@@ -14643,7 +14676,7 @@
             const anchorThumbH = Math.max(48, Math.min(imageSize, 80));
 
             return `
-                <div class="mb-3 p-3 bg-gray-50 rounded-xl border border-gray-200 flex items-center gap-3">
+                <div class="pairs-anchor-header mb-3 p-3 bg-gray-50 rounded-xl border border-gray-200 flex items-center gap-3">
                     <button onclick="setPairsAnchor(null)" class="px-2 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex-shrink-0">← Back</button>
                     <div class="relative rounded-lg overflow-hidden shadow-lg flex-shrink-0 cursor-pointer" style="height: ${anchorThumbH}px;" onclick="setPairsAnchor(null)" title="Click to change anchor">
                         <img src="${anchorItem.url}" alt="Anchor image" class="h-full w-auto object-cover" style="height: ${anchorThumbH}px;" />
@@ -14664,13 +14697,13 @@
                         const isPos = r !== null && r >= 0;
                         const isNeg = r !== null && r < 0;
                         return `
-                            <div onclick="showPairsBreakdown(${anchorId}, ${item.id})" class="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0">
+                            <div onclick="showPairsBreakdown(${anchorId}, ${item.id})" class="pairs-corr-row flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0">
                                 <div class="relative flex-shrink-0 rounded-md overflow-hidden shadow-sm" style="height: 36px;">
                                     <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: 36px;" />
                                 </div>
                                 <span class="text-xs text-gray-500 font-medium w-8 flex-shrink-0 text-center">${labelMap[item.id]}</span>
                                 <div class="flex-1 relative min-w-0" style="height: 16px;">
-                                    <div style="position:absolute;left:50%;top:50%;transform:translate(-1px,-50%);width:2px;height:14px;background:#d1d5db;"></div>
+                                    <div class="pairs-center-tick" style="position:absolute;left:50%;top:50%;transform:translate(-1px,-50%);width:2px;height:14px;background:#d1d5db;"></div>
                                     ${isPos ? `<div style="position:absolute;left:50%;top:50%;transform:translateY(-50%);width:${barPct}%;height:8px;background:${rColor};border-radius:0 3px 3px 0;min-width:2px;"></div>` : ''}
                                     ${isNeg ? `<div style="position:absolute;right:50%;top:50%;transform:translateY(-50%);width:${barPct}%;height:8px;background:${rColor};border-radius:3px 0 0 3px;min-width:2px;"></div>` : ''}
                                 </div>
@@ -14795,7 +14828,7 @@
                         </h4>
                         <div class="space-y-2">
                             ${groups.map(g => `
-                                <div class="rounded-lg overflow-hidden border border-gray-100">
+                                <div class="pairs-pair-group rounded-lg overflow-hidden border border-gray-100">
                                     <div class="flex items-center gap-2 px-2 py-1.5 bg-gray-50">
                                         <div class="flex items-center gap-1">
                                             <div class="rounded overflow-hidden flex-shrink-0" style="height:26px;">
