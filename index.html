@@ -844,6 +844,35 @@
         body.dark-theme .modal-content .text-gray-600 {
             color: #d1d5db !important;
         }
+
+        /* Scrollable results tabs — hide scrollbar while keeping functionality */
+        .tabs-scroll-container {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .tabs-scroll-container::-webkit-scrollbar { display: none; }
+
+        /* Pairs tab dark-theme */
+        body.dark-theme .pairs-anchor-header {
+            background-color: #252535 !important;
+            border-color: #3a3a4a !important;
+        }
+        body.dark-theme .pairs-corr-row:hover {
+            background-color: #252535 !important;
+        }
+        body.dark-theme .pairs-corr-row {
+            border-bottom-color: #2a2a3a !important;
+        }
+        body.dark-theme .pairs-center-tick {
+            background: #4a4a5a !important;
+        }
+        /* Pairs breakdown modal: pair-group borders and voter-row dividers */
+        body.dark-theme .modal-content .pairs-pair-group {
+            border-color: #3a3a4a !important;
+        }
+        body.dark-theme .modal-content .pairs-pair-group .divide-y > * + * {
+            border-top-color: #3a3a4a !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1051,7 +1080,11 @@
             isAutosaveDraftExpanded: false,  // Whether "Continue Drafts" section is expanded (default: folded)
             contestsOffset: 0,          // Current pagination offset
             contestsExhausted: false,   // True when no more contests to load
-            loadingMoreContests: false   // True while loading more contests
+            loadingMoreContests: false,  // True while loading more contests
+            pairsAnchorImageId: null,   // Selected anchor image ID for Pairs tab
+            showPairsBreakdownModal: null,  // { imageAId, imageBId } or null
+            pairsCorrCache: {},   // Cache of computed Pearson r values: 'minId-maxId' -> r
+            pairsCorrFilterKey: 'all'  // Fingerprint of active user filter for cache invalidation
         };
 
         function shuffleArray(array) {
@@ -3188,6 +3221,7 @@
                                 <div class="flex items-center gap-2">
                                     <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('divisive')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Divisive Breakdown">📊</button>
+                                    <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">🔗</button>
                                 </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -7037,6 +7071,114 @@
             render();
         }
 
+        function jumpToPairs(imageId) {
+            state.showBreakdownModal = null;
+            state.breakdownModalView = null;
+            state.resultsView = 'pairs';
+            state.pairsAnchorImageId = imageId;
+            render();
+        }
+
+        // ==================== PAIRS TAB HELPERS ====================
+
+        function computePearsonR(imageAId, imageBId) {
+            const [keyA, keyB] = imageAId < imageBId ? [imageAId, imageBId] : [imageBId, imageAId];
+            const cacheKey = `${keyA}-${keyB}`;
+
+            // Compute filter fingerprint for cache invalidation
+            const filterIds = getFilteredUserIds();
+            const filterKey = filterIds === null ? 'all' : [...filterIds].sort().join(',');
+
+            if (state.pairsCorrFilterKey !== filterKey) {
+                state.pairsCorrCache = {};
+                state.pairsCorrFilterKey = filterKey;
+            }
+
+            if (state.pairsCorrCache[cacheKey] !== undefined) {
+                return state.pairsCorrCache[cacheKey];
+            }
+
+            const imgA = state.results.find(r => r.id === imageAId);
+            const imgB = state.results.find(r => r.id === imageBId);
+
+            if (!imgA || !imgB) {
+                state.pairsCorrCache[cacheKey] = null;
+                return null;
+            }
+
+            // Build vote maps: exclude blocked/banned and apply user filter
+            const aVotes = {};
+            (imgA.breakdown || []).forEach(v => {
+                if (v.isBlocked || v.isBanned) return;
+                if (filterIds !== null && !filterIds.has(v.userId)) return;
+                aVotes[v.userId] = v.score;
+            });
+
+            const bVotes = {};
+            (imgB.breakdown || []).forEach(v => {
+                if (v.isBlocked || v.isBanned) return;
+                if (filterIds !== null && !filterIds.has(v.userId)) return;
+                bVotes[v.userId] = v.score;
+            });
+
+            // Shared voters only
+            const sharedIds = Object.keys(aVotes).filter(id => bVotes[id] !== undefined);
+            if (sharedIds.length < 2) {
+                state.pairsCorrCache[cacheKey] = null;
+                return null;
+            }
+
+            const n = sharedIds.length;
+            const meanA = sharedIds.reduce((s, id) => s + aVotes[id], 0) / n;
+            const meanB = sharedIds.reduce((s, id) => s + bVotes[id], 0) / n;
+
+            let num = 0, dA = 0, dB = 0;
+            sharedIds.forEach(id => {
+                const da = aVotes[id] - meanA;
+                const db = bVotes[id] - meanB;
+                num += da * db;
+                dA += da * da;
+                dB += db * db;
+            });
+
+            const denom = Math.sqrt(dA * dB);
+            const r = denom === 0 ? 0 : Math.round((num / denom) * 100) / 100;
+            state.pairsCorrCache[cacheKey] = r;
+            return r;
+        }
+
+        function getPearsonRLabel(r) {
+            if (r === null) return { text: 'N/A', color: 'rgb(156, 163, 175)' };
+            if (r >= 0.7)  return { text: 'Strong',        color: 'rgb(34, 197, 94)' };
+            if (r >= 0.3)  return { text: 'Moderate',      color: 'rgb(132, 204, 22)' };
+            if (r >= -0.3) return { text: 'Weak',          color: 'rgb(156, 163, 175)' };
+            if (r >= -0.7) return { text: 'Inverse',       color: 'rgb(249, 115, 22)' };
+            return             { text: 'Strong inverse', color: 'rgb(220, 38, 38)' };
+        }
+
+        function getImageLabelMap() {
+            // Returns { imageId: '#N' } using rank order from current state.results (score desc)
+            const map = {};
+            (state.results || []).forEach((img, i) => { map[img.id] = `#${i + 1}`; });
+            return map;
+        }
+
+        function setPairsAnchor(imageId) {
+            state.pairsAnchorImageId = imageId;
+            state.showPairsBreakdownModal = null;
+            render();
+        }
+
+        function showPairsBreakdown(imageAId, imageBId) {
+            state.showPairsBreakdownModal = { imageAId, imageBId };
+            render();
+        }
+
+        function closePairsBreakdown() {
+            state.showPairsBreakdownModal = null;
+            render();
+        }
+
         // Admin vote editing
         async function adminEditVote(userId, imageId, currentScore) {
             if (!state.user || state.user.id !== ADMIN_DISCORD_ID) {
@@ -7235,6 +7377,10 @@
             state.comparisonAvgView = 'unified';
             state.comparisonTableSortKeys = [];
             state.collapsedSections = {};
+            state.pairsAnchorImageId = null;
+            state.showPairsBreakdownModal = null;
+            state.pairsCorrCache = {};
+            state.pairsCorrFilterKey = 'all';
 
             // Clear URL hash
             window.location.hash = '';
@@ -7276,6 +7422,10 @@
             state.comparisonAvgView = 'unified';
             state.comparisonTableSortKeys = [];
             state.collapsedSections = {};
+            state.pairsAnchorImageId = null;
+            state.showPairsBreakdownModal = null;
+            state.pairsCorrCache = {};
+            state.pairsCorrFilterKey = 'all';
 
             // Clear URL hash
             window.location.hash = '';
@@ -7389,6 +7539,11 @@
                 state.selectedVoterUserId = userId;
             }
             // Otherwise leave state.selectedVoterUserId as null to force user to select someone
+
+            // Reset pairs state when leaving the Pairs tab
+            if (view !== 'pairs') {
+                state.showPairsBreakdownModal = null;
+            }
 
             render();
         }
@@ -13259,11 +13414,12 @@
             } = options;
 
             const tabs = [
-                { key: 'average', label: 'Total' },
+                { key: 'average',  label: 'Total' },
+                { key: 'pairs',    label: 'Pairs' },
                 { key: 'divisive', label: 'Divisive' },
-                { key: 'count', label: 'Count' },
+                { key: 'count',    label: 'Count' },
                 { key: 'userVotes', label: 'By User' },
-                { key: 'byVoter', label: 'Average' }
+                { key: 'byVoter',  label: 'Average' }
             ];
 
             const canSwitchTabs = !isPrivate || isAdmin || isCreator;
@@ -13273,7 +13429,8 @@
                 divisive: 'Images ranked by how divisive they are',
                 count: 'Count of specific score votes',
                 userVotes: 'Individual user votes',
-                byVoter: 'Average scores per voter'
+                byVoter: 'Average scores per voter',
+                pairs: 'Pearson correlation between image pairs'
             };
 
             return `
@@ -13302,13 +13459,17 @@
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
                                 ${renderGlobalFilters()}
-                                <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
-                                    ${tabs.map(tab => `
-                                        <button
-                                            ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
-                                        >${tab.label}</button>
-                                    `).join('')}
+                                <div class="flex items-center justify-center gap-1 max-w-full">
+                                    <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:-120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll left" aria-label="Scroll tabs left">&#8249;</button>
+                                    <div class="tabs-scroll-container flex items-center gap-1 overflow-x-auto flex-nowrap py-0.5">
+                                        ${tabs.map(tab => `
+                                            <button
+                                                ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
+                                                class="flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
+                                            >${tab.label}</button>
+                                        `).join('')}
+                                    </div>
+                                    <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll right" aria-label="Scroll tabs right">&#8250;</button>
                                 </div>
 
                                 ${renderTabControls(isPrivate, isAdmin, isCreator)}
@@ -13320,6 +13481,7 @@
                         ${renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator)}
                     </div>
                     ${state.showBreakdownModal ? ((() => { const bv = state.breakdownModalView || (state.resultsView === 'divisive' ? 'divisive' : 'image'); return bv === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal(); })()) : ''}
+                    ${state.showPairsBreakdownModal ? renderPairsBreakdownModal() : ''}
                 </div>
             `;
         }
@@ -13344,7 +13506,7 @@
                             </div>
                             <div class="mt-3 flex flex-col items-center justify-center gap-2 mb-4">
                                 <div class="flex items-center justify-center gap-1 sm:gap-2 flex-wrap opacity-50">
-                                    ${['Total','Divisive','Count','By User','Average'].map(t => `<button class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-gray-200 cursor-not-allowed text-sm sm:text-base font-medium" disabled>${t}</button>`).join('')}
+                                    ${['Total','Pairs','Divisive','Count','By User','Average'].map(t => `<button class="px-3 py-1.5 rounded-lg bg-gray-200 cursor-not-allowed text-sm font-medium" disabled>${t}</button>`).join('')}
                                 </div>
                             </div>
                             <div class="text-center py-16">
@@ -13463,6 +13625,7 @@
                 case 'count': return renderCountTab(imageSize, fontSize);
                 case 'userVotes': return renderByUserTab(imageSize, fontSize, isPrivate, isAdmin, isCreator);
                 case 'byVoter': return renderAverageTab();
+                case 'pairs': return renderPairsTab(imageSize, fontSize);
                 default: return renderTotalTab(imageSize, fontSize);
             }
         }
@@ -14349,6 +14512,7 @@
                                 <div class="flex items-center gap-2">
                                     <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('image')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Vote Breakdown">👥</button>
+                                    <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">🔗</button>
                                 </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -14418,6 +14582,7 @@
                                 <div class="flex items-center gap-2">
                                     <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('image')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Vote Breakdown">👥</button>
+                                    <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">🔗</button>
                                 </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -14457,6 +14622,286 @@
                                 }).join('')}
                             </div>
                             <div class="mt-3 text-center text-xs text-gray-500">${scores.length} total votes</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ==================== TAB 6: PAIRS ====================
+        function renderPairsTab(imageSize, fontSize) {
+            const results = state.results;
+            if (!results || results.length === 0) {
+                return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No voting data available.</p></div>`;
+            }
+
+            const labelMap = getImageLabelMap();
+
+            // ── Anchor selection view ──────────────────────────────────────────
+            if (state.pairsAnchorImageId === null) {
+                return `
+                    <div class="mb-3 text-center">
+                        <p class="text-sm text-gray-600">Select an image to see how its scores correlate with every other image</p>
+                    </div>
+                    <div class="flex flex-wrap gap-1">
+                        ${results.map(item => `
+                            <div onclick="setPairsAnchor(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">${item.averageScore}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            // ── Correlation list view ──────────────────────────────────────────
+            const anchorId = state.pairsAnchorImageId;
+            const anchorItem = results.find(r => r.id === anchorId);
+            if (!anchorItem) {
+                // Anchor image is gone — reset gracefully
+                return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">Anchor Not Found</h3><p class="text-gray-600">The selected anchor image is no longer available.</p><button onclick="setPairsAnchor(null)" class="mt-4 px-4 py-2 bg-gray-200 rounded-lg text-sm font-medium hover:bg-gray-300 transition">← Back</button></div>`;
+            }
+
+            // Compute Pearson r for every other image and sort descending (nulls last)
+            const others = results
+                .filter(r => r.id !== anchorId)
+                .map(item => ({ item, r: computePearsonR(anchorId, item.id) }))
+                .sort((a, b) => {
+                    if (a.r === null && b.r === null) return 0;
+                    if (a.r === null) return 1;
+                    if (b.r === null) return -1;
+                    return b.r - a.r;
+                });
+
+            const anchorThumbH = Math.max(48, Math.min(imageSize, 80));
+
+            return `
+                <div class="pairs-anchor-header mb-3 p-3 bg-gray-50 rounded-xl border border-gray-200 flex items-center gap-3">
+                    <button onclick="setPairsAnchor(null)" class="px-2 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex-shrink-0">← Back</button>
+                    <div class="relative rounded-lg overflow-hidden shadow-lg flex-shrink-0 cursor-pointer" style="height: ${anchorThumbH}px;" onclick="setPairsAnchor(null)" title="Click to change anchor">
+                        <img src="${anchorItem.url}" alt="Anchor image" class="h-full w-auto object-cover" style="height: ${anchorThumbH}px;" />
+                        <div class="absolute bottom-0 left-0 right-0 text-center py-0.5 font-bold score-text" style="font-size: ${Math.max(9, fontSize)}px; color: white;">${anchorItem.averageScore}</div>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Anchor</div>
+                        <div class="text-sm font-bold text-gray-800">${labelMap[anchorId]}</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Tap a row to see voter breakdown</div>
+                    </div>
+                </div>
+
+                <div class="space-y-0">
+                    ${others.map(({ item, r }) => {
+                        const { text: rText, color: rColor } = getPearsonRLabel(r);
+                        const rFormatted = r === null ? 'N/A' : (r >= 0 ? `+${r.toFixed(2)}` : `−${Math.abs(r).toFixed(2)}`);
+                        const barPct = r === null ? 0 : Math.abs(r) * 50; // % of the half-bar area
+                        const isPos = r !== null && r >= 0;
+                        const isNeg = r !== null && r < 0;
+                        return `
+                            <div onclick="showPairsBreakdown(${anchorId}, ${item.id})" class="pairs-corr-row flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0">
+                                <div class="relative flex-shrink-0 rounded-md overflow-hidden shadow-sm" style="height: 36px;">
+                                    <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: 36px;" />
+                                </div>
+                                <span class="text-xs text-gray-500 font-medium w-8 flex-shrink-0 text-center">${labelMap[item.id]}</span>
+                                <div class="flex-1 relative min-w-0" style="height: 16px;">
+                                    <div class="pairs-center-tick" style="position:absolute;left:50%;top:50%;transform:translate(-1px,-50%);width:2px;height:14px;background:#d1d5db;"></div>
+                                    ${isPos ? `<div style="position:absolute;left:50%;top:50%;transform:translateY(-50%);width:${barPct}%;height:8px;background:${rColor};border-radius:0 3px 3px 0;min-width:2px;"></div>` : ''}
+                                    ${isNeg ? `<div style="position:absolute;right:50%;top:50%;transform:translateY(-50%);width:${barPct}%;height:8px;background:${rColor};border-radius:3px 0 0 3px;min-width:2px;"></div>` : ''}
+                                </div>
+                                <span class="text-xs font-bold w-10 text-right flex-shrink-0" style="color:${rColor};">${rFormatted}</span>
+                                <span class="text-xs font-medium w-24 flex-shrink-0" style="color:${rColor};">${rText}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // ==================== PAIRS BREAKDOWN MODAL ====================
+        function renderPairsBreakdownModal() {
+            if (!state.showPairsBreakdownModal) return '';
+            const { imageAId, imageBId } = state.showPairsBreakdownModal;
+
+            const imgA = state.results.find(r => r.id === imageAId);
+            const imgB = state.results.find(r => r.id === imageBId);
+            if (!imgA || !imgB) return '';
+
+            const labelMap = getImageLabelMap();
+            const filterIds = getFilteredUserIds();
+
+            // Build filtered vote maps
+            const aVoteMap = {};
+            (imgA.breakdown || []).forEach(v => {
+                if (v.isBlocked || v.isBanned) return;
+                if (filterIds !== null && !filterIds.has(v.userId)) return;
+                aVoteMap[v.userId] = { score: v.score, username: v.username, avatar: v.avatar, isCurrentUser: v.isCurrentUser };
+            });
+            const bVoteMap = {};
+            (imgB.breakdown || []).forEach(v => {
+                if (v.isBlocked || v.isBanned) return;
+                if (filterIds !== null && !filterIds.has(v.userId)) return;
+                bVoteMap[v.userId] = v.score;
+            });
+
+            const sharedIds = Object.keys(aVoteMap).filter(id => bVoteMap[id] !== undefined);
+
+            const noSharedVotersHTML = `
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closePairsBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 border-b border-gray-200 flex justify-between items-center rounded-t-2xl">
+                            <h3 class="text-lg font-bold text-gray-800">Pairs Breakdown</h3>
+                            <button onclick="closePairsBreakdown()" class="text-gray-500 hover:text-gray-700"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+                        </div>
+                        <div class="p-8 text-center"><div class="text-5xl mb-3">📭</div><p class="text-gray-600 font-medium">No shared voters</p><p class="text-gray-500 text-sm mt-1">No one has rated both images.</p></div>
+                    </div>
+                </div>
+            `;
+
+            if (sharedIds.length === 0) return noSharedVotersHTML;
+
+            // Compute stats
+            const n = sharedIds.length;
+            const meanA = sharedIds.reduce((s, id) => s + aVoteMap[id].score, 0) / n;
+            const meanB = sharedIds.reduce((s, id) => s + bVoteMap[id], 0) / n;
+
+            let num = 0, dA = 0, dB = 0;
+            sharedIds.forEach(id => {
+                const da = aVoteMap[id].score - meanA;
+                const db = bVoteMap[id] - meanB;
+                num += da * db;
+                dA += da * da;
+                dB += db * db;
+            });
+            const denom = Math.sqrt(dA * dB);
+            const r = denom === 0 ? 0 : Math.round((num / denom) * 100) / 100;
+            const { text: rText, color: rColor } = getPearsonRLabel(r);
+            const rFormatted = r >= 0 ? `+${r.toFixed(2)}` : `−${Math.abs(r).toFixed(2)}`;
+
+            // Section colours
+            const C_COLOR = 'rgb(34, 197, 94)';   // green — correlated
+            const I_COLOR = 'rgb(156, 163, 175)'; // grey  — indifferent
+            const V_COLOR = 'rgb(220, 38, 38)';   // red   — inverse
+
+            // Classify voters
+            const THRESHOLD = 0.4;
+            const correlated = [], indifferent = [], inverse = [];
+            sharedIds.forEach(id => {
+                const da = aVoteMap[id].score - meanA;
+                const db = bVoteMap[id] - meanB;
+                const contrib = da * db;
+                const voter = {
+                    userId: id,
+                    username: aVoteMap[id].username,
+                    avatar: aVoteMap[id].avatar,
+                    isCurrentUser: aVoteMap[id].isCurrentUser,
+                    scoreA: aVoteMap[id].score,
+                    scoreB: bVoteMap[id],
+                    contrib
+                };
+                if (contrib > THRESHOLD) correlated.push(voter);
+                else if (contrib < -THRESHOLD) inverse.push(voter);
+                else indifferent.push(voter);
+            });
+
+            // Group voters by (scoreA, scoreB) pair, sorted by sum desc then scoreA desc
+            function groupByPair(voters) {
+                const map = {};
+                voters.forEach(v => {
+                    const key = `${v.scoreA}_${v.scoreB}`;
+                    if (!map[key]) map[key] = { scoreA: v.scoreA, scoreB: v.scoreB, voters: [] };
+                    map[key].voters.push(v);
+                });
+                return Object.values(map).sort((a, b) => {
+                    const diff = (b.scoreA + b.scoreB) - (a.scoreA + a.scoreB);
+                    return diff !== 0 ? diff : b.scoreA - a.scoreA;
+                });
+            }
+
+            function renderSection(voters, title, sublabel, sColor) {
+                if (voters.length === 0) return '';
+                const groups = groupByPair(voters);
+                return `
+                    <div class="mb-4">
+                        <h4 class="text-sm font-bold mb-2 px-3 py-1.5 rounded-lg flex items-center" style="color:${sColor};background-color:${sColor}20;">
+                            ${title}
+                            <span class="font-normal ml-1 text-xs opacity-80">— ${sublabel}</span>
+                            <span class="ml-auto text-xs font-semibold">${voters.length}</span>
+                        </h4>
+                        <div class="space-y-2">
+                            ${groups.map(g => `
+                                <div class="pairs-pair-group rounded-lg overflow-hidden border border-gray-100">
+                                    <div class="flex items-center gap-2 px-2 py-1.5 bg-gray-50">
+                                        <div class="flex items-center gap-1">
+                                            <div class="rounded overflow-hidden flex-shrink-0" style="height:26px;">
+                                                <img src="${imgA.url}" alt="" class="h-full w-auto object-cover" style="height:26px;" />
+                                            </div>
+                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded text-white" style="background:${getScoreColor(g.scoreA)};">${g.scoreA}</span>
+                                        </div>
+                                        <span class="text-gray-400 text-sm">↔</span>
+                                        <div class="flex items-center gap-1">
+                                            <div class="rounded overflow-hidden flex-shrink-0" style="height:26px;">
+                                                <img src="${imgB.url}" alt="" class="h-full w-auto object-cover" style="height:26px;" />
+                                            </div>
+                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded text-white" style="background:${getScoreColor(g.scoreB)};">${g.scoreB}</span>
+                                        </div>
+                                        <span class="ml-auto text-xs text-gray-500">${g.voters.length} voter${g.voters.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    <div class="divide-y divide-gray-50">
+                                        ${g.voters.map(v => `
+                                            <div class="flex items-center gap-2 px-2 py-1.5 ${v.isCurrentUser ? 'bg-blue-50' : 'bg-white'}">
+                                                <img src="${v.avatar}" alt="${v.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation();viewUserProfile('${v.userId}');" />
+                                                <span class="text-sm text-gray-700 flex-1 truncate cursor-pointer hover:text-mauve-600" onclick="event.stopPropagation();viewUserProfile('${v.userId}');">${v.username}${v.isCurrentUser ? ' (You)' : ''}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closePairsBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 flex-shrink-0 bg-white border-b border-gray-200 rounded-t-2xl">
+                            <div class="flex justify-between items-start mb-3">
+                                <h3 class="text-lg font-bold text-gray-800">Pairs Breakdown</h3>
+                                <button onclick="closePairsBreakdown()" class="text-gray-500 hover:text-gray-700 flex-shrink-0">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-2 flex-1 min-w-0">
+                                    <div class="flex flex-col items-center gap-0.5 flex-shrink-0">
+                                        <div class="rounded-lg overflow-hidden shadow" style="height:52px;">
+                                            <img src="${imgA.url}" alt="Image A" class="h-full w-auto object-cover" style="height:52px;" />
+                                        </div>
+                                        <span class="text-xs text-gray-500 font-medium">${labelMap[imageAId]}</span>
+                                    </div>
+                                    <span class="text-xl text-gray-400 flex-shrink-0">↔</span>
+                                    <div class="flex flex-col items-center gap-0.5 flex-shrink-0">
+                                        <div class="rounded-lg overflow-hidden shadow" style="height:52px;">
+                                            <img src="${imgB.url}" alt="Image B" class="h-full w-auto object-cover" style="height:52px;" />
+                                        </div>
+                                        <span class="text-xs text-gray-500 font-medium">${labelMap[imageBId]}</span>
+                                    </div>
+                                </div>
+                                <div class="text-right flex-shrink-0">
+                                    <div class="text-2xl font-bold" style="color:${rColor};">${rFormatted}</div>
+                                    <div class="text-xs font-semibold mt-0.5" style="color:${rColor};">${rText}</div>
+                                </div>
+                            </div>
+                            <div class="flex gap-2 mt-3 flex-wrap">
+                                <span class="px-2 py-1 bg-gray-100 rounded-full text-xs font-semibold text-gray-700">Total: ${n}</span>
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold" style="background:${C_COLOR}20;color:${C_COLOR};">Correlated: ${correlated.length}</span>
+                                <span class="px-2 py-1 bg-gray-100 rounded-full text-xs font-semibold text-gray-500">Indifferent: ${indifferent.length}</span>
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold" style="background:${V_COLOR}20;color:${V_COLOR};">Inverse: ${inverse.length}</span>
+                            </div>
+                        </div>
+                        <div class="overflow-y-auto flex-1 p-4">
+                            ${renderSection(correlated,  'Correlated',  'Pulling r up',      C_COLOR)}
+                            ${renderSection(indifferent, 'Indifferent', 'Negligible effect', I_COLOR)}
+                            ${renderSection(inverse,     'Inverse',     'Pulling r down',    V_COLOR)}
                         </div>
                     </div>
                 </div>
@@ -14515,6 +14960,7 @@
                                 <div class="flex items-center gap-2">
                                     <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('divisive')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Divisive Breakdown">📊</button>
+                                    <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">🔗</button>
                                 </div>
                                 <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -15524,6 +15970,10 @@
         window.showBreakdown = showBreakdown;
         window.closeBreakdown = closeBreakdown;
         window.switchBreakdownView = switchBreakdownView;
+        window.jumpToPairs = jumpToPairs;
+        window.setPairsAnchor = setPairsAnchor;
+        window.showPairsBreakdown = showPairsBreakdown;
+        window.closePairsBreakdown = closePairsBreakdown;
         window.backToHome = backToHome;
         window.confirmBackToHome = confirmBackToHome;
         window.closeModal = closeModal;
