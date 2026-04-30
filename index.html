@@ -913,8 +913,8 @@
         });
 
         // Supabase Configuration
-        const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
+        const SUPABASE_URL = 'https://peony-proxy.backpackcashback.workers.dev';
+        const SUPABASE_ANON_KEY = ''; // no longer needed
 
         // Discord OAuth Configuration
         const DISCORD_CLIENT_ID = '1442282566810861568';  // Replace with your actual Discord Client ID
@@ -922,12 +922,6 @@
 
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
-
-        // Initialize Supabase client (only if not already initialized to prevent duplicate declaration errors)
-        if (typeof window.supabaseClient === 'undefined') {
-            window.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        }
-        const supabase = window.supabaseClient;
 
         let state = {
             isLoggedIn: false,
@@ -1119,10 +1113,14 @@
 
         // Generic Supabase fetch with cache-busting headers
         async function fetchFromSupabase(endpoint, options = {}) {
+            const token = state.user?.accessToken
+                || JSON.parse(localStorage.getItem('peony_user') || '{}').accessToken
+                || null;
+
             const defaultHeaders = {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                'Cache-Control': 'no-cache'   // Validate with server but allow CDN caching
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache',
+                ...(token ? { 'X-Discord-Token': token } : {})
             };
 
             return fetch(`${SUPABASE_URL}${endpoint}`, {
