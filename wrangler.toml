@@ -1,3 +1,7 @@
 name = "peony-proxy"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+
+[vars]
+SUPABASE_URL = "https://tbduuuzwbiidjgztupfp.supabase.co"
+ADMIN_DISCORD_ID = "719271552247529571"
