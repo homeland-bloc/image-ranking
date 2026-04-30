@@ -1961,15 +1961,9 @@
                 const newCount = freshCount + 1;
 
                 // PATCH the voter_count in the database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/${table}?id=eq.${itemId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({ voter_count: newCount })
                 });
 
@@ -2066,15 +2060,8 @@
                     const contestVotes = votesByContest[contestId];
 
                     // Check if votes already exist for this user and contest
-                    const existingVotesResponse = await fetch(
-                        `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&select=*`,
-                        {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Cache-Control': 'no-cache'
-                            }
-                        }
+                    const existingVotesResponse = await fetchFromSupabase(
+                        `/rest/v1/votes?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&select=*`
                     );
 
                     if (!existingVotesResponse.ok) {
@@ -2099,17 +2086,11 @@
                     // Update existing votes
                     if (votesToUpdate.length > 0) {
                         const updatePromises = votesToUpdate.map(async (vote) => {
-                            const response = await fetch(
-                                `${SUPABASE_URL}/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
+                            const response = await fetchFromSupabase(
+                                `/rest/v1/votes?user_id=eq.${vote.user_id}&contest_id=eq.${vote.contest_id}&image_id=eq.${vote.image_id}`,
                                 {
                                     method: 'PATCH',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'apikey': SUPABASE_ANON_KEY,
-                                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                        'Prefer': 'return=minimal',
-                                        'Cache-Control': 'no-cache'
-                                    },
+                                    headers: { 'Prefer': 'return=minimal' },
                                     body: JSON.stringify({ score: vote.score })
                                 }
                             );
@@ -2124,15 +2105,9 @@
 
                     // Insert new votes
                     if (votesToInsert.length > 0) {
-                        const response = await fetch(`${SUPABASE_URL}/rest/v1/votes`, {
+                        const response = await fetchFromSupabase(`/rest/v1/votes`, {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Prefer': 'return=minimal',
-                                'Cache-Control': 'no-cache'
-                            },
+                            headers: { 'Prefer': 'return=minimal' },
                             body: JSON.stringify(votesToInsert)
                         });
 
@@ -2339,13 +2314,8 @@
                 }
 
                 // Now delete the contest from database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
+                const response = await fetchFromSupabase(`/rest/v1/contests?id=eq.${contestId}`, {
+                    method: 'DELETE'
                 });
 
                 if (!response.ok) {
@@ -3668,15 +3638,9 @@
                         image_order: existingImagesCount + i
                     }));
 
-                    const imagesResponse = await fetch(`${SUPABASE_URL}/rest/v1/images`, {
+                    const imagesResponse = await fetchFromSupabase(`/rest/v1/images`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'return=minimal',
-                            'Cache-Control': 'no-cache'
-                        },
+                        headers: { 'Prefer': 'return=minimal' },
                         body: JSON.stringify(imagesToInsert)
                     });
 
@@ -3688,15 +3652,9 @@
                 } else {
                     // Step 2b: Insert contest - database auto-generates UUID
                     setLoading('Creating contest...');
-                    const contestResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests`, {
+                    const contestResponse = await fetchFromSupabase(`/rest/v1/contests`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'return=representation',
-                            'Cache-Control': 'no-cache'
-                        },
+                        headers: { 'Prefer': 'return=representation' },
                         body: JSON.stringify({
                             title: state.newContest.title,
                             created_by: state.user.id
@@ -3721,15 +3679,9 @@
                         image_order: i
                     }));
 
-                    const imagesResponse = await fetch(`${SUPABASE_URL}/rest/v1/images`, {
+                    const imagesResponse = await fetchFromSupabase(`/rest/v1/images`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'return=minimal',
-                            'Cache-Control': 'no-cache'
-                        },
+                        headers: { 'Prefer': 'return=minimal' },
                         body: JSON.stringify(imagesToInsert)
                     });
 
@@ -4198,14 +4150,9 @@
             }
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items`, {
+                const response = await fetchFromSupabase(`/rest/v1/pinned_items`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({
                         item_type: itemType,
                         item_id: itemId,
@@ -4235,12 +4182,8 @@
             }
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items?item_type=eq.${itemType}&item_id=eq.${itemId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
+                const response = await fetchFromSupabase(`/rest/v1/pinned_items?item_type=eq.${itemType}&item_id=eq.${itemId}`, {
+                    method: 'DELETE'
                 });
 
                 if (response.ok) {
@@ -4316,15 +4259,8 @@
         async function loadAllUserAutosaves() {
             if (!state.user) return;
             try {
-                const response = await fetch(
-                    `${SUPABASE_URL}/rest/v1/autosave_votes?user_id=eq.${state.user.id}&select=*`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        }
-                    }
+                const response = await fetchFromSupabase(
+                    `/rest/v1/autosave_votes?user_id=eq.${state.user.id}&select=*`
                 );
                 if (!response.ok) throw new Error('Failed to load autosaves');
                 const autosaves = await response.json();
@@ -4354,15 +4290,9 @@
             } catch (e) { /* ignore */ }
             // Delete from database (fire and forget – don't block UI)
             try {
-                await fetch(
-                    `${SUPABASE_URL}/rest/v1/autosave_votes?user_id=eq.${state.user.id}&voting_context_type=eq.${contextType}&voting_context_id=eq.${contextId}`,
-                    {
-                        method: 'DELETE',
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                        }
-                    }
+                await fetchFromSupabase(
+                    `/rest/v1/autosave_votes?user_id=eq.${state.user.id}&voting_context_type=eq.${contextType}&voting_context_id=eq.${contextId}`,
+                    { method: 'DELETE' }
                 );
             } catch (error) {
                 console.error('Failed to delete autosaves from DB:', error);
@@ -4422,14 +4352,9 @@
 
             // Upsert to database
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/autosave_votes`, {
+                const response = await fetchFromSupabase(`/rest/v1/autosave_votes`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'resolution=merge-duplicates'
-                    },
+                    headers: { 'Prefer': 'resolution=merge-duplicates' },
                     body: JSON.stringify(votesToSave)
                 });
                 if (response.ok) {
@@ -5618,14 +5543,8 @@
 
             try {
                 // Update database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?id=eq.${itemId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/${tableName}?id=eq.${itemId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    },
                     body: JSON.stringify({
                         is_locked: newLockStatus
                     })
@@ -5678,14 +5597,8 @@
 
                 const newPublicStatus = !item.resultsPublic;
 
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?id=eq.${itemId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/${tableName}?id=eq.${itemId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    },
                     body: JSON.stringify({
                         results_public: newPublicStatus
                     })
@@ -5792,13 +5705,8 @@
 
             try {
                 // Save to mergers table
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers`, {
+                const response = await fetchFromSupabase(`/rest/v1/mergers`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
                     body: JSON.stringify({
                         name: state.newMergerName.trim(),
                         created_by: state.user.id,
@@ -5917,14 +5825,10 @@
                 });
 
                 // Update merger in database with user context
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}&created_by=eq.${state.user.id}`, {
+                const response = await fetchFromSupabase(`/rest/v1/mergers?id=eq.${mergerId}&created_by=eq.${state.user.id}`, {
                     method: 'PATCH',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Prefer': 'return=representation',
-                        'Cache-Control': 'no-cache',
                         'X-Client-Info': JSON.stringify({ user_id: state.user.id })
                     },
                     body: JSON.stringify({
@@ -6031,13 +5935,8 @@
 
             try {
                 // Delete only the merger record, leave contests intact
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?id=eq.${mergerId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
-                    }
+                const response = await fetchFromSupabase(`/rest/v1/mergers?id=eq.${mergerId}`, {
+                    method: 'DELETE'
                 });
 
                 if (!response.ok) {
@@ -6645,13 +6544,8 @@
                 }
 
                 // Save to extracts table
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts`, {
+                const response = await fetchFromSupabase(`/rest/v1/extracts`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    },
                     body: JSON.stringify(extractData)
                 });
 
@@ -6717,12 +6611,8 @@
             state.extractToDelete = null;
 
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
+                const response = await fetchFromSupabase(`/rest/v1/extracts?id=eq.${extractId}`, {
+                    method: 'DELETE'
                 });
 
                 if (!response.ok) {
@@ -6829,15 +6719,9 @@
                 setLoading('Saving extract...');
 
                 // Update extract in database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?id=eq.${extractId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/extracts?id=eq.${extractId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({
                         image_ids: state.editExtractSelectedImages
                     })
@@ -7286,15 +7170,9 @@
                 }
 
                 // Update vote in database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({ score: parseInt(newScore) })
                 });
 
@@ -7358,15 +7236,9 @@
                 }
 
                 // Update vote in database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/votes?user_id=eq.${userId}&image_id=eq.${imageId}&contest_id=eq.${contestId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({ is_blocked: shouldBlock })
                 });
 
@@ -8470,10 +8342,8 @@
                 console.log('📊 All users in state:', state.allUsers);
 
                 // Fetch admin statistics from database with aggressive cache-busting
-                const voterResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=user_id`, {
+                const voterResponse = await fetchFromSupabase(`/rest/v1/votes?select=user_id`, {
                     headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
                         'Pragma': 'no-cache',
                         'Expires': '0'
@@ -8491,10 +8361,8 @@
                 const totalUniqueVoters = users.length;
 
                 // Count total votes using COUNT(*) with minimal payload
-                const votesCountResponse = await fetch(`${SUPABASE_URL}/rest/v1/votes?select=id`, {
+                const votesCountResponse = await fetchFromSupabase(`/rest/v1/votes?select=id`, {
                     headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Prefer': 'count=exact',
                         'Range': '0-0',
                         'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
@@ -8545,27 +8413,15 @@
 
                 // Update in database
                 // First, check if setting exists
-                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?setting_name=eq.${settingName}`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
+                const checkResponse = await fetchFromSupabase(`/rest/v1/app_settings?setting_name=eq.${settingName}`);
 
                 const existingSettings = await checkResponse.json();
 
                 if (existingSettings.length > 0) {
                     // Update existing setting
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?setting_name=eq.${settingName}`, {
+                    const response = await fetchFromSupabase(`/rest/v1/app_settings?setting_name=eq.${settingName}`, {
                         method: 'PATCH',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                        },
-                        body: JSON.stringify({
-                            value: newValue
-                        })
+                        body: JSON.stringify({ value: newValue })
                     });
 
                     if (!response.ok) {
@@ -8573,13 +8429,8 @@
                     }
                 } else {
                     // Insert new setting
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {
+                    const response = await fetchFromSupabase(`/rest/v1/app_settings`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                        },
                         body: JSON.stringify({
                             setting_name: settingName,
                             value: newValue
@@ -8610,27 +8461,15 @@
             try {
                 // Update in database
                 // First, check if setting exists
-                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?setting_name=eq.${settingName}`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
+                const checkResponse = await fetchFromSupabase(`/rest/v1/app_settings?setting_name=eq.${settingName}`);
 
                 const existingSettings = await checkResponse.json();
 
                 if (existingSettings.length > 0) {
                     // Update existing setting
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?setting_name=eq.${settingName}`, {
+                    const response = await fetchFromSupabase(`/rest/v1/app_settings?setting_name=eq.${settingName}`, {
                         method: 'PATCH',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                        },
-                        body: JSON.stringify({
-                            value: newValue
-                        })
+                        body: JSON.stringify({ value: newValue })
                     });
 
                     if (!response.ok) {
@@ -8638,13 +8477,8 @@
                     }
                 } else {
                     // Insert new setting
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {
+                    const response = await fetchFromSupabase(`/rest/v1/app_settings`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                        },
                         body: JSON.stringify({
                             setting_name: settingName,
                             value: newValue
@@ -8900,14 +8734,9 @@
                 setLoading('Creating folder...');
                 const maxOrder = state.groups.length > 0 ? Math.max(...state.groups.map(g => g.display_order || 0)) : 0;
 
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups`, {
+                const response = await fetchFromSupabase(`/rest/v1/groups`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=representation'
-                    },
+                    headers: { 'Prefer': 'return=representation' },
                     body: JSON.stringify({
                         name: folderName,
                         display_order: maxOrder + 1
@@ -8950,21 +8779,13 @@
                 setLoading('Deleting folder...');
 
                 // First delete all contest_groups entries for this folder
-                await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${folderId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
+                await fetchFromSupabase(`/rest/v1/contest_groups?group_id=eq.${folderId}`, {
+                    method: 'DELETE'
                 });
 
                 // Then delete the group itself
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
+                const response = await fetchFromSupabase(`/rest/v1/groups?id=eq.${folderId}`, {
+                    method: 'DELETE'
                 });
 
                 if (!response.ok) {
@@ -9101,14 +8922,9 @@
                 });
 
                 // Batch insert all items
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
+                const response = await fetchFromSupabase(`/rest/v1/contest_groups`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=representation'
-                    },
+                    headers: { 'Prefer': 'return=representation' },
                     body: JSON.stringify(itemsToInsert)
                 });
 
@@ -9144,14 +8960,9 @@
                 const folder = state.groups.find(g => g.id === folderId);
                 const maxOrder = folder?.items?.length > 0 ? Math.max(...folder.items.map(i => i.display_order || 0)) : 0;
 
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups`, {
+                const response = await fetchFromSupabase(`/rest/v1/contest_groups`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Prefer': 'return=representation'
-                    },
+                    headers: { 'Prefer': 'return=representation' },
                     body: JSON.stringify({
                         group_id: folderId,
                         item_id: selectedItem.id,
@@ -9179,12 +8990,8 @@
             try {
                 setLoading('Removing item from folder...');
 
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
+                const response = await fetchFromSupabase(`/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+                    method: 'DELETE'
                 });
 
                 if (!response.ok) {
@@ -9202,13 +9009,8 @@
         }
 
         async function saveFolderOrder(folderId, newOrder) {
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/groups?id=eq.${folderId}`, {
+            const response = await fetchFromSupabase(`/rest/v1/groups?id=eq.${folderId}`, {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                },
                 body: JSON.stringify({
                     display_order: newOrder
                 })
@@ -9221,13 +9023,8 @@
         }
 
         async function saveItemOrder(groupId, itemId, itemType, newOrder) {
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
+            const response = await fetchFromSupabase(`/rest/v1/contest_groups?group_id=eq.${groupId}&item_id=eq.${itemId}&item_type=eq.${itemType}`, {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                },
                 body: JSON.stringify({
                     display_order: newOrder
                 })
@@ -9558,14 +9355,9 @@
             const table = itemType === 'contest' ? 'contests' : itemType === 'merger' ? 'mergers' : 'extracts';
             const field = itemType === 'contest' ? 'title' : 'name';
             try {
-                const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}`, {
+                const res = await fetchFromSupabase(`/rest/v1/${table}?id=eq.${itemId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({ [field]: trimmed }),
                 });
                 if (!res.ok) throw new Error('PATCH failed');
@@ -9921,15 +9713,9 @@
         async function banUser(userId, banReason) {
             try {
                 // Update database with ban status and reason
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${userId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({
                         is_banned: true,
                         ban_reason: banReason
@@ -9968,15 +9754,9 @@
         async function unbanUser(userId) {
             try {
                 // Update database - clear ban status and reason
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+                const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${userId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                        'Cache-Control': 'no-cache'
-                    },
+                    headers: { 'Prefer': 'return=minimal' },
                     body: JSON.stringify({
                         is_banned: false,
                         ban_reason: null
