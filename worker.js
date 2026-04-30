@@ -25,46 +25,57 @@ const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
 export default {
   async fetch(request, env) {
-    // ── CORS preflight ──────────────────────────────────────────────────────
-    if (request.method === 'OPTIONS') {
-      return corsResponse(null, 204, env);
+    try {
+      // ── CORS preflight ────────────────────────────────────────────────────
+      if (request.method === 'OPTIONS') {
+        return corsResponse(null, 204);
+      }
+
+      // Fail fast with a clear message if required env vars are missing
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) {
+        return corsResponse({ error: 'Worker misconfigured: missing SUPABASE_URL or SUPABASE_SERVICE_KEY' }, 500);
+      }
+
+      const url = new URL(request.url);
+
+      // ── Route: /discord-verify  (called on login to validate token) ───────
+      if (url.pathname === '/discord-verify') {
+        return handleDiscordVerify(request, env);
+      }
+
+      // ── Route: /rest/v1/* (proxy to Supabase REST) ────────────────────────
+      if (url.pathname.startsWith('/rest/v1/')) {
+        return handleSupabaseProxy(request, url, env);
+      }
+
+      // ── Route: /storage/v1/* (proxy to Supabase Storage) ─────────────────
+      if (url.pathname.startsWith('/storage/v1/')) {
+        return handleSupabaseProxy(request, url, env);
+      }
+
+      return corsResponse({ error: 'Not found' }, 404);
+    } catch (err) {
+      // Surface the real error with CORS headers so the browser can read it
+      console.error('Unhandled worker error:', err);
+      return corsResponse({ error: err.message || String(err) }, 500);
     }
-
-    const url = new URL(request.url);
-
-    // ── Route: /discord-verify  (called on login to validate token) ─────────
-    if (url.pathname === '/discord-verify') {
-      return handleDiscordVerify(request, env);
-    }
-
-    // ── Route: /rest/v1/* (proxy to Supabase REST) ──────────────────────────
-    if (url.pathname.startsWith('/rest/v1/')) {
-      return handleSupabaseProxy(request, url, env);
-    }
-
-    // ── Route: /storage/v1/* (proxy to Supabase Storage) ───────────────────
-    if (url.pathname.startsWith('/storage/v1/')) {
-      return handleSupabaseProxy(request, url, env);
-    }
-
-    return corsResponse({ error: 'Not found' }, 404, env);
   }
 };
 
 // ── Discord verification endpoint ────────────────────────────────────────────
 async function handleDiscordVerify(request, env) {
   if (request.method !== 'POST') {
-    return corsResponse({ error: 'Method not allowed' }, 405, env);
+    return corsResponse({ error: 'Method not allowed' }, 405);
   }
 
   const discordToken = request.headers.get('X-Discord-Token');
   if (!discordToken) {
-    return corsResponse({ error: 'Missing Discord token' }, 401, env);
+    return corsResponse({ error: 'Missing Discord token' }, 401);
   }
 
   const user = await fetchDiscordUser(discordToken);
   if (!user) {
-    return corsResponse({ error: 'Invalid Discord token' }, 401, env);
+    return corsResponse({ error: 'Invalid Discord token' }, 401);
   }
 
   return corsResponse({
@@ -72,7 +83,7 @@ async function handleDiscordVerify(request, env) {
     username: user.username,
     avatar: user.avatar,
     isAdmin: user.id === env.ADMIN_DISCORD_ID
-  }, 200, env);
+  }, 200);
 }
 
 // ── Supabase proxy ────────────────────────────────────────────────────────────
@@ -88,19 +99,19 @@ async function handleSupabaseProxy(request, url, env) {
   if (WRITE_METHODS.has(method)) {
     const discordToken = request.headers.get('X-Discord-Token');
     if (!discordToken) {
-      return corsResponse({ error: 'Authentication required' }, 401, env);
+      return corsResponse({ error: 'Authentication required' }, 401);
     }
 
     const user = await fetchDiscordUser(discordToken);
     if (!user) {
-      return corsResponse({ error: 'Invalid Discord token' }, 401, env);
+      return corsResponse({ error: 'Invalid Discord token' }, 401);
     }
 
     // ── Extra guard: DELETE on core tables requires admin ─────────────────
     const sensitiveTables = new Set(['contests', 'images', 'votes']);
     if (method === 'DELETE' && sensitiveTables.has(table)) {
       if (user.id !== env.ADMIN_DISCORD_ID) {
-        return corsResponse({ error: 'Admin only' }, 403, env);
+        return corsResponse({ error: 'Admin only' }, 403);
       }
     }
 
@@ -142,7 +153,6 @@ async function handleSupabaseProxy(request, url, env) {
   return corsResponse(
     responseBody,
     supabaseResponse.status,
-    env,
     supabaseResponse.headers.get('Content-Type') || 'application/json'
   );
 }
@@ -182,7 +192,7 @@ function sanitiseBody(table, body, verifiedUserId) {
 }
 
 // ── CORS helper ───────────────────────────────────────────────────────────────
-function corsResponse(body, status, env, contentType = 'application/json') {
+function corsResponse(body, status, contentType = 'application/json') {
   const headers = {
     'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
