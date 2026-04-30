@@ -62,6 +62,7 @@
             const params = new URLSearchParams(fragment);
             
             const accessToken = params.get('access_token');
+            localStorage.setItem('peony_discord_token', accessToken);
             const error = params.get('error');
             const errorDescription = params.get('error_description');
 
