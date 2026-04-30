@@ -55,14 +55,12 @@
     <script>
         const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
+        const WORKER_URL = 'https://peony-proxy.backpackcashback.workers.dev';
+        const DISCORD_REDIRECT_URI = 'https://bicipikay.github.io/peony/auth/callback';
 
         async function handleCallback() {
-            // Get the auth fragment from URL
-            const fragment = window.location.hash.substring(1);
-            const params = new URLSearchParams(fragment);
-            
-            const accessToken = params.get('access_token');
-            localStorage.setItem('peony_discord_token', accessToken);
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
             const error = params.get('error');
             const errorDescription = params.get('error_description');
 
@@ -74,19 +72,48 @@
                 return;
             }
 
-            if (!accessToken) {
-                document.getElementById('status').textContent = 'No access token received';
+            if (!code) {
+                document.getElementById('status').textContent = 'No authorization code received';
                 document.getElementById('message').textContent = 'Redirecting...';
                 setTimeout(() => window.location.href = '../index.html', 2000);
                 return;
             }
 
+            const codeVerifier = sessionStorage.getItem('pkce_verifier');
+            if (!codeVerifier) {
+                document.getElementById('status').textContent = 'Login session expired';
+                document.getElementById('message').textContent = 'Please try logging in again.';
+                document.getElementById('message').className = 'error';
+                setTimeout(() => window.location.href = '../index.html', 3000);
+                return;
+            }
+            sessionStorage.removeItem('pkce_verifier');
+
             try {
+                // Exchange authorization code for tokens via the Worker (keeps client secret server-side)
+                const tokenResponse = await fetch(`${WORKER_URL}/discord-token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        code: code,
+                        code_verifier: codeVerifier,
+                        redirect_uri: DISCORD_REDIRECT_URI
+                    })
+                });
+
+                if (!tokenResponse.ok) {
+                    const errorData = await tokenResponse.text();
+                    throw new Error(`Token exchange failed: ${errorData}`);
+                }
+
+                const tokens = await tokenResponse.json();
+                const accessToken = tokens.access_token;
+                const refreshToken = tokens.refresh_token;
+                const tokenExpiry = Date.now() + tokens.expires_in * 1000;
+
                 // Get user info from Discord using the access token
                 const userResponse = await fetch('https://discord.com/api/users/@me', {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                    },
+                    headers: { Authorization: `Bearer ${accessToken}` }
                 });
 
                 if (!userResponse.ok) {
@@ -123,7 +150,9 @@
                     avatar: discordUser.avatar
                         ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
                         : `https://api.dicebear.com/7.x/avataaars/svg?seed=${discordUser.id}`,
-                    accessToken: accessToken
+                    accessToken: accessToken,
+                    refreshToken: refreshToken,
+                    tokenExpiry: tokenExpiry
                 };
 
                 // Store in localStorage

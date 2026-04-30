@@ -31,12 +31,20 @@ export default {
         return corsResponse(null, 204);
       }
 
+      const url = new URL(request.url);
+
+      // ── Discord OAuth routes (no Supabase env needed) ─────────────────────
+      if (url.pathname === '/discord-token') {
+        return handleDiscordToken(request, env);
+      }
+      if (url.pathname === '/discord-refresh') {
+        return handleDiscordRefresh(request, env);
+      }
+
       // Fail fast with a clear message if required env vars are missing
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) {
         return corsResponse({ error: 'Worker misconfigured: missing SUPABASE_URL or SUPABASE_SERVICE_KEY' }, 500);
       }
-
-      const url = new URL(request.url);
 
       // ── Route: /discord-verify  (called on login to validate token) ───────
       if (url.pathname === '/discord-verify') {
@@ -83,6 +91,98 @@ async function handleDiscordVerify(request, env) {
     username: user.username,
     avatar: user.avatar,
     isAdmin: user.id === env.ADMIN_DISCORD_ID
+  }, 200);
+}
+
+// ── Discord token exchange (authorization code → tokens) ─────────────────────
+async function handleDiscordToken(request, env) {
+  if (request.method !== 'POST') {
+    return corsResponse({ error: 'Method not allowed' }, 405);
+  }
+  if (!env.DISCORD_CLIENT_SECRET) {
+    return corsResponse({ error: 'Worker misconfigured: missing DISCORD_CLIENT_SECRET' }, 500);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return corsResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { code, code_verifier, redirect_uri } = body;
+  if (!code || !code_verifier || !redirect_uri) {
+    return corsResponse({ error: 'Missing required fields: code, code_verifier, redirect_uri' }, 400);
+  }
+
+  const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: '1442282566810861568',
+      client_secret: env.DISCORD_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri,
+      code_verifier
+    })
+  });
+
+  const tokens = await tokenRes.json();
+  if (!tokenRes.ok) {
+    console.error('Discord token exchange failed:', tokens);
+    return corsResponse({ error: 'Token exchange failed', details: tokens }, tokenRes.status);
+  }
+
+  return corsResponse({
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    expires_in: tokens.expires_in
+  }, 200);
+}
+
+// ── Discord token refresh ─────────────────────────────────────────────────────
+async function handleDiscordRefresh(request, env) {
+  if (request.method !== 'POST') {
+    return corsResponse({ error: 'Method not allowed' }, 405);
+  }
+  if (!env.DISCORD_CLIENT_SECRET) {
+    return corsResponse({ error: 'Worker misconfigured: missing DISCORD_CLIENT_SECRET' }, 500);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return corsResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { refresh_token } = body;
+  if (!refresh_token) {
+    return corsResponse({ error: 'Missing required field: refresh_token' }, 400);
+  }
+
+  const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: '1442282566810861568',
+      client_secret: env.DISCORD_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token
+    })
+  });
+
+  const tokens = await tokenRes.json();
+  if (!tokenRes.ok) {
+    console.error('Discord token refresh failed:', tokens);
+    return corsResponse({ error: 'Token refresh failed', details: tokens }, tokenRes.status);
+  }
+
+  return corsResponse({
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    expires_in: tokens.expires_in
   }, 200);
 }
 
@@ -196,7 +296,7 @@ function corsResponse(body, status, contentType = 'application/json') {
   const headers = {
     'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Discord-Token, Prefer, X-Upsert, Cache-Control',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Discord-Token, Prefer, X-Upsert, Cache-Control, Pragma',
     'Access-Control-Max-Age': '86400',
     'Content-Type': contentType
   };

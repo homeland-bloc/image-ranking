@@ -2909,17 +2909,10 @@
             // Save to database
             if (state.user && state.user.id) {
                 try {
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${state.user.id}`, {
+                    const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}`, {
                         method: 'PATCH',
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
-                        body: JSON.stringify({
-                            dark_theme: state.darkTheme
-                        })
+                        headers: { 'Prefer': 'return=minimal' },
+                        body: JSON.stringify({ dark_theme: state.darkTheme })
                     });
 
                     if (!response.ok) {
@@ -3852,8 +3845,25 @@
             });
         }
 
-        function login() {
-            const authUrl = `https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=token&scope=identify`;
+        function generateCodeVerifier() {
+            const array = new Uint8Array(32);
+            crypto.getRandomValues(array);
+            return btoa(String.fromCharCode(...array))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        async function generateCodeChallenge(verifier) {
+            const data = new TextEncoder().encode(verifier);
+            const digest = await crypto.subtle.digest('SHA-256', data);
+            return btoa(String.fromCharCode(...new Uint8Array(digest)))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        async function login() {
+            const verifier = generateCodeVerifier();
+            const challenge = await generateCodeChallenge(verifier);
+            sessionStorage.setItem('pkce_verifier', verifier);
+            const authUrl = `https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=code&scope=identify&code_challenge=${challenge}&code_challenge_method=S256`;
             window.location.href = authUrl;
         }
 
@@ -3878,6 +3888,20 @@
 
         function logout() {
             showLogoutConfirmation();
+        }
+
+        async function refreshDiscordToken(refreshToken) {
+            try {
+                const response = await fetch(`${SUPABASE_URL}/discord-refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshToken })
+                });
+                if (!response.ok) return null;
+                return await response.json();
+            } catch {
+                return null;
+            }
         }
 
         // loadVoterCounts() removed — voter_count columns are now read directly from DB rows
@@ -16219,6 +16243,28 @@
             if (storedUser) {
                 try {
                     const user = JSON.parse(storedUser);
+
+                    // Silently refresh the Discord token if it has expired or will
+                    // expire within 5 minutes, using the stored refresh_token.
+                    if (user.refreshToken) {
+                        const needsRefresh = !user.tokenExpiry || (user.tokenExpiry - Date.now()) < 5 * 60 * 1000;
+                        if (needsRefresh) {
+                            const tokens = await refreshDiscordToken(user.refreshToken);
+                            if (tokens) {
+                                localStorage.setItem('peony_user', JSON.stringify({
+                                    ...user,
+                                    accessToken: tokens.access_token,
+                                    refreshToken: tokens.refresh_token,
+                                    tokenExpiry: Date.now() + tokens.expires_in * 1000
+                                }));
+                            } else if (!user.tokenExpiry || user.tokenExpiry < Date.now()) {
+                                // Token is expired and refresh failed — clear session and require re-login
+                                localStorage.removeItem('peony_user');
+                                throw new Error('Session expired');
+                            }
+                            // else: network hiccup but token still valid, proceed with cached token
+                        }
+                    }
 
                     // Restore session immediately so UI renders logged-in state
                     state.user = {
