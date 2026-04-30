@@ -55,7 +55,7 @@
     <script>
         const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
-        const DISCORD_CLIENT_ID = '1442282566810861568';
+        const WORKER_URL = 'https://peony-proxy.backpackcashback.workers.dev';
         const DISCORD_REDIRECT_URI = 'https://bicipikay.github.io/peony/auth/callback';
 
         async function handleCallback() {
@@ -90,16 +90,14 @@
             sessionStorage.removeItem('pkce_verifier');
 
             try {
-                // Exchange authorization code for tokens
-                const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+                // Exchange authorization code for tokens via the Worker (keeps client secret server-side)
+                const tokenResponse = await fetch(`${WORKER_URL}/discord-token`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        client_id: DISCORD_CLIENT_ID,
-                        grant_type: 'authorization_code',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
                         code: code,
-                        redirect_uri: DISCORD_REDIRECT_URI,
-                        code_verifier: codeVerifier
+                        code_verifier: codeVerifier,
+                        redirect_uri: DISCORD_REDIRECT_URI
                     })
                 });
 
