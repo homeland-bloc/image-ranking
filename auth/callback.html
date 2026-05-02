@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Logging in... - Peony</title>
+    <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-auth-compat.js"></script>
     <style>
         body {
             margin: 0;
@@ -11,7 +13,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(to bottom, 
+            background: linear-gradient(to bottom,
                 rgba(252, 231, 243, 0.5),
                 rgba(255, 255, 255, 1) 30%,
                 rgba(220, 252, 231, 0.5)
@@ -53,6 +55,11 @@
     </div>
 
     <script>
+        const firebaseConfig = {
+            projectId: "peony-fire"
+        };
+        firebase.initializeApp(firebaseConfig);
+
         const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
         const WORKER_URL = 'https://peony-proxy.backpackcashback.workers.dev';
@@ -90,12 +97,12 @@
             sessionStorage.removeItem('pkce_verifier');
 
             try {
-                // Exchange authorization code for tokens via the Worker (keeps client secret server-side)
+                // Exchange authorization code via Worker — returns firebase_token + discord tokens + discord_user
                 const tokenResponse = await fetch(`${WORKER_URL}/discord-token`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        code: code,
+                        code,
                         code_verifier: codeVerifier,
                         redirect_uri: DISCORD_REDIRECT_URI
                     })
@@ -107,33 +114,29 @@
                 }
 
                 const tokens = await tokenResponse.json();
-                const accessToken = tokens.access_token;
-                const refreshToken = tokens.refresh_token;
-                const tokenExpiry = Date.now() + tokens.expires_in * 1000;
+                const { firebase_token, access_token, refresh_token, expires_in, discord_user } = tokens;
 
-                // Get user info from Discord using the access token
-                const userResponse = await fetch('https://discord.com/api/users/@me', {
-                    headers: { Authorization: `Bearer ${accessToken}` }
-                });
-
-                if (!userResponse.ok) {
-                    throw new Error('Failed to fetch user data');
+                if (!firebase_token || !discord_user) {
+                    throw new Error('Incomplete response from auth worker');
                 }
 
-                const discordUser = await userResponse.json();
+                // Sign into Firebase with the custom token
+                await firebase.auth().signInWithCustomToken(firebase_token);
+                const firebaseToken = await firebase.auth().currentUser.getIdToken();
 
-                // Check if user is banned before creating session
-                const banCheckResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${discordUser.id}&select=is_banned`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Cache-Control': 'no-cache'
+                // Check if user is banned (anonymous read — goes direct to Supabase)
+                const banCheckResponse = await fetch(
+                    `${SUPABASE_URL}/rest/v1/users?id=eq.${discord_user.id}&select=is_banned`,
+                    {
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Cache-Control': 'no-cache'
+                        }
                     }
-                });
+                );
 
                 const existingUser = await banCheckResponse.json();
-
-                // If user exists and is banned, show error and redirect
                 if (existingUser && existingUser.length > 0 && existingUser[0].is_banned === true) {
                     document.getElementById('status').textContent = 'Account Banned';
                     document.getElementById('message').textContent = 'Your account has been banned from Peony.';
@@ -143,32 +146,33 @@
                     return;
                 }
 
-                // Create user session object (only if not banned)
+                // Build user session object
+                const avatarUrl = discord_user.avatar
+                    ? `https://cdn.discordapp.com/avatars/${discord_user.id}/${discord_user.avatar}.png`
+                    : `https://api.dicebear.com/7.x/avataaars/svg?seed=${discord_user.id}`;
+
                 const user = {
-                    id: discordUser.id,
-                    username: discordUser.global_name || discordUser.username,
-                    avatar: discordUser.avatar
-                        ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
-                        : `https://api.dicebear.com/7.x/avataaars/svg?seed=${discordUser.id}`,
-                    accessToken: accessToken,
-                    refreshToken: refreshToken,
-                    tokenExpiry: tokenExpiry
+                    id: discord_user.id,
+                    username: discord_user.username,
+                    avatar: avatarUrl,
+                    firebaseToken,
+                    accessToken: access_token,
+                    refreshToken: refresh_token,
+                    tokenExpiry: Date.now() + expires_in * 1000,
+                    discord_user
                 };
 
-                // Store in localStorage
                 localStorage.setItem('peony_user', JSON.stringify(user));
 
-                // Create/update user in Supabase database
+                // Create/update user in Supabase via Worker proxy (authenticated write)
                 console.log('👤 Creating/updating user in database:', user.id, user.username);
                 try {
-                    const upsertResponse = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+                    const upsertResponse = await fetch(`${WORKER_URL}/rest/v1/users`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Prefer': 'resolution=merge-duplicates',
-                            'Cache-Control': 'no-cache'
+                            'Authorization': `Bearer ${firebaseToken}`,
+                            'Prefer': 'resolution=merge-duplicates'
                         },
                         body: JSON.stringify({
                             id: user.id,
@@ -181,18 +185,15 @@
                     if (!upsertResponse.ok) {
                         const errorText = await upsertResponse.text();
                         console.error('❌ Failed to upsert user to database:', errorText);
-                        console.error('❌ Response status:', upsertResponse.status);
-                        console.error('❌ User data:', { id: user.id, username: user.username, avatar: user.avatar });
-                        // Don't throw - allow login to continue even if database insert fails
                     } else {
                         console.log('✅ User successfully upserted to database');
                     }
-                } catch (error) {
-                    console.error('❌ Error upserting user to database:', error);
-                    // Don't throw - allow login to continue even if database insert fails
+                } catch (dbError) {
+                    console.error('❌ Error upserting user to database:', dbError);
+                    // Don't throw — allow login to continue even if database insert fails
                 }
 
-                // Check for pending route and redirect accordingly
+                // Redirect to app or pending route
                 const pendingRoute = localStorage.getItem('peony_pending_route');
                 if (pendingRoute) {
                     localStorage.removeItem('peony_pending_route');

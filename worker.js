@@ -1,125 +1,79 @@
 /**
  * Peony Proxy Worker
  * Sits between your GitHub Pages app and Supabase.
- * Verifies Discord tokens before forwarding any write operation.
+ * Uses Firebase Auth (Third-Party Auth) for identity — no service role key.
  *
- * Environment variables to set in Cloudflare dashboard:
- *   SUPABASE_URL          = https://tbduuuzwbiidjgztupfp.supabase.co
- *   SUPABASE_SERVICE_KEY  = <your service role key>  ← keep this secret!
- *   ADMIN_DISCORD_ID      = 719271552247529571
+ * Environment variables (set in Cloudflare dashboard):
+ *   SUPABASE_URL             = https://tbduuuzwbiidjgztupfp.supabase.co
+ *   SUPABASE_ANON_KEY        = <anon key>
+ *   DISCORD_CLIENT_SECRET    = <secret>
+ *   FIREBASE_SERVICE_ACCOUNT = <service account JSON string>
+ *   FIREBASE_PROJECT_ID      = peony-fire
+ *   ADMIN_DISCORD_ID         = 719271552247529571
  */
 
-const ALLOWED_ORIGIN = 'https://bicipikay.github.io'; // your GitHub Pages origin
+const ALLOWED_ORIGIN = 'https://bicipikay.github.io';
+const DISCORD_CLIENT_ID = '1442282566810861568';
 
-// Tables that are read-only for everyone (no auth required for GET)
-const PUBLIC_READ_TABLES = new Set([
+const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+// Tables that require admin verification for DELETE
+const ADMIN_SENSITIVE_TABLES = new Set([
   'contests', 'images', 'votes', 'users',
   'mergers', 'extracts', 'pinned_items'
 ]);
 
-// Tables that require auth even for reads
-const PROTECTED_TABLES = new Set([]);
-
-// HTTP methods that mutate data — always require a verified Discord token
-const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
-
 export default {
   async fetch(request, env) {
     try {
-      // ── CORS preflight ────────────────────────────────────────────────────
       if (request.method === 'OPTIONS') {
         return corsResponse(null, 204);
       }
 
       const url = new URL(request.url);
+      // Normalize: collapse double slashes, lowercase
+      const path = url.pathname.replace(/\/\/+/g, '/').toLowerCase();
 
-      // ── Discord OAuth routes (no Supabase env needed) ─────────────────────
-      if (url.pathname === '/discord-token') {
-        return handleDiscordToken(request, env);
-      }
-      if (url.pathname === '/discord-refresh') {
-        return handleDiscordRefresh(request, env);
-      }
+      if (path === '/discord-token') return handleDiscordToken(request, env);
+      if (path === '/discord-refresh') return handleDiscordRefresh(request, env);
 
-      // Fail fast with a clear message if required env vars are missing
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) {
-        return corsResponse({ error: 'Worker misconfigured: missing SUPABASE_URL or SUPABASE_SERVICE_KEY' }, 500);
+      if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+        return corsResponse({ error: 'Worker misconfigured' }, 500);
       }
 
-      // ── Route: /discord-verify  (called on login to validate token) ───────
-      if (url.pathname === '/discord-verify') {
-        return handleDiscordVerify(request, env);
+      if (path.startsWith('/rest/v1/') || path.startsWith('/storage/v1/')) {
+        return handleSupabaseProxy(request, url, path, env);
       }
 
-      // ── Route: /rest/v1/* (proxy to Supabase REST) ────────────────────────
-      if (url.pathname.startsWith('/rest/v1/')) {
-        return handleSupabaseProxy(request, url, env);
-      }
-
-      // ── Route: /storage/v1/* (proxy to Supabase Storage) ─────────────────
-      if (url.pathname.startsWith('/storage/v1/')) {
-        return handleSupabaseProxy(request, url, env);
-      }
-
-      return corsResponse({ error: 'Not found' }, 404);
+      return corsResponse({ error: 'Forbidden' }, 403);
     } catch (err) {
-      // Surface the real error with CORS headers so the browser can read it
       console.error('Unhandled worker error:', err);
-      return corsResponse({ error: err.message || String(err) }, 500);
+      return corsResponse({ error: 'Internal server error' }, 500);
     }
   }
 };
 
-// ── Discord verification endpoint ────────────────────────────────────────────
-async function handleDiscordVerify(request, env) {
-  if (request.method !== 'POST') {
-    return corsResponse({ error: 'Method not allowed' }, 405);
-  }
-
-  const discordToken = request.headers.get('X-Discord-Token');
-  if (!discordToken) {
-    return corsResponse({ error: 'Missing Discord token' }, 401);
-  }
-
-  const user = await fetchDiscordUser(discordToken);
-  if (!user) {
-    return corsResponse({ error: 'Invalid Discord token' }, 401);
-  }
-
-  return corsResponse({
-    id: user.id,
-    username: user.username,
-    avatar: user.avatar,
-    isAdmin: user.id === env.ADMIN_DISCORD_ID
-  }, 200);
-}
-
-// ── Discord token exchange (authorization code → tokens) ─────────────────────
+// ── Discord token exchange ────────────────────────────────────────────────────
 async function handleDiscordToken(request, env) {
-  if (request.method !== 'POST') {
-    return corsResponse({ error: 'Method not allowed' }, 405);
-  }
-  if (!env.DISCORD_CLIENT_SECRET) {
-    return corsResponse({ error: 'Worker misconfigured: missing DISCORD_CLIENT_SECRET' }, 500);
-  }
+  if (request.method !== 'POST') return corsResponse({ error: 'Method not allowed' }, 405);
+  if (!env.DISCORD_CLIENT_SECRET) return corsResponse({ error: 'Worker misconfigured' }, 500);
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return corsResponse({ error: 'Worker misconfigured' }, 500);
 
   let body;
-  try {
-    body = await request.json();
-  } catch {
-    return corsResponse({ error: 'Invalid JSON body' }, 400);
-  }
+  try { body = await request.json(); }
+  catch { return corsResponse({ error: 'Invalid JSON body' }, 400); }
 
   const { code, code_verifier, redirect_uri } = body;
   if (!code || !code_verifier || !redirect_uri) {
     return corsResponse({ error: 'Missing required fields: code, code_verifier, redirect_uri' }, 400);
   }
 
+  // Exchange authorization code with Discord
   const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: '1442282566810861568',
+      client_id: DISCORD_CLIENT_ID,
       client_secret: env.DISCORD_CLIENT_SECRET,
       grant_type: 'authorization_code',
       code,
@@ -131,42 +85,56 @@ async function handleDiscordToken(request, env) {
   const tokens = await tokenRes.json();
   if (!tokenRes.ok) {
     console.error('Discord token exchange failed:', tokens);
-    return corsResponse({ error: 'Token exchange failed', details: tokens }, tokenRes.status);
+    return corsResponse({ error: 'Token exchange failed' }, tokenRes.status);
   }
 
+  // Verify the Discord user
+  const discordUser = await fetchDiscordUser(tokens.access_token);
+  if (!discordUser) {
+    return corsResponse({ error: 'Failed to verify Discord user' }, 401);
+  }
+
+  // Mint Firebase custom token (UID = Discord ID)
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
+  } catch {
+    console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT');
+    return corsResponse({ error: 'Worker misconfigured' }, 500);
+  }
+
+  const firebaseToken = await mintFirebaseCustomToken(serviceAccount, discordUser.id);
+
   return corsResponse({
+    firebase_token: firebaseToken,
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
-    expires_in: tokens.expires_in
+    expires_in: tokens.expires_in,
+    discord_user: {
+      id: discordUser.id,
+      username: discordUser.global_name || discordUser.username,
+      avatar: discordUser.avatar
+    }
   }, 200);
 }
 
 // ── Discord token refresh ─────────────────────────────────────────────────────
 async function handleDiscordRefresh(request, env) {
-  if (request.method !== 'POST') {
-    return corsResponse({ error: 'Method not allowed' }, 405);
-  }
-  if (!env.DISCORD_CLIENT_SECRET) {
-    return corsResponse({ error: 'Worker misconfigured: missing DISCORD_CLIENT_SECRET' }, 500);
-  }
+  if (request.method !== 'POST') return corsResponse({ error: 'Method not allowed' }, 405);
+  if (!env.DISCORD_CLIENT_SECRET) return corsResponse({ error: 'Worker misconfigured' }, 500);
 
   let body;
-  try {
-    body = await request.json();
-  } catch {
-    return corsResponse({ error: 'Invalid JSON body' }, 400);
-  }
+  try { body = await request.json(); }
+  catch { return corsResponse({ error: 'Invalid JSON body' }, 400); }
 
   const { refresh_token } = body;
-  if (!refresh_token) {
-    return corsResponse({ error: 'Missing required field: refresh_token' }, 400);
-  }
+  if (!refresh_token) return corsResponse({ error: 'Missing required field: refresh_token' }, 400);
 
   const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: '1442282566810861568',
+      client_id: DISCORD_CLIENT_ID,
       client_secret: env.DISCORD_CLIENT_SECRET,
       grant_type: 'refresh_token',
       refresh_token
@@ -176,7 +144,7 @@ async function handleDiscordRefresh(request, env) {
   const tokens = await tokenRes.json();
   if (!tokenRes.ok) {
     console.error('Discord token refresh failed:', tokens);
-    return corsResponse({ error: 'Token refresh failed', details: tokens }, tokenRes.status);
+    return corsResponse({ error: 'Token refresh failed' }, tokenRes.status);
   }
 
   return corsResponse({
@@ -187,74 +155,101 @@ async function handleDiscordRefresh(request, env) {
 }
 
 // ── Supabase proxy ────────────────────────────────────────────────────────────
-async function handleSupabaseProxy(request, url, env) {
+async function handleSupabaseProxy(request, url, normalizedPath, env) {
   const method = request.method;
 
-  // Identify which table is being accessed from the URL path
-  // e.g. /rest/v1/contests?... → "contests"
-  const pathParts = url.pathname.replace('/rest/v1/', '').split('?')[0].split('/');
-  const table = pathParts[0];
+  // Derive table name from normalized path (lowercase already)
+  const segment = normalizedPath.startsWith('/rest/v1/')
+    ? normalizedPath.slice('/rest/v1/'.length)
+    : normalizedPath.slice('/storage/v1/'.length);
+  const table = segment.split('?')[0].split('/')[0];
 
-  // ── Auth check for write operations ──────────────────────────────────────
+  const authHeader = request.headers.get('Authorization');
+  let firebaseUid = null;
+
   if (WRITE_METHODS.has(method)) {
-    const discordToken = request.headers.get('X-Discord-Token');
-    if (!discordToken) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return corsResponse({ error: 'Authentication required' }, 401);
     }
 
-    const user = await fetchDiscordUser(discordToken);
-    if (!user) {
-      return corsResponse({ error: 'Invalid Discord token' }, 401);
+    const payload = decodeJwtPayload(authHeader.slice(7));
+    if (!payload || !payload.sub) {
+      return corsResponse({ error: 'Invalid token' }, 401);
     }
+    firebaseUid = payload.sub;
 
-    // ── Extra guard: DELETE on core tables requires admin ─────────────────
-    const sensitiveTables = new Set(['contests', 'images', 'votes']);
-    if (method === 'DELETE' && sensitiveTables.has(table)) {
-      if (user.id !== env.ADMIN_DISCORD_ID) {
-        return corsResponse({ error: 'Admin only' }, 403);
+    // DELETE on sensitive tables requires admin verification
+    if (method === 'DELETE' && ADMIN_SENSITIVE_TABLES.has(table)) {
+      const isAdmin = await verifyAdmin(request, env);
+      if (!isAdmin) {
+        console.warn(`Unauthorized DELETE on ${table} by uid=${firebaseUid}`);
+        return corsResponse({ error: 'Forbidden' }, 403);
       }
     }
 
-    // ── Inject the verified user ID into the request body for writes ──────
-    // This prevents clients from spoofing `created_by` or `user_id` fields.
-    if (['POST', 'PATCH', 'PUT'].includes(method)) {
+    // Sanitize ownership fields on mutations
+    if (method === 'POST' || method === 'PATCH' || method === 'PUT') {
+      const cloned = request.clone();
       try {
-        const body = await request.json();
-        const sanitisedBody = sanitiseBody(table, body, user.id);
-        request = new Request(request, {
-          body: JSON.stringify(sanitisedBody),
-          headers: request.headers
+        const bodyJson = await request.json();
+        const sanitised = sanitiseBody(bodyJson, firebaseUid);
+        request = new Request(request.url, {
+          method,
+          headers: request.headers,
+          body: JSON.stringify(sanitised)
         });
-      } catch (_) {
-        // Non-JSON body (e.g. storage uploads) — pass through untouched
+      } catch {
+        // Non-JSON body (e.g. storage uploads) — restore clone
+        request = cloned;
       }
     }
   }
 
-  // ── Forward to Supabase ───────────────────────────────────────────────────
+  // Forward to Supabase with anon key + Firebase ID token
   const supabaseUrl = `${env.SUPABASE_URL}${url.pathname}${url.search}`;
+  const headers = new Headers();
+  headers.set('apikey', env.SUPABASE_ANON_KEY);
+  headers.set('Authorization', authHeader || `Bearer ${env.SUPABASE_ANON_KEY}`);
 
-  const headers = new Headers(request.headers);
-  headers.set('apikey', env.SUPABASE_SERVICE_KEY);
-  headers.set('Authorization', `Bearer ${env.SUPABASE_SERVICE_KEY}`);
-  // Remove the Discord token before forwarding — Supabase doesn't need it
-  headers.delete('X-Discord-Token');
+  // Forward safe passthrough headers
+  for (const h of ['Content-Type', 'Prefer', 'X-Upsert', 'Range']) {
+    const val = request.headers.get(h);
+    if (val) headers.set(h, val);
+  }
 
-  const supabaseRequest = new Request(supabaseUrl, {
+  const supabaseResp = await fetch(new Request(supabaseUrl, {
     method,
     headers,
     body: WRITE_METHODS.has(method) ? request.body : undefined
-  });
+  }));
 
-  const supabaseResponse = await fetch(supabaseRequest);
-
-  // Return the Supabase response with CORS headers added
-  const responseBody = await supabaseResponse.text();
+  const responseBody = await supabaseResp.text();
   return corsResponse(
     responseBody,
-    supabaseResponse.status,
-    supabaseResponse.headers.get('Content-Type') || 'application/json'
+    supabaseResp.status,
+    supabaseResp.headers.get('Content-Type') || 'application/json'
   );
+}
+
+// ── Admin verification ────────────────────────────────────────────────────────
+async function verifyAdmin(request, env) {
+  const discordToken = request.headers.get('X-Discord-Token');
+  if (!discordToken) return false;
+
+  const discordUser = await fetchDiscordUser(discordToken);
+  if (!discordUser || discordUser.id !== env.ADMIN_DISCORD_ID) return false;
+
+  try {
+    const res = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/users?id=eq.${discordUser.id}&select=is_admin`,
+      { headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_ANON_KEY}` } }
+    );
+    if (!res.ok) return false;
+    const rows = await res.json();
+    return rows.length > 0 && rows[0].is_admin === true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Verify a Discord access token and return the user object ─────────────────
@@ -265,7 +260,6 @@ async function fetchDiscordUser(token) {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    // Basic sanity check — Discord IDs are snowflakes (numeric strings)
     if (!data.id || !/^\d+$/.test(data.id)) return null;
     return data;
   } catch {
@@ -273,22 +267,81 @@ async function fetchDiscordUser(token) {
   }
 }
 
-// ── Prevent body spoofing on write operations ─────────────────────────────────
-// Forces `user_id` / `created_by` / `voted_by` to match the verified user.
-function sanitiseBody(table, body, verifiedUserId) {
+// ── Prevent ownership field spoofing ─────────────────────────────────────────
+function sanitiseBody(body, firebaseUid) {
   const userFields = ['user_id', 'created_by', 'voted_by'];
   const patched = { ...body };
-
   for (const field of userFields) {
-    if (field in patched) {
-      if (patched[field] !== verifiedUserId) {
-        console.warn(`Spoofing attempt: ${field} was ${patched[field]}, overwriting with ${verifiedUserId}`);
-      }
-      patched[field] = verifiedUserId; // always enforce
+    if (field in patched && patched[field] !== firebaseUid) {
+      console.warn(`Body sanitisation: ${field} overwritten with verified uid`);
+      patched[field] = firebaseUid;
     }
   }
-
   return patched;
+}
+
+// ── JWT payload decoder (no signature verification — Supabase handles that) ──
+function decodeJwtPayload(token) {
+  try {
+    const [, payloadB64] = token.split('.');
+    const padded = payloadB64.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+// ── Firebase custom token minting ─────────────────────────────────────────────
+async function mintFirebaseCustomToken(serviceAccount, uid) {
+  const now = Math.floor(Date.now() / 1000);
+  const headerB64 = base64UrlEncodeStr(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payloadB64 = base64UrlEncodeStr(JSON.stringify({
+    iss: serviceAccount.client_email,
+    sub: serviceAccount.client_email,
+    aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+    iat: now,
+    exp: now + 3600,
+    uid
+  }));
+
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8',
+    pemToBinary(serviceAccount.private_key),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const sigBytes = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+
+  return `${signingInput}.${base64UrlEncodeBuffer(sigBytes)}`;
+}
+
+function base64UrlEncodeStr(str) {
+  return base64UrlEncodeBuffer(new TextEncoder().encode(str).buffer);
+}
+
+function base64UrlEncodeBuffer(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function pemToBinary(pem) {
+  const base64 = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
 }
 
 // ── CORS helper ───────────────────────────────────────────────────────────────
@@ -302,11 +355,9 @@ function corsResponse(body, status, contentType = 'application/json') {
   };
 
   const responseBody =
-    body === null
-      ? null
-      : typeof body === 'string'
-      ? body
-      : JSON.stringify(body);
+    body === null ? null :
+    typeof body === 'string' ? body :
+    JSON.stringify(body);
 
   return new Response(responseBody, { status, headers });
 }

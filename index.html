@@ -35,6 +35,10 @@
     <!-- Supabase JS Client for Realtime -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+    <!-- Firebase SDK for Auth -->
+    <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-auth-compat.js"></script>
+
     <!-- SortableJS for drag-and-drop -->
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
 
@@ -912,9 +916,13 @@
             }
         });
 
+        // Firebase initialization
+        const firebaseConfig = { projectId: "peony-fire" };
+        firebase.initializeApp(firebaseConfig);
+
         // Supabase Configuration
         const SUPABASE_URL = 'https://peony-proxy.backpackcashback.workers.dev';
-        const SUPABASE_ANON_KEY = ''; // no longer needed
+        const SUPABASE_ANON_KEY = ''; // not used for auth — Firebase ID token is used instead
 
         // Discord OAuth Configuration
         const DISCORD_CLIENT_ID = '1442282566810861568';  // Replace with your actual Discord Client ID
@@ -1113,14 +1121,15 @@
 
         // Generic Supabase fetch with cache-busting headers
         async function fetchFromSupabase(endpoint, options = {}) {
-            const token = state.user?.accessToken
-                || JSON.parse(localStorage.getItem('peony_user') || '{}').accessToken
-                || null;
+            const storedUser = JSON.parse(localStorage.getItem('peony_user') || '{}');
+            const firebaseToken = state.user?.firebaseToken || storedUser.firebaseToken || null;
+            const discordToken = state.user?.accessToken || storedUser.accessToken || null;
 
             const defaultHeaders = {
                 'Content-Type': 'application/json',
                 'Cache-Control': 'no-cache',
-                ...(token ? { 'X-Discord-Token': token } : {})
+                ...(firebaseToken ? { 'Authorization': `Bearer ${firebaseToken}` } : {}),
+                ...(discordToken ? { 'X-Discord-Token': discordToken } : {})
             };
 
             return fetch(`${SUPABASE_URL}${endpoint}`, {
@@ -3856,6 +3865,21 @@
             }
         }
 
+        async function refreshFirebaseToken() {
+            try {
+                const firebaseUser = firebase.auth().currentUser;
+                if (!firebaseUser) return null;
+                const freshToken = await firebaseUser.getIdToken(true);
+                const storedUser = JSON.parse(localStorage.getItem('peony_user') || '{}');
+                storedUser.firebaseToken = freshToken;
+                localStorage.setItem('peony_user', JSON.stringify(storedUser));
+                if (state.user) state.user.firebaseToken = freshToken;
+                return freshToken;
+            } catch {
+                return null;
+            }
+        }
+
         // loadVoterCounts() removed — voter_count columns are now read directly from DB rows
 
         // ==================== ARCHIVE CACHE FOR OLD CONTESTS ====================
@@ -4918,28 +4942,21 @@
             .then(rows => {
                 if (rows.length === 0) {
                     console.log('👤 User not found in database, creating new user');
-                    // create the user row in public.users
-                    return fetch(`${SUPABASE_URL}/rest/v1/users`, {
+                    // create the user row in public.users (uses Firebase token via fetchFromSupabase)
+                    return fetchFromSupabase(`/rest/v1/users`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                            'Cache-Control': 'no-cache'
-                        },
+                        headers: { 'Cache-Control': 'no-cache' },
                         body: JSON.stringify({
                             id: user.id,
                             username: user.username,
                             avatar: user.avatar
                         })
                     }).then(resp => {
-                        // If the insert fails, still let caller continue but log error
                         if (!resp.ok) {
                             return resp.text().then(t => {
                                 console.error('❌ Failed to insert local user:', t);
                                 console.error('❌ Response status:', resp.status);
                                 console.error('❌ User data:', { id: user.id, username: user.username, avatar: user.avatar });
-                                // swallow error to avoid locking login flow; caller can handle later
                                 return;
                             });
                         } else {
@@ -16031,12 +16048,10 @@
                         if (needsRefresh) {
                             const tokens = await refreshDiscordToken(user.refreshToken);
                             if (tokens) {
-                                localStorage.setItem('peony_user', JSON.stringify({
-                                    ...user,
-                                    accessToken: tokens.access_token,
-                                    refreshToken: tokens.refresh_token,
-                                    tokenExpiry: Date.now() + tokens.expires_in * 1000
-                                }));
+                                user.accessToken = tokens.access_token;
+                                user.refreshToken = tokens.refresh_token;
+                                user.tokenExpiry = Date.now() + tokens.expires_in * 1000;
+                                localStorage.setItem('peony_user', JSON.stringify(user));
                             } else if (!user.tokenExpiry || user.tokenExpiry < Date.now()) {
                                 // Token is expired and refresh failed — clear session and require re-login
                                 localStorage.removeItem('peony_user');
@@ -16046,11 +16061,30 @@
                         }
                     }
 
+                    // Silently refresh the Firebase ID token before making any requests
+                    try {
+                        const firebaseUser = await Promise.race([
+                            new Promise(resolve => {
+                                const unsub = firebase.auth().onAuthStateChanged(u => { unsub(); resolve(u); });
+                            }),
+                            new Promise(resolve => setTimeout(() => resolve(null), 3000))
+                        ]);
+                        if (firebaseUser) {
+                            const freshToken = await firebaseUser.getIdToken(true);
+                            user.firebaseToken = freshToken;
+                            localStorage.setItem('peony_user', JSON.stringify(user));
+                        }
+                    } catch (firebaseErr) {
+                        console.warn('Firebase token refresh failed, using cached token:', firebaseErr);
+                    }
+
                     // Restore session immediately so UI renders logged-in state
                     state.user = {
                         id: user.id,
                         username: user.username,
-                        avatar: user.avatar
+                        avatar: user.avatar,
+                        firebaseToken: user.firebaseToken,
+                        accessToken: user.accessToken
                     };
                     state.isLoggedIn = true;
 
