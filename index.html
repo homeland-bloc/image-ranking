@@ -877,6 +877,27 @@
         body.dark-theme .modal-content .pairs-pair-group .divide-y > * + * {
             border-top-color: #3a3a4a !important;
         }
+
+        /* ===== Hell Theme (dark-theme + hell-theme classes applied together) ===== */
+
+        /* Body background: dark gray → dark red */
+        body.hell-theme {
+            background: linear-gradient(to bottom, #1f1f1f, #3a0808) !important;
+        }
+
+        /* App bar: dark red → dark amber */
+        body.hell-theme header.safe-header {
+            background: linear-gradient(to right, #7f0000, #a05000) !important;
+        }
+
+        /* "Start Voting" and primary action buttons (mauve gradient) → noticeably darker pink */
+        body.hell-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600 {
+            background: linear-gradient(to right, #9d1453, #6b0c36) !important;
+        }
+        body.hell-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600:hover,
+        body.hell-theme .bg-gradient-to-r.from-mauve-500.to-mauve-700 {
+            background: linear-gradient(to right, #831240, #500926) !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1062,7 +1083,7 @@
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
-            darkTheme: false,  // Dark theme enabled
+            appTheme: 'light',  // Theme: 'light', 'dark', or 'hell'
             themeToggling: false,  // Prevent theme toggle spam
             pendingRoute: null,  // Store route to redirect after login (e.g., '#contest=uuid')
             // Results tab enhancements
@@ -2661,30 +2682,29 @@
             }
 
             try {
-                // Upload to Supabase Storage
-                const { data, error } = await supabase.storage
-                    .from('contest-images')
-                    .upload(fileName, file, {
-                        cacheControl: '604800',  // 7 days — contest images never change
-                        upsert: false
-                    });
+                const response = await fetchFromSupabase(`/storage/v1/object/contest-images/${fileName}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': file.type || 'image/jpeg',
+                        'Cache-Control': '604800',
+                        'x-upsert': 'false'
+                    },
+                    body: file
+                });
 
                 if (progressInterval) clearInterval(progressInterval);
 
-                if (error) {
-                    console.error('Supabase storage error:', error);
-                    throw new Error(error.message || 'Failed to upload image to storage');
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || `Failed to upload image (${response.status})`);
                 }
 
                 if (progressCallback) progressCallback(95);
-
                 if (progressCallback) progressCallback(100);
 
-                // Return ImageKit URL instead of Supabase CDN URL
                 return `https://ik.imagekit.io/bicipikay/${fileName}`;
             } catch (error) {
                 if (progressInterval) clearInterval(progressInterval);
-                console.error('Upload error:', error);
                 throw error;
             }
         }
@@ -2891,40 +2911,37 @@
             render();
         }
 
-        async function toggleDarkTheme() {
-            // Prevent spam clicking
+        function applyTheme(theme) {
+            document.body.classList.remove('dark-theme', 'hell-theme');
+            if (theme === 'dark') {
+                document.body.classList.add('dark-theme');
+            } else if (theme === 'hell') {
+                document.body.classList.add('dark-theme', 'hell-theme');
+            }
+        }
+
+        async function cycleTheme() {
             if (state.themeToggling) return;
 
             state.themeToggling = true;
             setLoading('Switching theme...');
 
-            // Small delay to show loading modal and smooth transition
             await new Promise(resolve => setTimeout(resolve, 300));
 
-            state.darkTheme = !state.darkTheme;
+            const themes = ['light', 'dark', 'hell'];
+            const next = themes[(themes.indexOf(state.appTheme) + 1) % themes.length];
+            state.appTheme = next;
+            applyTheme(next);
 
-            // Apply dark theme class to body
-            if (state.darkTheme) {
-                document.body.classList.add('dark-theme');
-            } else {
-                document.body.classList.remove('dark-theme');
-            }
-
-            // Save to database
             if (state.user && state.user.id) {
                 try {
                     const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}`, {
                         method: 'PATCH',
                         headers: { 'Prefer': 'return=minimal' },
-                        body: JSON.stringify({ dark_theme: state.darkTheme })
+                        body: JSON.stringify({ app_theme: state.appTheme })
                     });
-
-                    if (!response.ok) {
-                        const errText = await response.text();
-                        console.error('Dark theme save failed:', errText);
-                        throw new Error('');
-                    }
-                } catch (error) {
+                    if (!response.ok) throw new Error('');
+                } catch {
                     showToast('Failed to save theme preference. Please try again.', 'error');
                 }
             }
@@ -5673,6 +5690,11 @@
         }
 
         function openUnifiedCreateModal() {
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin && !(state.user && state.user.is_contest_creator)) {
+                showAlert('You are not authorised to create votings. Please contact the admin to be granted contest creator access.', '❌');
+                return;
+            }
             state.showUnifiedCreateModal = true;
             document.body.classList.add('modal-open');
             render();
@@ -5846,20 +5868,18 @@
                     throw new Error('You must be logged in to update mergers');
                 }
 
-                // Verify user owns this merger
-                if (merger.createdBy !== state.user.id) {
+                const isAdmin = state.user.id === ADMIN_DISCORD_ID;
+
+                // Verify user owns this merger (admin bypasses this check)
+                if (!isAdmin && merger.createdBy !== state.user.id) {
                     throw new Error('You can only update mergers you created');
                 }
 
-                console.log('🔄 Updating merger:', {
-                    mergerId,
-                    userId: state.user.id,
-                    currentContestIds: merger.contestIds,
-                    newContestIds: state.editMergerSelectedContests
-                });
-
-                // Update merger in database with user context
-                const response = await fetchFromSupabase(`/rest/v1/mergers?id=eq.${mergerId}&created_by=eq.${state.user.id}`, {
+                // Update merger in database; admin matches by id only, others also filter by creator
+                const mergerFilter = isAdmin
+                    ? `id=eq.${mergerId}`
+                    : `id=eq.${mergerId}&created_by=eq.${state.user.id}`;
+                const response = await fetchFromSupabase(`/rest/v1/mergers?${mergerFilter}`, {
                     method: 'PATCH',
                     headers: {
                         'Prefer': 'return=representation',
@@ -8373,38 +8393,44 @@
                 }));
 
                 // Fetch admin statistics from database with aggressive cache-busting
-                const voterResponse = await fetchFromSupabase(`/rest/v1/votes?select=user_id`, {
-                    headers: {
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
-                const votes = await voterResponse.json();
-
-                // Check if votes response is valid
-                if (!Array.isArray(votes)) {
-                    console.error('Invalid votes response:', votes);
-                    throw new Error(votes.message || 'Failed to load voter statistics');
-                }
-
                 // Count unique voters from users table
                 const totalUniqueVoters = users.length;
 
-                // Count total votes using COUNT(*) with minimal payload
-                const votesCountResponse = await fetchFromSupabase(`/rest/v1/votes?select=id`, {
-                    headers: {
-                        'Prefer': 'count=exact',
-                        'Range': '0-0',
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-                    }
-                });
+                // Fetch total counts using count=exact so we get accurate totals regardless of pagination
+                const [votesCountResponse, contestsCountResponse, imagesCountResponse] = await Promise.all([
+                    fetchFromSupabase(`/rest/v1/votes?select=id`, {
+                        headers: {
+                            'Prefer': 'count=exact',
+                            'Range': '0-0',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+                        }
+                    }),
+                    fetchFromSupabase(`/rest/v1/contests?select=id`, {
+                        headers: {
+                            'Prefer': 'count=exact',
+                            'Range': '0-0',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+                        }
+                    }),
+                    fetchFromSupabase(`/rest/v1/images?select=id`, {
+                        headers: {
+                            'Prefer': 'count=exact',
+                            'Range': '0-0',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+                        }
+                    })
+                ]);
 
-                // Parse count from Content-Range header (e.g., "0-99/150" means 150 total)
-                const contentRange = votesCountResponse.headers.get('Content-Range');
-                const totalVotes = contentRange ? parseInt(contentRange.split('/')[1]) : 0;
+                // Parse counts from Content-Range headers (e.g., "0-0/150" means 150 total)
+                const parseCount = (response) => {
+                    const cr = response.headers.get('Content-Range');
+                    return cr ? parseInt(cr.split('/')[1]) || 0 : 0;
+                };
+                const totalVotes = parseCount(votesCountResponse);
+                const totalContests = parseCount(contestsCountResponse);
+                const totalImages = parseCount(imagesCountResponse);
 
-                state.adminStats = { totalVotes, totalUniqueVoters };
+                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages };
 
                 state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
@@ -9891,11 +9917,6 @@
         function renderUnifiedCreateModal() {
             if (!state.showUnifiedCreateModal) return '';
 
-            const isBanned = state.user && state.bannedUsers.includes(state.user.id);
-            const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const canCreate = !isBanned && (contestCreationEnabled || isAdmin);
-
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeUnifiedCreateModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 modal-content" onclick="event.stopPropagation()">
@@ -9910,8 +9931,7 @@
 
                         <p class="text-sm text-gray-600 mb-6">Choose what type of item you'd like to create:</p>
 
-                        ${canCreate ? `
-                            <div class="space-y-3">
+                        <div class="space-y-3">
                                 <!-- Contest Option -->
                                 <button
                                     onclick="closeUnifiedCreateModal(); startCreateContest();"
@@ -9962,14 +9982,7 @@
                                         </svg>
                                     </div>
                                 </button>
-                            </div>
-                        ` : `
-                            <div class="text-center py-8">
-                                <div class="text-6xl mb-4">🚫</div>
-                                <h4 class="text-lg font-bold text-gray-800 mb-2">Creation Disabled</h4>
-                                <p class="text-gray-600">Contest creation is currently disabled. Please contact an administrator.</p>
-                            </div>
-                        `}
+                        </div>
                     </div>
                 </div>
             `;
@@ -10826,11 +10839,9 @@
                                             <button onclick="openUserLeaderboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 🏆 Leaderboard
                                             </button>
-                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200 flex items-center justify-between">
-                                                <span>🌙 Dark Theme</span>
-                                                <div class="relative inline-block w-10 h-5 transition duration-200 ease-in-out rounded-full ${state.darkTheme ? 'bg-purple-500' : 'bg-gray-300'}">
-                                                    <span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 ease-in-out ${state.darkTheme ? 'translate-x-5' : 'translate-x-0'}"></span>
-                                                </div>
+                                            <button onclick="cycleTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200 flex items-center justify-between">
+                                                <span>${state.appTheme === 'light' ? '☀️ Light Theme' : state.appTheme === 'dark' ? '🌙 Dark Theme' : '🔥 Hell Theme'}</span>
+                                                <span class="text-xs font-bold px-2 py-0.5 rounded ${state.appTheme === 'light' ? 'bg-gray-200 text-gray-600' : state.appTheme === 'dark' ? 'bg-purple-600 text-white' : 'bg-red-800 text-white'}">${state.appTheme === 'light' ? 'Light' : state.appTheme === 'dark' ? 'Dark' : 'Hell'}</span>
                                             </button>
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200">
                                                 Logout
@@ -11808,7 +11819,7 @@
                                         ` : ''}
                                         <!-- Rename Button -->
                                         <button
-                                            onclick="openRenameModal('${item.id}', '${itemType}', ${JSON.stringify(itemType === 'contest' ? item.title : item.name)}); closeContestInfoModal();"
+                                            onclick="openRenameModal('${item.id}', '${itemType}', ${JSON.stringify(itemType === 'contest' ? item.title : item.name).replace(/"/g, '&quot;')}); closeContestInfoModal();"
                                             class="w-full px-4 py-2 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition text-sm"
                                         >
                                             ✏️ Rename ${itemType === 'contest' ? 'Contest' : itemType === 'merger' ? 'Merger' : 'Extract'}
@@ -14969,11 +14980,11 @@
             });
 
             // Calculate admin statistics
-            const totalContests = state.contests.length;
+            const totalContests = state.adminStats.totalContests ?? state.contests.length;
             const totalVotes = state.adminStats.totalVotes;
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalBannedUsers = state.bannedUsers.length;
-            const totalImages = state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
+            const totalImages = state.adminStats.totalImages ?? state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeAdminDashboard()">
@@ -15080,7 +15091,6 @@
             if (!isAdmin) return '';
 
             // Get current settings values (default to true if not set)
-            const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
             const revotingEnabled = state.appSettings.revoting_enabled !== false;
             const showPinIcons = state.appSettings.show_pin_icons === true;  // Default to false
 
@@ -15098,22 +15108,6 @@
                             </div>
 
                             <div class="space-y-6">
-                                <!-- Contest Creation Toggle -->
-                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                                    <div class="flex-1">
-                                        <h4 class="font-semibold text-gray-800">Contest Creation</h4>
-                                        <p class="text-sm text-gray-600 mt-1">
-                                            Allow users to create new contests
-                                        </p>
-                                    </div>
-                                    <div
-                                        class="toggle-switch ${contestCreationEnabled ? 'active' : ''}"
-                                        onclick="toggleAppSetting('contest_creation_enabled')"
-                                    >
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                </div>
-
                                 <!-- Revoting Toggle -->
                                 <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                                     <div class="flex-1">
@@ -16004,7 +15998,8 @@
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
         window.executeDeleteExtract = executeDeleteExtract;
-        window.toggleDarkTheme = toggleDarkTheme;
+        window.cycleTheme = cycleTheme;
+        window.applyTheme = applyTheme;
         window.loadActivityLogs = loadActivityLogs;
         window.loadAllUserAutosaves = loadAllUserAutosaves;
         window.continueVotingDraft = continueVotingDraft;
@@ -16122,7 +16117,7 @@
 
                     // Check if user is banned (with 5s timeout so it never blocks the app)
                     try {
-                        const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
+                        const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,app_theme,is_contest_creator`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 ...buildAuthHeader(),
@@ -16147,10 +16142,16 @@
                                 return; // Exit early, don't proceed with login
                             }
 
-                            // Load dark theme preference
-                            if (userData && userData.length > 0 && userData[0].dark_theme === true) {
-                                state.darkTheme = true;
-                                document.body.classList.add('dark-theme');
+                            if (userData && userData.length > 0) {
+                                // Load theme preference — default to 'hell' when no value is set
+                                const savedTheme = userData[0].app_theme || 'hell';
+                                state.appTheme = savedTheme;
+                                applyTheme(savedTheme);
+
+                                // Load contest-creator permission
+                                if (state.user) {
+                                    state.user.is_contest_creator = userData[0].is_contest_creator === true;
+                                }
                             }
                         } else {
                             console.warn('Failed to check ban status, proceeding with cached session');
