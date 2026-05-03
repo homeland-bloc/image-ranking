@@ -195,7 +195,24 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
       const cloned = request.clone();
       try {
         const bodyJson = await request.json();
+
+        // Diagnostic logging for POST /rest/v1/users — server-side only.
+        if (method === 'POST' && table === 'users') {
+          const rows = Array.isArray(bodyJson) ? bodyJson : [bodyJson];
+          rows.forEach((row, i) => {
+            console.error(`[users POST] row[${i}] uid=${firebaseUid} id_before=${row.id}`);
+          });
+        }
+
         const sanitised = sanitiseBody(bodyJson, firebaseUid);
+
+        if (method === 'POST' && table === 'users') {
+          const rows = Array.isArray(sanitised) ? sanitised : [sanitised];
+          rows.forEach((row, i) => {
+            console.error(`[users POST] row[${i}] id_after=${row.id}`);
+          });
+        }
+
         request = new Request(request.url, {
           method,
           headers: request.headers,
