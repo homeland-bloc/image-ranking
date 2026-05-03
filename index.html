@@ -877,6 +877,27 @@
         body.dark-theme .modal-content .pairs-pair-group .divide-y > * + * {
             border-top-color: #3a3a4a !important;
         }
+
+        /* ===== Hell Theme (dark-theme + hell-theme classes applied together) ===== */
+
+        /* Body background: dark gray → dark red */
+        body.hell-theme {
+            background: linear-gradient(to bottom, #1f1f1f, #3a0808) !important;
+        }
+
+        /* App bar: dark red → dark amber */
+        body.hell-theme header.safe-header {
+            background: linear-gradient(to right, #7f0000, #a05000) !important;
+        }
+
+        /* "Start Voting" and primary action buttons (mauve gradient) → noticeably darker pink */
+        body.hell-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600 {
+            background: linear-gradient(to right, #9d1453, #6b0c36) !important;
+        }
+        body.hell-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600:hover,
+        body.hell-theme .bg-gradient-to-r.from-mauve-500.to-mauve-700 {
+            background: linear-gradient(to right, #831240, #500926) !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1062,7 +1083,7 @@
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
-            darkTheme: false,  // Dark theme enabled
+            appTheme: 'light',  // Theme: 'light', 'dark', or 'hell'
             themeToggling: false,  // Prevent theme toggle spam
             pendingRoute: null,  // Store route to redirect after login (e.g., '#contest=uuid')
             // Results tab enhancements
@@ -2890,40 +2911,37 @@
             render();
         }
 
-        async function toggleDarkTheme() {
-            // Prevent spam clicking
+        function applyTheme(theme) {
+            document.body.classList.remove('dark-theme', 'hell-theme');
+            if (theme === 'dark') {
+                document.body.classList.add('dark-theme');
+            } else if (theme === 'hell') {
+                document.body.classList.add('dark-theme', 'hell-theme');
+            }
+        }
+
+        async function cycleTheme() {
             if (state.themeToggling) return;
 
             state.themeToggling = true;
             setLoading('Switching theme...');
 
-            // Small delay to show loading modal and smooth transition
             await new Promise(resolve => setTimeout(resolve, 300));
 
-            state.darkTheme = !state.darkTheme;
+            const themes = ['light', 'dark', 'hell'];
+            const next = themes[(themes.indexOf(state.appTheme) + 1) % themes.length];
+            state.appTheme = next;
+            applyTheme(next);
 
-            // Apply dark theme class to body
-            if (state.darkTheme) {
-                document.body.classList.add('dark-theme');
-            } else {
-                document.body.classList.remove('dark-theme');
-            }
-
-            // Save to database
             if (state.user && state.user.id) {
                 try {
                     const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}`, {
                         method: 'PATCH',
                         headers: { 'Prefer': 'return=minimal' },
-                        body: JSON.stringify({ dark_theme: state.darkTheme })
+                        body: JSON.stringify({ app_theme: state.appTheme })
                     });
-
-                    if (!response.ok) {
-                        const errText = await response.text();
-                        console.error('Dark theme save failed:', errText);
-                        throw new Error('');
-                    }
-                } catch (error) {
+                    if (!response.ok) throw new Error('');
+                } catch {
                     showToast('Failed to save theme preference. Please try again.', 'error');
                 }
             }
@@ -5672,6 +5690,11 @@
         }
 
         function openUnifiedCreateModal() {
+            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
+            if (!isAdmin && !(state.user && state.user.is_contest_creator)) {
+                showAlert('You are not authorised to create votings. Please contact the admin to be granted contest creator access.', '❌');
+                return;
+            }
             state.showUnifiedCreateModal = true;
             document.body.classList.add('modal-open');
             render();
@@ -9894,11 +9917,6 @@
         function renderUnifiedCreateModal() {
             if (!state.showUnifiedCreateModal) return '';
 
-            const isBanned = state.user && state.bannedUsers.includes(state.user.id);
-            const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
-            const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
-            const canCreate = !isBanned && (contestCreationEnabled || isAdmin);
-
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[70] p-4" onclick="event.target === this && closeUnifiedCreateModal()">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 modal-content" onclick="event.stopPropagation()">
@@ -9913,8 +9931,7 @@
 
                         <p class="text-sm text-gray-600 mb-6">Choose what type of item you'd like to create:</p>
 
-                        ${canCreate ? `
-                            <div class="space-y-3">
+                        <div class="space-y-3">
                                 <!-- Contest Option -->
                                 <button
                                     onclick="closeUnifiedCreateModal(); startCreateContest();"
@@ -9965,14 +9982,7 @@
                                         </svg>
                                     </div>
                                 </button>
-                            </div>
-                        ` : `
-                            <div class="text-center py-8">
-                                <div class="text-6xl mb-4">🚫</div>
-                                <h4 class="text-lg font-bold text-gray-800 mb-2">Creation Disabled</h4>
-                                <p class="text-gray-600">Contest creation is currently disabled. Please contact an administrator.</p>
-                            </div>
-                        `}
+                        </div>
                     </div>
                 </div>
             `;
@@ -10829,11 +10839,9 @@
                                             <button onclick="openUserLeaderboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 🏆 Leaderboard
                                             </button>
-                                            <button onclick="toggleDarkTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200 flex items-center justify-between">
-                                                <span>🌙 Dark Theme</span>
-                                                <div class="relative inline-block w-10 h-5 transition duration-200 ease-in-out rounded-full ${state.darkTheme ? 'bg-purple-500' : 'bg-gray-300'}">
-                                                    <span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 ease-in-out ${state.darkTheme ? 'translate-x-5' : 'translate-x-0'}"></span>
-                                                </div>
+                                            <button onclick="cycleTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200 flex items-center justify-between">
+                                                <span>${state.appTheme === 'light' ? '☀️ Light Theme' : state.appTheme === 'dark' ? '🌙 Dark Theme' : '🔥 Hell Theme'}</span>
+                                                <span class="text-xs font-bold px-2 py-0.5 rounded ${state.appTheme === 'light' ? 'bg-gray-200 text-gray-600' : state.appTheme === 'dark' ? 'bg-purple-600 text-white' : 'bg-red-800 text-white'}">${state.appTheme === 'light' ? 'Light' : state.appTheme === 'dark' ? 'Dark' : 'Hell'}</span>
                                             </button>
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200">
                                                 Logout
@@ -15083,7 +15091,6 @@
             if (!isAdmin) return '';
 
             // Get current settings values (default to true if not set)
-            const contestCreationEnabled = state.appSettings.contest_creation_enabled !== false;
             const revotingEnabled = state.appSettings.revoting_enabled !== false;
             const showPinIcons = state.appSettings.show_pin_icons === true;  // Default to false
 
@@ -15101,22 +15108,6 @@
                             </div>
 
                             <div class="space-y-6">
-                                <!-- Contest Creation Toggle -->
-                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                                    <div class="flex-1">
-                                        <h4 class="font-semibold text-gray-800">Contest Creation</h4>
-                                        <p class="text-sm text-gray-600 mt-1">
-                                            Allow users to create new contests
-                                        </p>
-                                    </div>
-                                    <div
-                                        class="toggle-switch ${contestCreationEnabled ? 'active' : ''}"
-                                        onclick="toggleAppSetting('contest_creation_enabled')"
-                                    >
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                </div>
-
                                 <!-- Revoting Toggle -->
                                 <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                                     <div class="flex-1">
@@ -16007,7 +15998,8 @@
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
         window.executeDeleteExtract = executeDeleteExtract;
-        window.toggleDarkTheme = toggleDarkTheme;
+        window.cycleTheme = cycleTheme;
+        window.applyTheme = applyTheme;
         window.loadActivityLogs = loadActivityLogs;
         window.loadAllUserAutosaves = loadAllUserAutosaves;
         window.continueVotingDraft = continueVotingDraft;
@@ -16125,7 +16117,7 @@
 
                     // Check if user is banned (with 5s timeout so it never blocks the app)
                     try {
-                        const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
+                        const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,app_theme,is_contest_creator`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
                                 ...buildAuthHeader(),
@@ -16150,10 +16142,16 @@
                                 return; // Exit early, don't proceed with login
                             }
 
-                            // Load dark theme preference
-                            if (userData && userData.length > 0 && userData[0].dark_theme === true) {
-                                state.darkTheme = true;
-                                document.body.classList.add('dark-theme');
+                            if (userData && userData.length > 0) {
+                                // Load theme preference — default to 'hell' when no value is set
+                                const savedTheme = userData[0].app_theme || 'hell';
+                                state.appTheme = savedTheme;
+                                applyTheme(savedTheme);
+
+                                // Load contest-creator permission
+                                if (state.user) {
+                                    state.user.is_contest_creator = userData[0].is_contest_creator === true;
+                                }
                             }
                         } else {
                             console.warn('Failed to check ban status, proceeding with cached session');
