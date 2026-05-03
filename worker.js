@@ -246,10 +246,14 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
   }));
 
   const responseBody = await supabaseResp.text();
+  const extraHeaders = {};
+  const contentRange = supabaseResp.headers.get('Content-Range');
+  if (contentRange) extraHeaders['Content-Range'] = contentRange;
   return corsResponse(
     responseBody,
     supabaseResp.status,
-    supabaseResp.headers.get('Content-Type') || 'application/json'
+    supabaseResp.headers.get('Content-Type') || 'application/json',
+    extraHeaders
   );
 }
 
@@ -371,13 +375,15 @@ function pemToBinary(pem) {
 }
 
 // ── CORS helper ───────────────────────────────────────────────────────────────
-function corsResponse(body, status, contentType = 'application/json') {
+function corsResponse(body, status, contentType = 'application/json', extraHeaders = {}) {
   const headers = {
     'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Discord-Token, Prefer, X-Upsert, Cache-Control, Pragma, Expires, Range',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Discord-Token, Prefer, X-Upsert, Cache-Control, Pragma, Expires, Range, Content-Range',
+    'Access-Control-Expose-Headers': 'Content-Range',
     'Access-Control-Max-Age': '86400',
-    'Content-Type': contentType
+    'Content-Type': contentType,
+    ...extraHeaders
   };
 
   const responseBody =
