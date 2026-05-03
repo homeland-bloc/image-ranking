@@ -1263,9 +1263,6 @@
         async function loadResults() {
             setLoading('Loading results...');
             try {
-                console.log('🔍 DEBUG: Loading results for contest:', state.currentContest.id);
-                console.log('🔍 DEBUG: Current user:', state.user);
-
                 let allVotes = [];
                 const isExtract = state.currentContest.isExtract === true;
 
@@ -1305,16 +1302,12 @@
                     );
                 }
 
-                console.log('🔍 DEBUG: Fetched votes:', allVotes);
-
                 // Check if votes response is valid
                 if (!Array.isArray(allVotes)) {
                     console.error('Invalid votes response:', allVotes);
                     showAlert('Error loading votes: ' + (allVotes.message || 'Invalid response'), '❌');
                     return;
                 }
-
-                console.log('🔍 DEBUG: Number of votes:', allVotes.length);
 
                 // Warn if we hit the vote limit
                 if (allVotes.length === 2000) {
@@ -1339,7 +1332,6 @@
 
                 const imageScores = {};
                 allVotes.forEach(vote => {
-                    console.log('🔍 DEBUG: Processing vote:', vote);
                     if (!imageScores[vote.image_id]) {
                         imageScores[vote.image_id] = {
                             scores: [],
@@ -1367,15 +1359,10 @@
                     });
                 });
 
-                console.log('🔍 DEBUG: Image scores:', imageScores);
-                console.log('🔍 DEBUG: Contest images:', state.currentContest.images);
-
                 // Map images with their scores
                 state.results = state.currentContest.images.map(img => {
                     const scores = imageScores[img.id]?.scores || [];
                     const average = powerMean(scores, state.scoringFormula);
-
-                    console.log(`🔍 DEBUG: Image ${img.id} - scores:`, scores, 'average:', average);
 
                     return {
                         ...img,
@@ -1385,7 +1372,6 @@
                     };
                 }).sort(compareWithTieBreaking);
 
-                console.log('🔍 DEBUG: Final results:', state.results);
             } catch (error) {
                 console.error('Full error details:', error);
                 console.error('Error message:', error.message);
@@ -2140,7 +2126,8 @@
                             );
 
                             if (!response.ok) {
-                                throw new Error(`Failed to update vote for image ${vote.image_id}`);
+                                const errText = await response.text();
+                                throw new Error(`Failed to update vote for image ${vote.image_id}: ${errText}`);
                             }
                         });
 
@@ -2156,7 +2143,8 @@
                         });
 
                         if (!response.ok) {
-                            throw new Error('Failed to insert new votes');
+                            const errText = await response.text();
+                            throw new Error(`Failed to insert votes: ${errText}`);
                         }
                     }
                 }
@@ -2930,10 +2918,11 @@
                     });
 
                     if (!response.ok) {
-                        console.error('Failed to save dark theme preference');
+                        const errText = await response.text();
+                        throw new Error(errText);
                     }
                 } catch (error) {
-                    console.error('Error saving dark theme preference:', error);
+                    showToast('Failed to save theme preference: ' + error.message, 'error');
                 }
             }
 
@@ -4784,16 +4773,6 @@
                 const extracts = extractsResponse.ok ? await extractsResponse.json() : [];
                 const users = usersResponse.ok ? await usersResponse.json() : [];
 
-                console.log('Recent Activity Data:', {
-                    votes: votes.length,
-                    contests: contests.length,
-                    mergers: mergers.length,
-                    extracts: extracts.length,
-                    users: users.length,
-                    voteSample: votes[0],
-                    contestSample: contests[0],
-                    userSample: users[0]
-                });
 
                 // Group votes by user-contest combination and check if voting is complete
                 const activityMap = new Map();
@@ -4911,11 +4890,6 @@
                 state.activityLogs = Array.from(activityMap.values()).sort((a, b) =>
                     new Date(b.timestamp) - new Date(a.timestamp)
                 );
-
-                console.log('Recent Activity - Final count:', state.activityLogs.length, 'activities');
-                if (state.activityLogs.length > 0) {
-                    console.log('Sample activities:', state.activityLogs.slice(0, 3));
-                }
 
                 state.activityLogsLoading = false;
                 render();
@@ -8381,7 +8355,6 @@
                 }
 
                 const users = await response.json();
-                console.log('📊 Loaded users from database:', users);
 
                 // Update state with all users (including current user, banned users, etc.)
                 state.allUsers = users.map(user => ({
@@ -8390,8 +8363,6 @@
                     avatar: user.avatar,
                     isBanned: user.is_banned || false
                 }));
-
-                console.log('📊 All users in state:', state.allUsers);
 
                 // Fetch admin statistics from database with aggressive cache-busting
                 const voterResponse = await fetchFromSupabase(`/rest/v1/votes?select=user_id`, {
