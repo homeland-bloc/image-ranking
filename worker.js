@@ -177,6 +177,9 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
       return corsResponse({ error: 'Invalid token' }, 401);
     }
     firebaseUid = payload.sub;
+    // Log the extracted UID server-side (Cloudflare tail logs) for debugging.
+    // This is never returned to the client.
+    console.error(`[auth] uid=${firebaseUid} method=${method} table=${table}`);
 
     // DELETE on sensitive tables requires admin verification
     if (method === 'DELETE' && ADMIN_SENSITIVE_TABLES.has(table)) {
@@ -276,6 +279,8 @@ function sanitiseBody(body, firebaseUid) {
   if (Array.isArray(body)) {
     return body.map(item => sanitiseBody(item, firebaseUid));
   }
+  // 'id' (primary key on users and other tables) is intentionally absent from
+  // this list — it must never be overwritten by the sanitiser.
   const userFields = ['user_id', 'created_by', 'voted_by'];
   const patched = { ...body };
   for (const field of userFields) {
