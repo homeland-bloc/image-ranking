@@ -177,6 +177,9 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
       return corsResponse({ error: 'Invalid token' }, 401);
     }
     firebaseUid = payload.sub;
+    // Log the extracted UID server-side (Cloudflare tail logs) for debugging.
+    // This is never returned to the client.
+    console.error(`[auth] uid=${firebaseUid} method=${method} table=${table}`);
 
     // DELETE on sensitive tables requires admin verification
     if (method === 'DELETE' && ADMIN_SENSITIVE_TABLES.has(table)) {
@@ -192,7 +195,24 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
       const cloned = request.clone();
       try {
         const bodyJson = await request.json();
+
+        // Diagnostic logging for POST /rest/v1/users — server-side only.
+        if (method === 'POST' && table === 'users') {
+          const rows = Array.isArray(bodyJson) ? bodyJson : [bodyJson];
+          rows.forEach((row, i) => {
+            console.error(`[users POST] row[${i}] uid=${firebaseUid} id_before=${row.id}`);
+          });
+        }
+
         const sanitised = sanitiseBody(bodyJson, firebaseUid);
+
+        if (method === 'POST' && table === 'users') {
+          const rows = Array.isArray(sanitised) ? sanitised : [sanitised];
+          rows.forEach((row, i) => {
+            console.error(`[users POST] row[${i}] id_after=${row.id}`);
+          });
+        }
+
         request = new Request(request.url, {
           method,
           headers: request.headers,
@@ -276,6 +296,8 @@ function sanitiseBody(body, firebaseUid) {
   if (Array.isArray(body)) {
     return body.map(item => sanitiseBody(item, firebaseUid));
   }
+  // 'id' (primary key on users and other tables) is intentionally absent from
+  // this list — it must never be overwritten by the sanitiser.
   const userFields = ['user_id', 'created_by', 'voted_by'];
   const patched = { ...body };
   for (const field of userFields) {
