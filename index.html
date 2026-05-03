@@ -1126,23 +1126,44 @@
 
         // ==================== HELPER FUNCTIONS ====================
 
-        // Generic Supabase fetch with cache-busting headers
-        async function fetchFromSupabase(endpoint, options = {}) {
-            // Always prefer a live, fresh token so RLS sees the correct identity.
-            let firebaseToken = null;
-            try {
-                firebaseToken = (await firebase.auth().currentUser?.getIdToken()) ?? null;
-            } catch {}
-            const storedUser = JSON.parse(localStorage.getItem('peony_user') || '{}');
-            if (!firebaseToken) firebaseToken = state.user?.firebaseToken ?? null;
-            if (!firebaseToken) firebaseToken = storedUser.firebaseToken ?? null;
+        // Synchronous token resolution: state.user → localStorage → null
+        function getFirebaseToken() {
+            return state.user?.firebaseToken
+                || JSON.parse(localStorage.getItem('peony_user') || '{}')?.firebaseToken
+                || null;
+        }
 
+        // Returns an Authorization header object if a token is available, or an
+        // empty object so callers can safely spread it into a headers literal.
+        function buildAuthHeader() {
+            const token = getFirebaseToken();
+            return token ? { 'Authorization': `Bearer ${token}` } : {};
+        }
+
+        // Background task: force-refresh the Firebase ID token and persist it.
+        // Call this non-blocking (without await) so it never delays a request.
+        async function refreshFirebaseToken() {
+            const currentUser = firebase.auth().currentUser;
+            if (!currentUser) return;
+            try {
+                const freshToken = await currentUser.getIdToken(true);
+                if (state.user) state.user.firebaseToken = freshToken;
+                const stored = JSON.parse(localStorage.getItem('peony_user') || '{}');
+                stored.firebaseToken = freshToken;
+                localStorage.setItem('peony_user', JSON.stringify(stored));
+            } catch {}
+        }
+
+        // Generic Supabase fetch with cache-busting headers.
+        // Uses synchronous token resolution so it never blocks on Firebase init.
+        async function fetchFromSupabase(endpoint, options = {}) {
+            const storedUser = JSON.parse(localStorage.getItem('peony_user') || '{}');
             const discordToken = state.user?.accessToken || storedUser.accessToken || null;
 
             const defaultHeaders = {
                 'Content-Type': 'application/json',
                 'Cache-Control': 'no-cache',
-                ...(firebaseToken ? { 'Authorization': `Bearer ${firebaseToken}` } : {}),
+                ...buildAuthHeader(),
                 ...(discordToken ? { 'X-Discord-Token': discordToken } : {})
             };
 
@@ -1381,7 +1402,7 @@
                 const contestsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=in.(${contestIds.join(',')})&select=*,images(*)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -1968,7 +1989,7 @@
                     {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            ...buildAuthHeader(),
                             'Cache-Control': 'no-cache'
                         }
                     }
@@ -2964,7 +2985,7 @@
                 const response = await fetch(url, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -3333,7 +3354,7 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
                         'Pragma': 'no-cache',
                         'Expires': '0'
@@ -4056,7 +4077,7 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -4086,7 +4107,7 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -4119,7 +4140,7 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items?select=*&order=pinned_at.desc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -4251,7 +4272,7 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=*`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -4695,7 +4716,7 @@
                         {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         }
@@ -4721,7 +4742,7 @@
                         {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         }
@@ -4731,7 +4752,7 @@
                         {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         }
@@ -4741,7 +4762,7 @@
                         {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         }
@@ -4751,7 +4772,7 @@
                         {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         }
@@ -4948,7 +4969,7 @@
             return fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`, {
                 headers: {
                     'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                    ...buildAuthHeader(),
                     'Cache-Control': 'no-cache'
                 }
             })
@@ -5165,7 +5186,7 @@
                     const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=id,results_public,is_locked`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            ...buildAuthHeader(),
                             'Cache-Control': 'no-cache'
                         }
                     });
@@ -8348,7 +8369,7 @@
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*&order=username.asc`, {
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        ...buildAuthHeader(),
                         'Cache-Control': 'no-cache'
                     }
                 });
@@ -9105,7 +9126,7 @@
                     const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
                         headers: {
                             'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            ...buildAuthHeader(),
                             'Cache-Control': 'no-cache'
                         }
                     });
@@ -9199,7 +9220,7 @@
                 // Ensure allUsers is loaded so we can look up names/avatars
                 if (!state.allUsers || state.allUsers.length === 0) {
                     const usersResp = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
-                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Cache-Control': 'no-cache' }
+                        headers: { 'apikey': SUPABASE_ANON_KEY, ...buildAuthHeader(), 'Cache-Control': 'no-cache' }
                     });
                     if (usersResp.ok) {
                         const users = await usersResp.json();
@@ -9425,7 +9446,7 @@
                 // Ensure allUsers is loaded so rows can be matched to display names
                 if (!state.allUsers || state.allUsers.length === 0) {
                     const usersResp = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
-                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Cache-Control': 'no-cache' }
+                        headers: { 'apikey': SUPABASE_ANON_KEY, ...buildAuthHeader(), 'Cache-Control': 'no-cache' }
                     });
                     if (usersResp.ok) {
                         const users = await usersResp.json();
@@ -16116,12 +16137,16 @@
                         } catch {}
                     }
 
+                    // Non-blocking background refresh so subsequent requests always
+                    // have a fresh token without delaying the current startup path.
+                    refreshFirebaseToken();
+
                     // Check if user is banned (with 5s timeout so it never blocks the app)
                     try {
                         const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,dark_theme`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         });
@@ -16221,7 +16246,7 @@
                         fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${state.user.id}&select=is_banned,ban_reason`, {
                             headers: {
                                 'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                ...buildAuthHeader(),
                                 'Cache-Control': 'no-cache'
                             }
                         }),
