@@ -2127,7 +2127,8 @@
 
                             if (!response.ok) {
                                 const errText = await response.text();
-                                throw new Error(`Failed to update vote for image ${vote.image_id}: ${errText}`);
+                                console.error('Vote update failed:', errText);
+                                throw new Error('Something went wrong, please try again.');
                             }
                         });
 
@@ -2144,7 +2145,8 @@
 
                         if (!response.ok) {
                             const errText = await response.text();
-                            throw new Error(`Failed to insert votes: ${errText}`);
+                            console.error('Vote insert failed:', errText);
+                            throw new Error('Something went wrong, please try again.');
                         }
                     }
                 }
@@ -2919,10 +2921,11 @@
 
                     if (!response.ok) {
                         const errText = await response.text();
-                        throw new Error(errText);
+                        console.error('Dark theme save failed:', errText);
+                        throw new Error('');
                     }
                 } catch (error) {
-                    showToast('Failed to save theme preference: ' + error.message, 'error');
+                    showToast('Failed to save theme preference. Please try again.', 'error');
                 }
             }
 
