@@ -254,24 +254,15 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
 }
 
 // ── Admin verification ────────────────────────────────────────────────────────
+// Relies solely on the Discord token matching ADMIN_DISCORD_ID.
+// There is no is_admin column on public.users; database-level admin
+// privileges are enforced by Supabase RLS policies independently.
 async function verifyAdmin(request, env) {
   const discordToken = request.headers.get('X-Discord-Token');
   if (!discordToken) return false;
 
   const discordUser = await fetchDiscordUser(discordToken);
-  if (!discordUser || discordUser.id !== env.ADMIN_DISCORD_ID) return false;
-
-  try {
-    const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/users?id=eq.${discordUser.id}&select=is_admin`,
-      { headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_ANON_KEY}` } }
-    );
-    if (!res.ok) return false;
-    const rows = await res.json();
-    return rows.length > 0 && rows[0].is_admin === true;
-  } catch {
-    return false;
-  }
+  return !!(discordUser && discordUser.id === env.ADMIN_DISCORD_ID);
 }
 
 // ── Verify a Discord access token and return the user object ─────────────────
@@ -309,7 +300,12 @@ function sanitiseBody(body, firebaseUid) {
   return patched;
 }
 
-// ── JWT payload decoder (no signature verification — Supabase handles that) ──
+// ── JWT payload decoder ───────────────────────────────────────────────────────
+// Signature verification is intentionally delegated to Supabase via Third-Party
+// Auth. The Worker only reads the `sub` (uid) claim for body sanitisation and
+// diagnostic logging. Any token with a tampered payload or invalid signature
+// will be rejected by Supabase when it evaluates auth.uid() against RLS policies,
+// so there is no security risk in skipping signature verification here.
 function decodeJwtPayload(token) {
   try {
     const [, payloadB64] = token.split('.');
