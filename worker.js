@@ -326,7 +326,8 @@ async function mintFirebaseCustomToken(serviceAccount, uid) {
     aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
     iat: now,
     exp: now + 3600,
-    uid
+    uid,
+    claims: { role: "authenticated" }
   }));
 
   const signingInput = `${headerB64}.${payloadB64}`;
