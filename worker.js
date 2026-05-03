@@ -271,6 +271,11 @@ async function fetchDiscordUser(token) {
 
 // ── Prevent ownership field spoofing ─────────────────────────────────────────
 function sanitiseBody(body, firebaseUid) {
+  // Array bodies (e.g. bulk inserts) — sanitise each element individually so the
+  // array structure is preserved when forwarded to Supabase.
+  if (Array.isArray(body)) {
+    return body.map(item => sanitiseBody(item, firebaseUid));
+  }
   const userFields = ['user_id', 'created_by', 'voted_by'];
   const patched = { ...body };
   for (const field of userFields) {
@@ -351,7 +356,7 @@ function corsResponse(body, status, contentType = 'application/json') {
   const headers = {
     'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Discord-Token, Prefer, X-Upsert, Cache-Control, Pragma, Expires',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Discord-Token, Prefer, X-Upsert, Cache-Control, Pragma, Expires, Range',
     'Access-Control-Max-Age': '86400',
     'Content-Type': contentType
   };
