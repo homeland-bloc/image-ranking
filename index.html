@@ -1128,8 +1128,15 @@
 
         // Generic Supabase fetch with cache-busting headers
         async function fetchFromSupabase(endpoint, options = {}) {
+            // Always prefer a live, fresh token so RLS sees the correct identity.
+            let firebaseToken = null;
+            try {
+                firebaseToken = (await firebase.auth().currentUser?.getIdToken()) ?? null;
+            } catch {}
             const storedUser = JSON.parse(localStorage.getItem('peony_user') || '{}');
-            const firebaseToken = state.user?.firebaseToken || storedUser.firebaseToken || null;
+            if (!firebaseToken) firebaseToken = state.user?.firebaseToken ?? null;
+            if (!firebaseToken) firebaseToken = storedUser.firebaseToken ?? null;
+
             const discordToken = state.user?.accessToken || storedUser.accessToken || null;
 
             const defaultHeaders = {
@@ -16068,7 +16075,8 @@
                         }
                     }
 
-                    // Silently refresh the Firebase ID token before making any requests
+                    // Await Firebase session restoration (up to 3 s) before any
+                    // Supabase requests so RLS has a valid identity token.
                     try {
                         const firebaseUser = await Promise.race([
                             new Promise(resolve => {
@@ -16081,6 +16089,7 @@
                             user.firebaseToken = freshToken;
                             localStorage.setItem('peony_user', JSON.stringify(user));
                         }
+                        // If no session restored within 3 s, proceed without a token.
                     } catch (firebaseErr) {
                         console.warn('Firebase token refresh failed, using cached token:', firebaseErr);
                     }
@@ -16094,6 +16103,18 @@
                         accessToken: user.accessToken
                     };
                     state.isLoggedIn = true;
+
+                    // If Firebase currentUser is now available but token is still
+                    // missing (e.g. timeout above), attempt a direct refresh.
+                    if (!state.user.firebaseToken && firebase.auth().currentUser) {
+                        try {
+                            const freshToken = await firebase.auth().currentUser.getIdToken(true);
+                            state.user.firebaseToken = freshToken;
+                            const stored = JSON.parse(localStorage.getItem('peony_user') || '{}');
+                            stored.firebaseToken = freshToken;
+                            localStorage.setItem('peony_user', JSON.stringify(stored));
+                        } catch {}
+                    }
 
                     // Check if user is banned (with 5s timeout so it never blocks the app)
                     try {
