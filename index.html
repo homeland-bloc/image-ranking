@@ -900,21 +900,21 @@
         }
 
         /* "View Results" buttons and card action buttons (blue gradient → gray in dark)
-           → darker with subtle red/orange undertone in hell */
+           → very dark with black-red undertone in hell */
         body.hell-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
         body.hell-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
-            background: linear-gradient(to right, #5c3020, #341610) !important;
+            background: linear-gradient(to right, #4a0505, #3d0000) !important;
         }
 
         /* Contest info (ℹ) buttons also use bg-blue-500 in dark → same undertone */
         body.hell-theme button[onclick*="showContestInfoModal"].bg-blue-500,
         body.hell-theme button[onclick*="showContestInfoModal"].hover\:bg-blue-600 {
-            background: linear-gradient(to right, #5c3020, #341610) !important;
+            background: linear-gradient(to right, #4a0505, #3d0000) !important;
         }
 
-        /* Final Ranking / results page white card → darker with red/orange undertone */
+        /* Final Ranking / results page white card → near-black with dark red undertone */
         body.hell-theme .bg-white:not(.rounded-full) {
-            background-color: #1c1208 !important;
+            background-color: #1a0000 !important;
         }
     </style>
 </head>
@@ -8414,24 +8414,19 @@
                 // Count unique voters from users table
                 const totalUniqueVoters = users.length;
 
-                // Fetch total counts using PostgREST's count() aggregate (body-based,
-                // so it works even when the Worker proxy doesn't forward Content-Range).
+                // Fetch total counts using Prefer: count=exact — Supabase returns the
+                // total in the Content-Range response header ("0-0/72431").
+                // limit=1 minimises data transfer; we only care about the header.
                 const countTableRows = async (tablePath) => {
-                    const res = await fetchFromSupabase(`${tablePath}?select=count()`);
-                    if (res.ok) {
-                        try {
-                            const data = await res.json();
-                            if (Array.isArray(data) && data.length > 0 && data[0].count !== undefined) {
-                                return parseInt(data[0].count) || 0;
-                            }
-                        } catch {}
-                    }
-                    // Fallback: Content-Range header (requires proxy to forward it)
-                    const headRes = await fetchFromSupabase(`${tablePath}?select=id`, {
-                        headers: { 'Prefer': 'count=exact', 'Range': '0-0' }
+                    const res = await fetchFromSupabase(`${tablePath}?select=*&limit=1`, {
+                        headers: { 'Prefer': 'count=exact' }
                     });
-                    const cr = headRes.headers.get('Content-Range');
-                    return cr ? parseInt(cr.split('/')[1]) || 0 : 0;
+                    const cr = res.headers.get('Content-Range');
+                    if (cr && cr.includes('/')) {
+                        const n = parseInt(cr.split('/')[1]);
+                        if (!isNaN(n)) return n;
+                    }
+                    return 0;
                 };
 
                 const [totalVotes, totalContests, totalImages] = await Promise.all([
