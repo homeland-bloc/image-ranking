@@ -4942,7 +4942,6 @@
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
         function ensureLocalUser(user) {
             // returns a Promise that resolves when the user exists (or after insertion/update)
-            console.log('👤 Ensuring user exists in database:', user.id, user.username);
             return fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`, {
                 headers: {
                     'apikey': SUPABASE_ANON_KEY,
@@ -4951,9 +4950,23 @@
                 }
             })
             .then(r => r.json())
-            .then(rows => {
+            .then(async rows => {
                 if (rows.length === 0) {
-                    console.log('👤 User not found in database, creating new user');
+                    // Ensure a Firebase token is present before the authenticated POST.
+                    // The token may not be ready this early in init(), so poll briefly.
+                    if (!getFirebaseToken()) {
+                        const deadline = Date.now() + 5000;
+                        while (!firebase.auth().currentUser && Date.now() < deadline) {
+                            await new Promise(r => setTimeout(r, 200));
+                        }
+                        if (firebase.auth().currentUser) {
+                            await refreshFirebaseToken();
+                        }
+                        if (!getFirebaseToken()) {
+                            throw new Error('Authentication not ready, please try again');
+                        }
+                    }
+
                     // create the user row in public.users (uses Firebase token via fetchFromSupabase)
                     return fetchFromSupabase(`/rest/v1/users`, {
                         method: 'POST',
@@ -4966,18 +4979,12 @@
                     }).then(resp => {
                         if (!resp.ok) {
                             return resp.text().then(t => {
-                                console.error('❌ Failed to insert local user:', t);
-                                console.error('❌ Response status:', resp.status);
-                                console.error('❌ User data:', { id: user.id, username: user.username, avatar: user.avatar });
-                                return;
+                                console.error('Failed to insert user row:', resp.status, t);
                             });
-                        } else {
-                            console.log('✅ User successfully created in database');
                         }
                     });
                 } else {
                     // User exists — refresh avatar and username in case they changed on Discord
-                    console.log('👤 User exists, refreshing avatar/username');
                     return fetchFromSupabase(`/rest/v1/users?id=eq.${user.id}`, {
                         method: 'PATCH',
                         headers: { 'Prefer': 'return=minimal' },
@@ -4988,16 +4995,14 @@
                     }).then(resp => {
                         if (!resp.ok) {
                             return resp.text().then(t => {
-                                console.error('❌ Failed to refresh user avatar/username:', t);
+                                console.error('Failed to refresh user profile:', resp.status, t);
                             });
-                        } else {
-                            console.log('✅ User avatar/username refreshed');
                         }
                     });
                 }
             })
             .catch(err => {
-                console.error('❌ ensureLocalUser error:', err);
+                console.error('ensureLocalUser error:', err.message);
                 // resolve anyway so login flow continues; caller may show an error later
                 return;
             });
