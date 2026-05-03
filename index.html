@@ -898,6 +898,24 @@
         body.hell-theme .bg-gradient-to-r.from-mauve-500.to-mauve-700 {
             background: linear-gradient(to right, #831240, #500926) !important;
         }
+
+        /* "View Results" buttons and card action buttons (blue gradient → gray in dark)
+           → darker with subtle red/orange undertone in hell */
+        body.hell-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
+        body.hell-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
+            background: linear-gradient(to right, #5c3020, #341610) !important;
+        }
+
+        /* Contest info (ℹ) buttons also use bg-blue-500 in dark → same undertone */
+        body.hell-theme button[onclick*="showContestInfoModal"].bg-blue-500,
+        body.hell-theme button[onclick*="showContestInfoModal"].hover\:bg-blue-600 {
+            background: linear-gradient(to right, #5c3020, #341610) !important;
+        }
+
+        /* Final Ranking / results page white card → darker with red/orange undertone */
+        body.hell-theme .bg-white:not(.rounded-full) {
+            background-color: #1c1208 !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -8396,39 +8414,31 @@
                 // Count unique voters from users table
                 const totalUniqueVoters = users.length;
 
-                // Fetch total counts using count=exact so we get accurate totals regardless of pagination
-                const [votesCountResponse, contestsCountResponse, imagesCountResponse] = await Promise.all([
-                    fetchFromSupabase(`/rest/v1/votes?select=id`, {
-                        headers: {
-                            'Prefer': 'count=exact',
-                            'Range': '0-0',
-                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-                        }
-                    }),
-                    fetchFromSupabase(`/rest/v1/contests?select=id`, {
-                        headers: {
-                            'Prefer': 'count=exact',
-                            'Range': '0-0',
-                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-                        }
-                    }),
-                    fetchFromSupabase(`/rest/v1/images?select=id`, {
-                        headers: {
-                            'Prefer': 'count=exact',
-                            'Range': '0-0',
-                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-                        }
-                    })
-                ]);
-
-                // Parse counts from Content-Range headers (e.g., "0-0/150" means 150 total)
-                const parseCount = (response) => {
-                    const cr = response.headers.get('Content-Range');
+                // Fetch total counts using PostgREST's count() aggregate (body-based,
+                // so it works even when the Worker proxy doesn't forward Content-Range).
+                const countTableRows = async (tablePath) => {
+                    const res = await fetchFromSupabase(`${tablePath}?select=count()`);
+                    if (res.ok) {
+                        try {
+                            const data = await res.json();
+                            if (Array.isArray(data) && data.length > 0 && data[0].count !== undefined) {
+                                return parseInt(data[0].count) || 0;
+                            }
+                        } catch {}
+                    }
+                    // Fallback: Content-Range header (requires proxy to forward it)
+                    const headRes = await fetchFromSupabase(`${tablePath}?select=id`, {
+                        headers: { 'Prefer': 'count=exact', 'Range': '0-0' }
+                    });
+                    const cr = headRes.headers.get('Content-Range');
                     return cr ? parseInt(cr.split('/')[1]) || 0 : 0;
                 };
-                const totalVotes = parseCount(votesCountResponse);
-                const totalContests = parseCount(contestsCountResponse);
-                const totalImages = parseCount(imagesCountResponse);
+
+                const [totalVotes, totalContests, totalImages] = await Promise.all([
+                    countTableRows('/rest/v1/votes'),
+                    countTableRows('/rest/v1/contests'),
+                    countTableRows('/rest/v1/images')
+                ]);
 
                 state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages };
 
@@ -11226,7 +11236,12 @@
                             .sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
 
                         if (allPinnedItems.length > 0) {
-                            const displayItems = allPinnedItems.slice(0, state.pinnedVisibleCount);
+                            const isExpanded = state.isPinnedSectionExpanded;
+                            const displayLimit = isExpanded ? state.pinnedVisibleCount : 3;
+                            const displayItems = allPinnedItems.slice(0, displayLimit);
+                            const hasMore = isExpanded
+                                ? allPinnedItems.length > state.pinnedVisibleCount
+                                : allPinnedItems.length > 3;
 
                             return `
                                 <div class="mb-4">
@@ -11237,7 +11252,7 @@
                                                     onclick="togglePinnedSection()"
                                                     class="text-white hover:bg-white/20 rounded-lg p-1 transition"
                                                 >
-                                                    <svg class="w-5 h-5 transition-transform ${state.isPinnedSectionExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg class="w-5 h-5 transition-transform ${isExpanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                                     </svg>
                                                 </button>
@@ -11255,12 +11270,12 @@
                                             return '';
                                         }).join('')}
                                     </div>
-                                    ${allPinnedItems.length > state.pinnedVisibleCount ? `
+                                    ${hasMore ? `
                                         <button
-                                            onclick="showMorePinnedItems()"
+                                            onclick="${isExpanded ? 'showMorePinnedItems()' : 'togglePinnedSection()'}"
                                             class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
-                                            Show 6 more items
+                                            ${isExpanded ? 'Show 6 more items' : `Show all ${allPinnedItems.length} pinned items`}
                                         </button>
                                     ` : ''}
                                 </div>
