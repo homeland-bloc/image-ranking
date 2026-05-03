@@ -2661,30 +2661,29 @@
             }
 
             try {
-                // Upload to Supabase Storage
-                const { data, error } = await supabase.storage
-                    .from('contest-images')
-                    .upload(fileName, file, {
-                        cacheControl: '604800',  // 7 days — contest images never change
-                        upsert: false
-                    });
+                const response = await fetchFromSupabase(`/storage/v1/object/contest-images/${fileName}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': file.type || 'image/jpeg',
+                        'Cache-Control': '604800',
+                        'x-upsert': 'false'
+                    },
+                    body: file
+                });
 
                 if (progressInterval) clearInterval(progressInterval);
 
-                if (error) {
-                    console.error('Supabase storage error:', error);
-                    throw new Error(error.message || 'Failed to upload image to storage');
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || `Failed to upload image (${response.status})`);
                 }
 
                 if (progressCallback) progressCallback(95);
-
                 if (progressCallback) progressCallback(100);
 
-                // Return ImageKit URL instead of Supabase CDN URL
                 return `https://ik.imagekit.io/bicipikay/${fileName}`;
             } catch (error) {
                 if (progressInterval) clearInterval(progressInterval);
-                console.error('Upload error:', error);
                 throw error;
             }
         }
@@ -5846,20 +5845,18 @@
                     throw new Error('You must be logged in to update mergers');
                 }
 
-                // Verify user owns this merger
-                if (merger.createdBy !== state.user.id) {
+                const isAdmin = state.user.id === ADMIN_DISCORD_ID;
+
+                // Verify user owns this merger (admin bypasses this check)
+                if (!isAdmin && merger.createdBy !== state.user.id) {
                     throw new Error('You can only update mergers you created');
                 }
 
-                console.log('🔄 Updating merger:', {
-                    mergerId,
-                    userId: state.user.id,
-                    currentContestIds: merger.contestIds,
-                    newContestIds: state.editMergerSelectedContests
-                });
-
-                // Update merger in database with user context
-                const response = await fetchFromSupabase(`/rest/v1/mergers?id=eq.${mergerId}&created_by=eq.${state.user.id}`, {
+                // Update merger in database; admin matches by id only, others also filter by creator
+                const mergerFilter = isAdmin
+                    ? `id=eq.${mergerId}`
+                    : `id=eq.${mergerId}&created_by=eq.${state.user.id}`;
+                const response = await fetchFromSupabase(`/rest/v1/mergers?${mergerFilter}`, {
                     method: 'PATCH',
                     headers: {
                         'Prefer': 'return=representation',
@@ -8373,38 +8370,44 @@
                 }));
 
                 // Fetch admin statistics from database with aggressive cache-busting
-                const voterResponse = await fetchFromSupabase(`/rest/v1/votes?select=user_id`, {
-                    headers: {
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    }
-                });
-                const votes = await voterResponse.json();
-
-                // Check if votes response is valid
-                if (!Array.isArray(votes)) {
-                    console.error('Invalid votes response:', votes);
-                    throw new Error(votes.message || 'Failed to load voter statistics');
-                }
-
                 // Count unique voters from users table
                 const totalUniqueVoters = users.length;
 
-                // Count total votes using COUNT(*) with minimal payload
-                const votesCountResponse = await fetchFromSupabase(`/rest/v1/votes?select=id`, {
-                    headers: {
-                        'Prefer': 'count=exact',
-                        'Range': '0-0',
-                        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-                    }
-                });
+                // Fetch total counts using count=exact so we get accurate totals regardless of pagination
+                const [votesCountResponse, contestsCountResponse, imagesCountResponse] = await Promise.all([
+                    fetchFromSupabase(`/rest/v1/votes?select=id`, {
+                        headers: {
+                            'Prefer': 'count=exact',
+                            'Range': '0-0',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+                        }
+                    }),
+                    fetchFromSupabase(`/rest/v1/contests?select=id`, {
+                        headers: {
+                            'Prefer': 'count=exact',
+                            'Range': '0-0',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+                        }
+                    }),
+                    fetchFromSupabase(`/rest/v1/images?select=id`, {
+                        headers: {
+                            'Prefer': 'count=exact',
+                            'Range': '0-0',
+                            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+                        }
+                    })
+                ]);
 
-                // Parse count from Content-Range header (e.g., "0-99/150" means 150 total)
-                const contentRange = votesCountResponse.headers.get('Content-Range');
-                const totalVotes = contentRange ? parseInt(contentRange.split('/')[1]) : 0;
+                // Parse counts from Content-Range headers (e.g., "0-0/150" means 150 total)
+                const parseCount = (response) => {
+                    const cr = response.headers.get('Content-Range');
+                    return cr ? parseInt(cr.split('/')[1]) || 0 : 0;
+                };
+                const totalVotes = parseCount(votesCountResponse);
+                const totalContests = parseCount(contestsCountResponse);
+                const totalImages = parseCount(imagesCountResponse);
 
-                state.adminStats = { totalVotes, totalUniqueVoters };
+                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages };
 
                 state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
@@ -11808,7 +11811,7 @@
                                         ` : ''}
                                         <!-- Rename Button -->
                                         <button
-                                            onclick="openRenameModal('${item.id}', '${itemType}', ${JSON.stringify(itemType === 'contest' ? item.title : item.name)}); closeContestInfoModal();"
+                                            onclick="openRenameModal('${item.id}', '${itemType}', ${JSON.stringify(itemType === 'contest' ? item.title : item.name).replace(/"/g, '&quot;')}); closeContestInfoModal();"
                                             class="w-full px-4 py-2 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition text-sm"
                                         >
                                             ✏️ Rename ${itemType === 'contest' ? 'Contest' : itemType === 'merger' ? 'Merger' : 'Extract'}
@@ -14969,11 +14972,11 @@
             });
 
             // Calculate admin statistics
-            const totalContests = state.contests.length;
+            const totalContests = state.adminStats.totalContests ?? state.contests.length;
             const totalVotes = state.adminStats.totalVotes;
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalBannedUsers = state.bannedUsers.length;
-            const totalImages = state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
+            const totalImages = state.adminStats.totalImages ?? state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeAdminDashboard()">
