@@ -17,6 +17,10 @@ const DISCORD_CLIENT_ID = '1442282566810861568';
 
 const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
+const BLOCKED_IPS = new Set([
+  // Add attacker IPs here as strings, e.g.: '1.2.3.4'
+]);
+
 // Tables that require admin verification for DELETE
 const ADMIN_SENSITIVE_TABLES = new Set([
   'contests', 'images', 'votes', 'users',
@@ -26,16 +30,32 @@ const ADMIN_SENSITIVE_TABLES = new Set([
 export default {
   async fetch(request, env) {
     try {
+      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      if (BLOCKED_IPS.has(ip)) {
+        return new Response(null, { status: 403 });
+      }
+
       if (request.method === 'OPTIONS') {
         return corsResponse(null, 204);
+      }
+
+      if (env.RATE_LIMITER) {
+        const { success } = await env.RATE_LIMITER.limit({ key: ip });
+        if (!success) return rateLimitResponse();
       }
 
       const url = new URL(request.url);
       // Normalize: collapse double slashes, lowercase
       const path = url.pathname.replace(/\/\/+/g, '/').toLowerCase();
 
-      if (path === '/discord-token') return handleDiscordToken(request, env);
-      if (path === '/discord-refresh') return handleDiscordRefresh(request, env);
+      if (path === '/discord-token' || path === '/discord-refresh') {
+        if (env.AUTH_LIMITER) {
+          const { success } = await env.AUTH_LIMITER.limit({ key: ip });
+          if (!success) return rateLimitResponse();
+        }
+        if (path === '/discord-token') return handleDiscordToken(request, env);
+        return handleDiscordRefresh(request, env);
+      }
 
       if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
         return corsResponse({ error: 'Worker misconfigured' }, 500);
@@ -372,6 +392,18 @@ function pemToBinary(pem) {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
+}
+
+// ── Rate limit helper ─────────────────────────────────────────────────────────
+function rateLimitResponse() {
+  return new Response(JSON.stringify({ error: 'Too many requests' }), {
+    status: 429,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
+      'Retry-After': '60',
+    }
+  });
 }
 
 // ── CORS helper ───────────────────────────────────────────────────────────────
