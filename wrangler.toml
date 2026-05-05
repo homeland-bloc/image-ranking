@@ -21,3 +21,17 @@ invocation_logs = true
 enabled = true
 persist = true
 head_sampling_rate = 1
+
+# General rate limit: 300 requests per minute per IP
+[[unsafe.bindings]]
+type = "ratelimit"
+name = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 300, period = 60 }
+
+# Auth endpoint rate limit: 5 requests per minute per IP
+[[unsafe.bindings]]
+type = "ratelimit"
+name = "AUTH_LIMITER"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }
