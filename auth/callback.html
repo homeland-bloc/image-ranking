@@ -151,7 +151,7 @@
                 // Build user session object
                 const avatarUrl = discord_user.avatar
                     ? `https://cdn.discordapp.com/avatars/${discord_user.id}/${discord_user.avatar}.png`
-                    : `https://api.dicebear.com/7.x/avataaars/svg?seed=${discord_user.id}`;
+                    : null;
 
                 const user = {
                     id: discord_user.id,
