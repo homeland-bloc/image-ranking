@@ -1424,13 +1424,7 @@
             setLoading('Loading merged results...');
             try {
                 // Fetch contests with their images
-                const contestsResponse = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=in.(${contestIds.join(',')})&select=*,images(*)`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const contestsResponse = await fetchFromSupabase(`/rest/v1/contests?id=in.(${contestIds.join(',')})&select=*,images(*)`);
                 const contests = await contestsResponse.json();
 
                 // Fetch ALL votes for these contests using pagination
@@ -2009,16 +2003,7 @@
                 }
 
                 // Fetch fresh count from DB to avoid overwriting concurrent votes
-                const countResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/${table}?id=eq.${itemId}&select=voter_count`,
-                    {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            ...buildAuthHeader(),
-                            'Cache-Control': 'no-cache'
-                        }
-                    }
-                );
+                const countResponse = await fetchFromSupabase(`/rest/v1/${table}?id=eq.${itemId}&select=voter_count`);
                 if (!countResponse.ok) {
                     const errText = await countResponse.text();
                     console.error(`Failed to fetch voter_count for ${itemType} ${itemId}:`, errText);
@@ -3008,14 +2993,7 @@
             let hasMore = true;
 
             while (hasMore) {
-                const url = `${SUPABASE_URL}/rest/v1/votes?${filterQuery}&order=id.asc&limit=${limit}&offset=${offset}&select=${selectFields}`;
-                const response = await fetch(url, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const response = await fetchFromSupabase(`/rest/v1/votes?${filterQuery}&order=id.asc&limit=${limit}&offset=${offset}&select=${selectFields}`);
 
                 if (!response.ok) {
                     throw new Error(`Failed to fetch votes: ${response.statusText}`);
@@ -3378,10 +3356,8 @@
                 console.log('Loading shared contest:', contestId);
 
                 // Fetch contest from database with aggressive cache-busting
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
+                const response = await fetchFromSupabase(`/rest/v1/contests?id=eq.${contestId}&select=*,images(*),creator:users!contests_created_by_fkey(username,avatar)`, {
                     headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
                         'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
                         'Pragma': 'no-cache',
                         'Expires': '0'
@@ -4101,13 +4077,7 @@
 
         async function loadMergers() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const response = await fetchFromSupabase(`/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`);
                 const mergers = await response.json();
                 if (Array.isArray(mergers)) {
                     state.mergers = mergers.map(m => ({
@@ -4131,13 +4101,7 @@
 
         async function loadExtracts() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const response = await fetchFromSupabase(`/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`);
                 const extracts = await response.json();
                 if (Array.isArray(extracts)) {
                     state.extracts = extracts.map(e => ({
@@ -4164,13 +4128,7 @@
 
         async function loadPinnedItems() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/pinned_items?select=*&order=pinned_at.desc`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const response = await fetchFromSupabase(`/rest/v1/pinned_items?select=*&order=pinned_at.desc`);
                 const pinnedItems = await response.json();
                 if (Array.isArray(pinnedItems)) {
                     state.pinnedItems = pinnedItems;
@@ -4296,13 +4254,7 @@
 
         async function loadAppSettings() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const response = await fetchFromSupabase(`/rest/v1/app_settings?select=*`);
                 const settings = await response.json();
                 if (Array.isArray(settings)) {
                     settings.forEach(s => {
@@ -4738,15 +4690,8 @@
                 let offset = 0;
                 const limit = 2000;
                 while (true) {
-                    const votesResponse = await fetch(
-                        `${SUPABASE_URL}/rest/v1/votes?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=${limit}&offset=${offset}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`,
-                        {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        }
+                    const votesResponse = await fetchFromSupabase(
+                        `/rest/v1/votes?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=${limit}&offset=${offset}&select=user_id,contest_id,created_at,voter:users!votes_user_id_fkey(username,avatar)&order=created_at.desc`
                     );
 
                     if (!votesResponse.ok) {
@@ -4764,46 +4709,10 @@
                 }
 
                 const [contestsResponse, mergersResponse, extractsResponse, usersResponse] = await Promise.all([
-                    fetch(
-                        `${SUPABASE_URL}/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`,
-                        {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        }
-                    ),
-                    fetch(
-                        `${SUPABASE_URL}/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`,
-                        {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        }
-                    ),
-                    fetch(
-                        `${SUPABASE_URL}/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`,
-                        {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        }
-                    ),
-                    fetch(
-                        `${SUPABASE_URL}/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`,
-                        {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        }
-                    )
+                    fetchFromSupabase(`/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`),
+                    fetchFromSupabase(`/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`),
+                    fetchFromSupabase(`/rest/v1/extracts?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`),
+                    fetchFromSupabase(`/rest/v1/users?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,username,avatar,created_at&order=created_at.desc`)
                 ]);
 
                 const contests = contestsResponse.ok ? await contestsResponse.json() : [];
@@ -4977,13 +4886,7 @@
         // --- ADD: ensureLocalUser (insert this near other helper functions) ---
         function ensureLocalUser(user) {
             // returns a Promise that resolves when the user exists (or after insertion/update)
-            return fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    ...buildAuthHeader(),
-                    'Cache-Control': 'no-cache'
-                }
-            })
+            return fetchFromSupabase(`/rest/v1/users?id=eq.${user.id}`)
             .then(r => r.json())
             .then(async rows => {
                 if (rows.length === 0) {
@@ -5200,13 +5103,7 @@
             if (!isExtract) {
                 // Check if contest still exists in the database
                 try {
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/contests?id=eq.${contest.id}&select=id,results_public,is_locked`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            ...buildAuthHeader(),
-                            'Cache-Control': 'no-cache'
-                        }
-                    });
+                    const response = await fetchFromSupabase(`/rest/v1/contests?id=eq.${contest.id}&select=id,results_public,is_locked`);
 
                     const contests = await response.json();
 
@@ -8386,13 +8283,7 @@
                 render(); // Show loading state
 
                 // Load all users from database
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/users?select=*&order=username.asc`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        ...buildAuthHeader(),
-                        'Cache-Control': 'no-cache'
-                    }
-                });
+                const response = await fetchFromSupabase(`/rest/v1/users?select=*&order=username.asc`);
 
                 if (!response.ok) {
                     const errorData = await response.json();
@@ -9133,13 +9024,7 @@
             // Ensure allUsers is loaded
             if (!state.allUsers || state.allUsers.length === 0) {
                 try {
-                    const usersResponse = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
-                        headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            ...buildAuthHeader(),
-                            'Cache-Control': 'no-cache'
-                        }
-                    });
+                    const usersResponse = await fetchFromSupabase(`/rest/v1/users?select=id,username,avatar,is_banned`);
 
                     if (usersResponse.ok) {
                         const users = await usersResponse.json();
@@ -9229,9 +9114,7 @@
             try {
                 // Ensure allUsers is loaded so we can look up names/avatars
                 if (!state.allUsers || state.allUsers.length === 0) {
-                    const usersResp = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
-                        headers: { 'apikey': SUPABASE_ANON_KEY, ...buildAuthHeader(), 'Cache-Control': 'no-cache' }
-                    });
+                    const usersResp = await fetchFromSupabase(`/rest/v1/users?select=id,username,avatar,is_banned`);
                     if (usersResp.ok) {
                         const users = await usersResp.json();
                         state.allUsers = users.map(u => ({ id: u.id, username: u.username, avatar: u.avatar, isBanned: u.is_banned || false }));
@@ -9455,9 +9338,7 @@
             try {
                 // Ensure allUsers is loaded so rows can be matched to display names
                 if (!state.allUsers || state.allUsers.length === 0) {
-                    const usersResp = await fetch(`${SUPABASE_URL}/rest/v1/users?select=id,username,avatar,is_banned`, {
-                        headers: { 'apikey': SUPABASE_ANON_KEY, ...buildAuthHeader(), 'Cache-Control': 'no-cache' }
-                    });
+                    const usersResp = await fetchFromSupabase(`/rest/v1/users?select=id,username,avatar,is_banned`);
                     if (usersResp.ok) {
                         const users = await usersResp.json();
                         state.allUsers = users.map(u => ({ id: u.id, username: u.username, avatar: u.avatar, isBanned: u.is_banned || false }));
@@ -16127,13 +16008,7 @@
 
                     // Check if user is banned (with 5s timeout so it never blocks the app)
                     try {
-                        const banCheckPromise = fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,app_theme,is_contest_creator`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
+                        const banCheckPromise = fetchFromSupabase(`/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,app_theme,is_contest_creator`);
                         const timeoutPromise = new Promise((_, reject) =>
                             setTimeout(() => reject(new Error('Ban check timed out')), 5000)
                         );
@@ -16233,13 +16108,7 @@
                 if (document.visibilityState !== 'visible' || !state.isLoggedIn || !state.user) return;
                 try {
                     const resp = await Promise.race([
-                        fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${state.user.id}&select=is_banned,ban_reason`, {
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                ...buildAuthHeader(),
-                                'Cache-Control': 'no-cache'
-                            }
-                        }),
+                        fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}&select=is_banned,ban_reason`),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
                     ]);
                     if (resp.ok) {
