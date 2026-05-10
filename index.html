@@ -975,8 +975,8 @@
         };
         firebase.initializeApp(firebaseConfig);
 
-        // Supabase Configuration
-        const SUPABASE_URL = 'https://peony-proxy.backpackcashback.workers.dev';
+        // Worker proxy base URL
+        const WORKER_URL = 'https://peony.peony-w.workers.dev';
         const SUPABASE_ANON_KEY = ''; // not used for auth — Firebase ID token is used instead
 
         // Discord OAuth Configuration
@@ -1215,7 +1215,7 @@
                 ...(discordToken ? { 'X-Discord-Token': discordToken } : {})
             };
 
-            return fetch(`${SUPABASE_URL}${endpoint}`, {
+            return fetch(`${WORKER_URL}${endpoint}`, {
                 ...options,
                 headers: { ...defaultHeaders, ...options.headers }
             });
@@ -3875,7 +3875,7 @@
 
         async function refreshDiscordToken(refreshToken) {
             try {
-                const response = await fetch(`${SUPABASE_URL}/discord-refresh`, {
+                const response = await fetch(`${WORKER_URL}/discord-refresh`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ refresh_token: refreshToken })
