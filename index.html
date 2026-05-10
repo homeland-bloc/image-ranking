@@ -922,6 +922,15 @@
     <div id="app"></div>
 
     <script>
+        function ghostAvatar(img) {
+            const ghost = document.createElement('span');
+            ghost.textContent = '👻';
+            ghost.className = img.className;
+            ghost.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;font-size:75%;';
+            if (img.style.cssText) ghost.style.cssText += img.style.cssText;
+            img.replaceWith(ghost);
+        }
+
         // Power mean (generalised mean): p=1 linear, p=2 squared (RMS), p=3 cubed
         function powerMean(scores, p) {
             if (!scores.length) return 0;
@@ -3293,7 +3302,7 @@
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img referrerpolicy="no-referrer" src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');" />
+                                                        <img referrerpolicy="no-referrer" src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');"  onerror="ghostAvatar(this)" />
                                                         <span class="text-sm flex-1 truncate cursor-pointer ${
                                                             vote.isBlocked ? 'line-through text-gray-700' : 'text-gray-700 hover:text-mauve-600'
                                                         }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
@@ -4773,7 +4782,7 @@
                             type: isFirstPortion ? 'vote' : 'vote_completed',
                             userId: latestVoteInPortion.user_id,
                             username: latestVoteInPortion.voter?.username || 'Unknown User',
-                            avatar: latestVoteInPortion.voter?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${latestVoteInPortion.user_id}`,
+                            avatar: latestVoteInPortion.voter?.avatar || null,
                             contestId: latestVoteInPortion.contest_id,
                             contestTitle: contest?.title || 'Unknown Contest',
                             timestamp: latestVoteInPortion.created_at,
@@ -4789,7 +4798,7 @@
                         type: 'contest',
                         userId: contest.created_by,
                         username: contest.creator?.username || 'Unknown User',
-                        avatar: contest.creator?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${contest.created_by}`,
+                        avatar: contest.creator?.avatar || null,
                         itemId: contest.id,
                         itemName: contest.title,
                         timestamp: contest.created_at
@@ -4802,7 +4811,7 @@
                         type: 'merger',
                         userId: merger.created_by,
                         username: merger.creator?.username || 'Unknown User',
-                        avatar: merger.creator?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${merger.created_by}`,
+                        avatar: merger.creator?.avatar || null,
                         itemId: merger.id,
                         itemName: merger.name,
                         timestamp: merger.created_at
@@ -4815,7 +4824,7 @@
                         type: 'extract',
                         userId: extract.created_by,
                         username: extract.creator?.username || 'Unknown User',
-                        avatar: extract.creator?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${extract.created_by}`,
+                        avatar: extract.creator?.avatar || null,
                         itemId: extract.id,
                         itemName: extract.name,
                         timestamp: extract.created_at
@@ -4828,7 +4837,7 @@
                         type: 'signup',
                         userId: user.id,
                         username: user.username || 'Unknown User',
-                        avatar: user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.id}`,
+                        avatar: user.avatar || null,
                         timestamp: user.created_at
                     });
                 });
@@ -7648,7 +7657,7 @@
                                     return `
                                         <label class="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer">
                                             <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleUserFilterUser('${voter.userId}')" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
-                                            <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-5 h-5 rounded-full" />
+                                            <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-5 h-5 rounded-full"  onerror="ghostAvatar(this)" />
                                             <span class="text-sm truncate">${voter.username}</span>
                                         </label>
                                     `;
@@ -9569,7 +9578,7 @@
                         <td class="px-2 py-2 text-xs text-gray-400 text-right" style="width: 32px;">${i + 1}</td>
                         <td class="px-2 py-2">
                             <div class="flex items-center gap-1.5">
-                                <img referrerpolicy="no-referrer" src="${r.avatar}" class="w-5 h-5 rounded-full shrink-0" />
+                                <img referrerpolicy="no-referrer" src="${r.avatar}" class="w-5 h-5 rounded-full shrink-0"  onerror="ghostAvatar(this)" />
                                 <span class="text-sm font-medium text-gray-800 truncate" style="max-width: min(160px, 40vw);">${r.username}</span>
                                 ${lowConf ? '<span class="text-xs text-amber-500 shrink-0" title="Low confidence: fewer than 200 votes or fewer than 5 contests">📮</span>' : ''}
                             </div>
@@ -10017,7 +10026,7 @@
                                                 return `
                                                     <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
                                                          onclick="selectExtractSource('merger', '${merger.id}')">
-                                                        <img referrerpolicy="no-referrer" src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <img referrerpolicy="no-referrer" src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0"  onerror="ghostAvatar(this)" />
                                                         <div class="flex-1 min-w-0">
                                                             <h5 class="font-semibold text-gray-800 truncate">${merger.name}</h5>
                                                             <p class="text-xs text-gray-500">
@@ -10037,7 +10046,7 @@
                                         ${state.contests.map(contest => `
                                             <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-yellow-400 hover:bg-yellow-50"
                                                  onclick="selectExtractSource('contest', '${contest.id}')">
-                                                <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0"  onerror="ghostAvatar(this)" />
                                                 <div class="flex-1 min-w-0">
                                                     <h5 class="font-semibold text-gray-800 truncate">${contest.title}</h5>
                                                     <p class="text-xs text-gray-500">
@@ -10381,7 +10390,7 @@
                                             onclick="event.stopPropagation()"
                                             onchange="toggleContestForMerger('${contest.id}')"
                                         />
-                                        <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0"  onerror="ghostAvatar(this)" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
                                                 <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
@@ -10479,7 +10488,7 @@
                                             onclick="event.stopPropagation()"
                                             onchange="toggleContestForEditMerger('${contest.id}')"
                                         />
-                                        <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                        <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0"  onerror="ghostAvatar(this)" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
                                                 <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
@@ -10706,7 +10715,7 @@
                             <div class="flex items-center gap-2">
                                 <div class="relative">
                                     <button onclick="toggleUserDropdown()" class="flex items-center gap-2 cursor-pointer hover:opacity-80 focus:outline-none">
-                                        <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full" />
+                                        <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="ghostAvatar(this)" />
                                         <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
                                         <svg class="w-4 h-4 transition-transform ${state.showUserDropdown ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
@@ -11584,7 +11593,7 @@
                             <!-- Main Info Section -->
                             <div class="mb-6">
                                 <div class="flex items-center gap-3 mb-3">
-                                    <img referrerpolicy="no-referrer" src="${item.creatorAvatar}" alt="${item.creatorName}" class="w-12 h-12 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="viewUserProfile('${item.createdBy}')" />
+                                    <img referrerpolicy="no-referrer" src="${item.creatorAvatar}" alt="${item.creatorName}" class="w-12 h-12 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="viewUserProfile('${item.createdBy}')"  onerror="ghostAvatar(this)" />
                                     <div>
                                         <div class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition" onclick="viewUserProfile('${item.createdBy}')">${item.creatorName}</div>
                                         <div class="text-sm text-gray-500">${createdDate || 'Date unknown'}</div>
@@ -11753,7 +11762,7 @@
                                                 const badgeColor = isComplete ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800';
                                                 return `
                                                     <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
-                                                        <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0"  onerror="ghostAvatar(this)" />
                                                         <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
                                                         <span class="text-xs font-semibold px-2 py-1 ${badgeColor} rounded">${voter.completedContests}/${voter.totalContests}</span>
                                                     </div>
@@ -11784,7 +11793,7 @@
                                                 const badgeColor = isComplete ? 'bg-green-200 text-green-800' : 'bg-yellow-200 text-yellow-800';
                                                 return `
                                                     <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${voter.id}')">
-                                                        <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0" />
+                                                        <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0"  onerror="ghostAvatar(this)" />
                                                         <span class="text-sm font-medium text-gray-700 flex-1">${voter.username}</span>
                                                         <span class="text-xs font-semibold px-2 py-1 ${badgeColor} rounded">${voter.completedImages}/${voter.totalImages}</span>
                                                     </div>
@@ -11956,11 +11965,11 @@
                         // Opacity is applied via inline style on inner span/div elements to avoid
                         // the cross-browser bug where opacity on <td>/<tr> also fades <img> children.
                         const dimStyle = r.lowConfidence ? 'opacity:0.45' : '';
-                        const avatar = r.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.userId}`;
+                        const avatar = r.avatar || null;
                         return `
                             <tr class="hover:bg-gray-100 cursor-pointer transition" onclick="viewUserProfile('${r.userId}')">
                                 <td style="width:1%;white-space:nowrap" class="pl-1 pr-1 py-1 text-xs text-gray-400 text-right"><span style="${dimStyle}">${i + 1}.</span></td>
-                                <td style="width:2rem" class="pr-2 py-1"><img referrerpolicy="no-referrer" src="${avatar}" class="w-7 h-7 rounded-full block" style="min-width:1.75rem" /></td>
+                                <td style="width:2rem" class="pr-2 py-1"><img referrerpolicy="no-referrer" src="${avatar}" class="w-7 h-7 rounded-full block" style="min-width:1.75rem"  onerror="ghostAvatar(this)" /></td>
                                 <td class="py-1" style="width:100%;max-width:0">
                                     <div class="flex items-center gap-1 min-w-0" style="${dimStyle}">
                                         <span class="font-medium text-sm truncate">${r.username}</span>
@@ -12048,7 +12057,7 @@
                                 </button>
                             </div>
                             <div class="flex items-center gap-4">
-                                <img referrerpolicy="no-referrer" src="${userInfo.avatar}" alt="${userInfo.username}" class="w-20 h-20 rounded-full" />
+                                <img referrerpolicy="no-referrer" src="${userInfo.avatar}" alt="${userInfo.username}" class="w-20 h-20 rounded-full"  onerror="ghostAvatar(this)" />
                                 <div class="flex-1">
                                     <h2 class="text-2xl font-bold text-gray-800">${userInfo.username}</h2>
                                     <p class="text-gray-600">${isCurrentUser ? '(You)' : ''} ${isBanned ? '🚫 BANNED' : ''}</p>
@@ -12236,7 +12245,7 @@
                                         </div>
                                     ` : ''}
                                     <div class="flex items-start gap-2 mb-2">
-                                        <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');" />
+                                        <img referrerpolicy="no-referrer" src="${contest.creatorAvatar}" alt="${contest.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');"  onerror="ghostAvatar(this)" />
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
                                                 <h3 class="text-base font-bold text-gray-800 truncate">${contest.title}</h3>
@@ -12405,7 +12414,7 @@
                         </div>
                     ` : ''}
                     <div class="flex items-start gap-2 mb-2">
-                        <img referrerpolicy="no-referrer" src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');" />
+                        <img referrerpolicy="no-referrer" src="${merger.creatorAvatar}" alt="${merger.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');"  onerror="ghostAvatar(this)" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-base font-bold text-blue-900 truncate">${merger.name}</h3>
@@ -12560,7 +12569,7 @@
                         </div>
                     ` : ''}
                     <div class="flex items-start gap-2 mb-2">
-                        <img referrerpolicy="no-referrer" src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');" />
+                        <img referrerpolicy="no-referrer" src="${extract.creatorAvatar}" alt="${extract.creatorName}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-yellow-400 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');"  onerror="ghostAvatar(this)" />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-base font-bold text-yellow-900 truncate">${extract.name}</h3>
@@ -13654,7 +13663,7 @@
                                 <div class="flex-1 flex flex-wrap gap-2 items-start">
                                     ${users.map(u => `
                                         <div class="flex items-center gap-2 bg-white rounded-lg shadow border border-gray-200 cursor-pointer hover:shadow-md transition" style="padding: ${Math.round(8 * cardScale)}px ${Math.round(12 * cardScale)}px;" onclick="viewUserProfile('${u.userId}')">
-                                            <img referrerpolicy="no-referrer" src="${u.avatar}" class="rounded-full" style="width: ${avatarSize}px; height: ${avatarSize}px;" />
+                                            <img referrerpolicy="no-referrer" src="${u.avatar}" class="rounded-full" style="width: ${avatarSize}px; height: ${avatarSize}px;"  onerror="ghostAvatar(this)" />
                                             <span class="font-medium" style="font-size: ${cardFontSize}px;">${u.username}</span>
                                         </div>
                                     `).join('')}
@@ -13860,7 +13869,7 @@
                                         <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showAverageCompareUser('${voter.userId}')">
                                             <td class="py-2 px-2">
                                                 <div class="flex items-center gap-2">
-                                                    <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-6 h-6 rounded-full" />
+                                                    <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-6 h-6 rounded-full"  onerror="ghostAvatar(this)" />
                                                     <span class="font-medium truncate max-w-[120px]">${voter.username}</span>
                                                 </div>
                                             </td>
@@ -13952,7 +13961,7 @@
                         const vTotal = voter.votes.length;
                         return `
                         <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
-                            <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" />
+                            <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');"  onerror="ghostAvatar(this)" />
                             <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}</div>
                             <div class="text-xl font-bold text-white score-text">${voter.averageScore}</div>
                             <div class="text-xs text-gray-500 mb-1">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
@@ -14103,7 +14112,7 @@
                                         <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showComparisonDetail('${voter.userId}')">
                                             <td class="py-2 px-2">
                                                 <div class="flex items-center gap-2">
-                                                    <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-6 h-6 rounded-full" />
+                                                    <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-6 h-6 rounded-full"  onerror="ghostAvatar(this)" />
                                                     <span class="font-medium truncate max-w-[120px]">${voter.username}</span>
                                                 </div>
                                             </td>
@@ -14643,7 +14652,7 @@
                                     <div class="divide-y divide-gray-50">
                                         ${g.voters.map(v => `
                                             <div class="flex items-center gap-2 px-2 py-1.5 ${v.isCurrentUser ? 'bg-blue-50' : 'bg-white'}">
-                                                <img referrerpolicy="no-referrer" src="${v.avatar}" alt="${v.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation();viewUserProfile('${v.userId}');" />
+                                                <img referrerpolicy="no-referrer" src="${v.avatar}" alt="${v.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation();viewUserProfile('${v.userId}');"  onerror="ghostAvatar(this)" />
                                                 <span class="text-sm text-gray-700 flex-1 truncate cursor-pointer hover:text-mauve-600" onclick="event.stopPropagation();viewUserProfile('${v.userId}');">${v.username}${v.isCurrentUser ? ' (You)' : ''}</span>
                                             </div>
                                         `).join('')}
@@ -14805,7 +14814,7 @@
                                                         vote.isBlocked ? 'bg-gray-300' :
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
-                                                        <img referrerpolicy="no-referrer" src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''} cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');" />
+                                                        <img referrerpolicy="no-referrer" src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''} cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');"  onerror="ghostAvatar(this)" />
                                                         <span class="text-sm flex-1 truncate cursor-pointer ${
                                                             vote.isBanned ? 'line-through text-red-600' :
                                                             vote.isBlocked ? 'line-through text-gray-700' :
@@ -14866,7 +14875,7 @@
                 return {
                     id: userId,
                     username: 'User' + userId.substring(0, 4),
-                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
+                    avatar: null
                 };
             });
 
@@ -14937,7 +14946,7 @@
                                                 return `
                                                     <div class="flex items-center justify-between p-3 bg-white rounded-lg ${isBanned ? 'opacity-50' : ''}">
                                                         <div class="flex items-center gap-3">
-                                                            <img referrerpolicy="no-referrer" src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');" />
+                                                            <img referrerpolicy="no-referrer" src="${user.avatar}" alt="${user.username}" class="w-10 h-10 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');"  onerror="ghostAvatar(this)" />
                                                             <div>
                                                                 <div class="font-semibold text-gray-800 cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${user.id}');">${user.username}</div>
                                                                 <div class="text-xs text-gray-500">${user.id}</div>
@@ -15281,6 +15290,7 @@
                                                     alt="${log.username}"
                                                     class="w-6 h-6 rounded-full cursor-pointer hover:ring-2 hover:ring-mauve-400 transition flex-shrink-0"
                                                     onclick="event.stopPropagation(); viewUserProfile('${log.userId}');"
+                                                    onerror="ghostAvatar(this)"
                                                 />
                                                 <div class="flex-1 min-w-0">
                                                     <div class="text-sm">
