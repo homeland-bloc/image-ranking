@@ -1994,56 +1994,31 @@
             });
         }
 
-        // Helper function to increment voter_count for an item (contest, merger, or extract)
+        // Refreshes voter_count from DB after vote submission; count is now managed by a Postgres trigger
         async function updateVoterCountInDB(itemType, itemId) {
+            let table, item;
+            if (itemType === 'contest') {
+                table = 'contests';
+                item = state.contests.find(c => c.id === itemId);
+            } else if (itemType === 'merger') {
+                table = 'mergers';
+                item = state.mergers.find(m => m.id === itemId);
+            } else if (itemType === 'extract') {
+                table = 'extracts';
+                item = state.extracts.find(e => e.id === itemId);
+            } else {
+                return;
+            }
+
             try {
-                let table, item;
-                if (itemType === 'contest') {
-                    table = 'contests';
-                    item = state.contests.find(c => c.id === itemId);
-                } else if (itemType === 'merger') {
-                    table = 'mergers';
-                    item = state.mergers.find(m => m.id === itemId);
-                } else if (itemType === 'extract') {
-                    table = 'extracts';
-                    item = state.extracts.find(e => e.id === itemId);
-                } else {
-                    return;
-                }
-
-                // Fetch fresh count from DB to avoid overwriting concurrent votes
                 const countResponse = await fetchFromSupabase(`/rest/v1/${table}?id=eq.${itemId}&select=voter_count`);
-                if (!countResponse.ok) {
-                    const errText = await countResponse.text();
-                    console.error(`Failed to fetch voter_count for ${itemType} ${itemId}:`, errText);
-                    showToast(`Could not update voter count (fetch failed).`, 'error');
-                    return;
-                }
+                if (!countResponse.ok) return;
                 const [row] = await countResponse.json();
-                const freshCount = row?.voter_count ?? 0;
-                const newCount = freshCount + 1;
-
-                // PATCH the voter_count in the database
-                const response = await fetchFromSupabase(`/rest/v1/${table}?id=eq.${itemId}`, {
-                    method: 'PATCH',
-                    headers: { 'Prefer': 'return=minimal' },
-                    body: JSON.stringify({ voter_count: newCount })
-                });
-
-                if (!response.ok) {
-                    const errText = await response.text();
-                    console.error(`Failed to update voter_count for ${itemType} ${itemId}:`, errText);
-                    showToast(`Could not update voter count (patch failed).`, 'error');
-                    return;
+                if (item && row?.voter_count !== undefined) {
+                    item.voterCount = row.voter_count;
                 }
-
-                // Update local state so UI reflects immediately
-                if (item) {
-                    item.voterCount = newCount;
-                }
-            } catch (error) {
-                console.error(`Error updating voter count for ${itemType} ${itemId}:`, error);
-                showToast(`Could not update voter count: ${error.message}`, 'error');
+            } catch (_) {
+                // failed count refresh does not affect vote submission
             }
         }
 
