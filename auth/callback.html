@@ -65,8 +65,6 @@
         };
         firebase.initializeApp(firebaseConfig);
 
-        const SUPABASE_URL = 'https://tbduuuzwbiidjgztupfp.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZHV1dXp3YmlpZGpnenR1cGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0NTI3NjcsImV4cCI6MjA4MDAyODc2N30.lMDbB1I7vNoMFCncGw7_i9hUtWp-mO9rsmFLgd3GMMQ';
         const WORKER_URL = 'https://peony-proxy.backpackcashback.workers.dev';
         const DISCORD_REDIRECT_URI = 'https://bicipikay.github.io/peony/auth/callback';
 
@@ -131,10 +129,9 @@
 
                 // Check if user is banned (authenticated read using Firebase ID token — requires auth.uid() is not null)
                 const banCheckResponse = await fetch(
-                    `${SUPABASE_URL}/rest/v1/users?id=eq.${discord_user.id}&select=is_banned`,
+                    `${WORKER_URL}/rest/v1/users?id=eq.${discord_user.id}&select=is_banned`,
                     {
                         headers: {
-                            'apikey': SUPABASE_ANON_KEY,
                             'Authorization': `Bearer ${firebaseToken}`,
                             'Cache-Control': 'no-cache'
                         }
