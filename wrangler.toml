@@ -4,7 +4,6 @@ compatibility_date = "2024-01-01"
 
 [vars]
 SUPABASE_URL = "https://tbduuuzwbiidjgztupfp.supabase.co"
-SUPABASE_ANON_KEY = "sb_publishable_ynIZVjCzKQjiobV_3TAqRg_ecM2uJmR"
 ADMIN_DISCORD_ID = "719271552247529571"
 
 [observability]
