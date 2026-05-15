@@ -187,20 +187,21 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
   const authHeader = request.headers.get('Authorization');
   let firebaseUid = null;
 
+  // All requests (GET and writes) require a valid Firebase Bearer token.
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return corsResponse({ error: 'Authentication required' }, 401);
+  }
+
+  const payload = decodeJwtPayload(authHeader.slice(7));
+  if (!payload || !payload.sub) {
+    return corsResponse({ error: 'Invalid token' }, 401);
+  }
+  firebaseUid = payload.sub;
+  // Log the extracted UID server-side (Cloudflare tail logs) for debugging.
+  // This is never returned to the client.
+  console.error(`[auth] uid=${firebaseUid} method=${method} table=${table}`);
+
   if (WRITE_METHODS.has(method)) {
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return corsResponse({ error: 'Authentication required' }, 401);
-    }
-
-    const payload = decodeJwtPayload(authHeader.slice(7));
-    if (!payload || !payload.sub) {
-      return corsResponse({ error: 'Invalid token' }, 401);
-    }
-    firebaseUid = payload.sub;
-    // Log the extracted UID server-side (Cloudflare tail logs) for debugging.
-    // This is never returned to the client.
-    console.error(`[auth] uid=${firebaseUid} method=${method} table=${table}`);
-
     // DELETE on sensitive tables requires admin verification
     if (method === 'DELETE' && ADMIN_SENSITIVE_TABLES.has(table)) {
       const isAdmin = await verifyAdmin(request, env);
@@ -245,13 +246,12 @@ async function handleSupabaseProxy(request, url, normalizedPath, env) {
     }
   }
 
-  // Forward to Supabase with anon key; pass Firebase token if present so RLS can
-  // enforce ownership. For GET requests without a token, omit Authorization so
-  // Supabase treats the request as anon role rather than an invalid token.
+  // Forward to Supabase with anon key (server-side only) and the Firebase token
+  // so RLS can enforce ownership via auth.uid().
   const supabaseUrl = `${env.SUPABASE_URL}${url.pathname}${url.search}`;
   const headers = new Headers();
   headers.set('apikey', env.SUPABASE_ANON_KEY);
-  if (authHeader) headers.set('Authorization', authHeader);
+  headers.set('Authorization', authHeader);
 
   // Forward safe passthrough headers
   for (const h of ['Content-Type', 'Prefer', 'X-Upsert', 'Range']) {
