@@ -4906,7 +4906,7 @@
                     });
                 } else {
                     // User exists — refresh avatar and username in case they changed on Discord
-                    return fetchFromSupabase(`/rest/v1/users?id=eq.${user.id}`, {
+                    fetchFromSupabase(`/rest/v1/users?id=eq.${user.id}`, {
                         method: 'PATCH',
                         headers: { 'Prefer': 'return=minimal' },
                         body: JSON.stringify({
@@ -4920,6 +4920,8 @@
                             });
                         }
                     });
+                    // Return the fetched row so the caller can read ban status and preferences
+                    return rows[0];
                 }
             })
             .catch(err => {
@@ -16012,49 +16014,30 @@
                     // have a fresh token without delaying the current startup path.
                     refreshFirebaseToken();
 
-                    // Check if user is banned (with 5s timeout so it never blocks the app)
-                    try {
-                        const banCheckPromise = fetchFromSupabase(`/rest/v1/users?id=eq.${user.id}&select=is_banned,ban_reason,app_theme,is_contest_creator`);
-                        const timeoutPromise = new Promise((_, reject) =>
-                            setTimeout(() => reject(new Error('Ban check timed out')), 5000)
-                        );
-                        const banCheckResponse = await Promise.race([banCheckPromise, timeoutPromise]);
+                    // Ensure the user row exists and load ban status, theme, and permissions
+                    // ensureLocalUser GETs the full user row and returns it for existing users
+                    const userData = await ensureLocalUser(state.user).catch(err => {
+                        console.error('ensureLocalUser unexpected error:', err);
+                        return null;
+                    });
 
-                        if (banCheckResponse.ok) {
-                            const userData = await banCheckResponse.json();
-
-                            // If user is banned, log them out with reason
-                            if (userData && userData.length > 0 && userData[0].is_banned === true) {
-                                const banReason = userData[0].ban_reason || 'No reason provided';
-                                localStorage.removeItem('peony_user');
-                                state.isLoggedIn = false;
-                                state.user = null;
-                                showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
-                                return; // Exit early, don't proceed with login
-                            }
-
-                            if (userData && userData.length > 0) {
-                                // Load theme preference — default to 'hell' when no value is set
-                                const savedTheme = userData[0].app_theme || 'hell';
-                                state.appTheme = savedTheme;
-                                applyTheme(savedTheme);
-
-                                // Load contest-creator permission
-                                if (state.user) {
-                                    state.user.is_contest_creator = userData[0].is_contest_creator === true;
-                                }
-                            }
-                        } else {
-                            console.warn('Failed to check ban status, proceeding with cached session');
-                        }
-                    } catch (banCheckError) {
-                        console.warn('Ban check failed, proceeding with cached session:', banCheckError);
+                    if (userData && userData.is_banned === true) {
+                        const banReason = userData.ban_reason || 'No reason provided';
+                        localStorage.removeItem('peony_user');
+                        state.isLoggedIn = false;
+                        state.user = null;
+                        showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
+                        return;
                     }
 
-                    // Ensure the user row exists in public.users
-                    await ensureLocalUser(state.user).catch(err => {
-                        console.error('ensureLocalUser unexpected error:', err);
-                    });
+                    if (userData) {
+                        const savedTheme = userData.app_theme || 'hell';
+                        state.appTheme = savedTheme;
+                        applyTheme(savedTheme);
+                        if (state.user) {
+                            state.user.is_contest_creator = userData.is_contest_creator === true;
+                        }
+                    }
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
                     console.error('Error loading user session:', e);
@@ -16109,29 +16092,6 @@
                 handleHashChange();
             }
 
-            // Re-check ban status when tab regains focus
-            document.addEventListener('visibilitychange', async () => {
-                if (document.visibilityState !== 'visible' || !state.isLoggedIn || !state.user) return;
-                try {
-                    const resp = await Promise.race([
-                        fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}&select=is_banned,ban_reason`),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-                    ]);
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        if (data && data.length > 0 && data[0].is_banned === true) {
-                            const banReason = data[0].ban_reason || 'No reason provided';
-                            localStorage.removeItem('peony_user');
-                            state.isLoggedIn = false;
-                            state.user = null;
-                            showAlert(`Your account has been banned from Peony.\n\nReason: ${banReason}`, '🚫');
-                            render();
-                        }
-                    }
-                } catch (e) {
-                    // Silently ignore - don't disrupt the session
-                }
-            });
         })();
         }); // End DOMContentLoaded event listener
     </script>
