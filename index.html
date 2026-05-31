@@ -3901,6 +3901,25 @@
             }
         }
 
+        // Keep the Firebase ID token fresh for the lifetime of the session.
+        // Firebase automatically renews ID tokens before they expire (~every 55 min).
+        // onIdTokenChanged fires on each renewal, so we sync the new token into
+        // state and localStorage without any polling or manual timers.
+        firebase.auth().onIdTokenChanged(async (firebaseUser) => {
+            if (!firebaseUser) return; // user signed out — nothing to do
+            try {
+                const freshToken = await firebaseUser.getIdToken();
+                if (state.user) state.user.firebaseToken = freshToken;
+                const stored = JSON.parse(localStorage.getItem('peony_user') || '{}');
+                if (stored.id) { // only update if there's actually a session stored
+                    stored.firebaseToken = freshToken;
+                    localStorage.setItem('peony_user', JSON.stringify(stored));
+                }
+            } catch (err) {
+                console.warn('onIdTokenChanged token sync failed:', err);
+            }
+        });
+
         // loadVoterCounts() removed — voter_count columns are now read directly from DB rows
 
         // ==================== ARCHIVE CACHE FOR OLD CONTESTS ====================
@@ -16038,6 +16057,11 @@
                             state.user.is_contest_creator = userData.is_contest_creator === true;
                         }
                     }
+
+                    // Safety-net: force-refresh the Firebase ID token every 50 minutes.
+                    // This guards against cases where onIdTokenChanged fires late
+                    // (e.g. browser background-throttling the tab).
+                    setInterval(() => { refreshFirebaseToken(); }, 50 * 60 * 1000);
                 } catch (e) {
                     // Only clear localStorage if it's a JSON parse error (corrupted data)
                     console.error('Error loading user session:', e);
