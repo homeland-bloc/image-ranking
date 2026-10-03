@@ -1150,7 +1150,12 @@
             shortlistFilter: [],       // multi-mode filter buckets: 'shortlisted' | 'unshortlisted'
             resultsFormat: 'classic',  // 'classic' | 'shortlist' — results page voting-format switch
             resultsFormatKey: null,    // scope key the shortlist switch was chosen for (so it resets on other pages)
-            shortlistData: null        // cached shortlist results data (real rows + auto-converted votes) for the open results page
+            shortlistData: null,       // cached shortlist results data (real rows + auto-converted votes) for the open results page
+            noticeModal: null,         // { kind: 'auth' | 'avatar' } - informational "how to fix it" modal
+            authModalDismissed: false, // once the session-expired modal was dismissed, do not show it again this page load
+            brokenAvatarUrl: null,     // avatar URL that failed to load in the top bar (set from the img onerror handler)
+            spotlightActive: false,    // the one-time Shortlist toggle callout was started on this page load
+            spotlightDismissed: false  // ...and has been dismissed
         };
 
         function shuffleArray(array) {
@@ -1224,10 +1229,25 @@
                 ...(discordToken ? { 'X-Discord-Token': discordToken } : {})
             };
 
-            return fetch(`${WORKER_URL}${endpoint}`, {
+            const response = await fetch(`${WORKER_URL}${endpoint}`, {
                 ...options,
                 headers: { ...defaultHeaders, ...options.headers }
             });
+            if (response.status === 401) detectAuthExpiry(response);
+            return response;
+        }
+
+        // Expired / invalid login: the Worker answers 401 {error: 'Authentication required' | 'Invalid token'} and
+        // Supabase answers 401 with a JWT error (PGRST300 / PGRST301 / "JWT expired"). Only that signature opens the
+        // recovery modal - other failures (uploads, validation, RLS) keep their existing handling.
+        function detectAuthExpiry(response) {
+            response.clone().json().then(body => {
+                const code = body && body.code;
+                const message = String((body && (body.message || body.error)) || '');
+                const isAuthFailure = code === 'PGRST300' || code === 'PGRST301' ||
+                    /jwt/i.test(message) || /^(Authentication required|Invalid token)$/i.test(message);
+                if (isAuthFailure) showNoticeModal('auth');
+            }).catch(() => {});
         }
 
         // Format date as "day month year" (e.g., "30 Nov 2025")
@@ -10783,13 +10803,18 @@
                         ` : `
                             <div class="flex items-center gap-2">
                                 <div class="relative">
+                                    <div class="flex items-center gap-1">
+                                    ${state.brokenAvatarUrl && state.brokenAvatarUrl === state.user.avatar ? `
+                                        <button onclick="showNoticeModal('avatar')" class="text-base leading-none hover:opacity-80 focus:outline-none" title="Your profile picture link has expired" aria-label="Your profile picture link has expired">⚠️</button>
+                                    ` : ''}
                                     <button onclick="toggleUserDropdown()" class="flex items-center gap-2 cursor-pointer hover:opacity-80 focus:outline-none">
-                                        <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="ghostAvatar(this)" />
+                                        <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="markAvatarBroken(this.getAttribute('src')); ghostAvatar(this)" />
                                         <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
                                         <svg class="w-4 h-4 transition-transform ${state.showUserDropdown ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                         </svg>
                                     </button>
+                                    </div>
                                     ${state.showUserDropdown ? `
                                         <div class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
                                             ${isAdmin ? `
@@ -12331,7 +12356,7 @@
                                     </div>
 
                                     <div class="flex gap-2">
-                                        ${!isBanned && !contest.isLocked ? renderCardFormatToggle('contest', contest.id) : ''}
+                                        ${!isBanned && !contest.isLocked ? renderCardFormatToggle('contest', contest.id, isPinned) : ''}
                                         ${isBanned ? `
                                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                                 🚫 Account restricted
@@ -12509,7 +12534,7 @@
                     </div>
 
                     <div class="flex gap-2">
-                        ${!isBanned && !merger.isLocked ? renderCardFormatToggle('merger', merger.id) : ''}
+                        ${!isBanned && !merger.isLocked ? renderCardFormatToggle('merger', merger.id, isPinned) : ''}
                         ${isBanned ? `
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
@@ -15830,6 +15855,11 @@
 
         // Per-card, local-only toggle between the classic and shortlist button sets.
         function toggleCardFormat(itemType, itemId) {
+            // Clicking the spotlighted toggle for the first time also dismisses the callout
+            const spotlightTarget = getSpotlightTarget();
+            if (state.spotlightActive && spotlightTarget && spotlightTarget.type === itemType && spotlightTarget.id === itemId) {
+                state.spotlightDismissed = true;
+            }
             const key = `${itemType}_${itemId}`;
             if (state.cardFormats[key] === 'shortlist') {
                 delete state.cardFormats[key];
@@ -15840,9 +15870,9 @@
         }
 
         // Icon shows the format the card is currently displaying: ⭐️ = classic, 🔖 = shortlist.
-        function renderCardFormatToggle(itemType, itemId) {
+        function renderCardFormatToggle(itemType, itemId, isPinned = false) {
             const showingShortlist = isShortlistCard(itemType, itemId);
-            return `
+            const toggle = `
                 <button
                     onclick="toggleCardFormat('${itemType}', '${itemId}')"
                     class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
@@ -15851,9 +15881,116 @@
                     ${showingShortlist ? '🔖' : '⭐️'}
                 </button>
             `;
+            if (!shouldShowSpotlight(itemType, itemId, isPinned)) return toggle;
+            return `
+                <div class="relative">
+                    ${toggle}
+                    <div class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
+                        New: tap here to try Shortlist voting
+                        <button onclick="dismissSpotlight()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
+                        <div class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
+                    </div>
+                </div>
+            `;
         }
 
-        // Make / Edit / Redo Shortlist, driven by (voted classically?) x (has a real shortlist?).
+        // ---------- One-time spotlight on the card format toggle ----------
+
+        // First pinned contest or merger (extracts are skipped), in the same most-recent-first order the Pinned section uses.
+        function getSpotlightTarget() {
+            const pinned = [...state.pinnedItems].sort((a, b) => new Date(b.pinned_at) - new Date(a.pinned_at));
+            for (const p of pinned) {
+                if (p.item_type === 'contest' && state.contests.some(c => c.id === p.item_id)) return { type: 'contest', id: p.item_id };
+                if (p.item_type === 'merger' && state.mergers.some(m => m.id === p.item_id)) return { type: 'merger', id: p.item_id };
+            }
+            return null;
+        }
+
+        // True while the callout should be drawn on this card. It is stored as seen the first time it is actually
+        // rendered, so it appears once per user ever (until then it stays up for this page load, until dismissed).
+        function shouldShowSpotlight(itemType, itemId, isPinned) {
+            if (!isPinned || !state.user || state.spotlightDismissed) return false;
+            const target = getSpotlightTarget();
+            if (!target || target.type !== itemType || target.id !== itemId) return false;
+            if (state.spotlightActive) return true;
+            const storageKey = `peony_shortlist_spotlight_seen_${state.user.id}`;
+            try {
+                if (localStorage.getItem(storageKey)) return false;
+                localStorage.setItem(storageKey, '1');
+            } catch (e) {
+                return false;   // cannot remember it, so do not risk showing it every visit
+            }
+            state.spotlightActive = true;
+            return true;
+        }
+
+        function dismissSpotlight() {
+            state.spotlightDismissed = true;
+            render();
+        }
+
+        // ---------- Recovery modals (expired login / broken avatar link) ----------
+
+        const NOTICE_MODALS = {
+            auth: {
+                title: 'Your session needs a refresh',
+                intro: "Login sessions expire after a while, and sometimes the app doesn't catch it automatically. Here's the fix:"
+            },
+            avatar: {
+                title: "Your profile picture isn't loading",
+                intro: "Discord's image links expire after a while, which is why you might be seeing a 👻 placeholder instead of your avatar. A quick re-login refreshes it:"
+            }
+        };
+
+        function showNoticeModal(kind) {
+            if (!state.isLoggedIn || state.noticeModal) return;
+            if (kind === 'auth' && state.authModalDismissed) return;
+            state.noticeModal = { kind };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeNoticeModal() {
+            if (state.noticeModal && state.noticeModal.kind === 'auth') state.authModalDismissed = true;
+            state.noticeModal = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function markAvatarBroken(url) {
+            if (!url || state.brokenAvatarUrl === url) return;
+            state.brokenAvatarUrl = url;
+            setTimeout(render, 0);
+        }
+
+        // Same overlay / card structure as renderModal, with the app's existing yellow warning box (theme-aware).
+        function renderNoticeModal() {
+            if (!state.noticeModal) return '';
+            const content = NOTICE_MODALS[state.noticeModal.kind];
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[80] p-4" onclick="event.target === this && closeNoticeModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
+                        <div class="text-center mb-4">
+                            <div class="text-5xl mb-2">⚠️</div>
+                            <h3 class="text-xl font-bold text-gray-800">${content.title}</h3>
+                        </div>
+                        <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm mb-4">
+                            <p>${content.intro}</p>
+                            <ol class="list-decimal ml-5 mt-2 space-y-1">
+                                <li>Log out</li>
+                                <li>Refresh the page</li>
+                                <li>Log back in</li>
+                            </ol>
+                        </div>
+                        <div class="flex justify-center">
+                            <button onclick="closeNoticeModal()" class="px-5 py-2 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700">Got it</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Make / Edit / Auto-Generate Shortlist, driven by (voted classically?) x (has a real shortlist?).
         function renderShortlistCardButton(itemType, item) {
             const hasVotes = userHasRowsFor(itemType, item, state.userVotedContests);
             const hasShortlist = userHasRowsFor(itemType, item, state.userShortlists);
@@ -15864,7 +16001,7 @@
                 return `<button onclick="startShortlistVoting('${itemType}', '${item.id}', 'existing')" class="${editClass}">Edit Shortlist</button>`;
             }
             if (hasVotes) {
-                return `<button onclick="showRedoShortlistModal('${itemType}', '${item.id}')" class="${editClass}">Redo Shortlist</button>`;
+                return `<button onclick="showAutoGenerateShortlistModal('${itemType}', '${item.id}')" class="${editClass}">Auto-Generate Shortlist</button>`;
             }
             return `<button onclick="startShortlistVoting('${itemType}', '${item.id}', 'empty')" class="${makeClass}">Make a Shortlist</button>`;
         }
@@ -15892,7 +16029,7 @@
             return all;
         }
 
-        // The current user's real shortlist rows, by contest. Drives the Make / Edit / Redo card buttons.
+        // The current user's real shortlist rows, by contest. Drives the Make / Edit / Auto-Generate card buttons.
         async function loadUserShortlists() {
             if (!state.user) return;
             try {
@@ -15987,7 +16124,7 @@
 
         // mode: 'empty'    -> nothing pre-checked (Make a Shortlist / Start Fresh)
         //       'existing' -> pre-check the user's real `shortlists` rows (Edit Shortlist)
-        //       'auto'     -> pre-check images the user scored 4 or 5 (Redo Shortlist > Preload)
+        //       'auto'     -> pre-check images the user scored 4 or 5 (Auto-Generate Shortlist > Preload)
         // Pre-checking is local state only. Rows are written one toggle at a time as the user changes things.
         async function startShortlistVoting(itemType, itemId, mode = 'empty') {
             if (!state.user) return;
@@ -16100,8 +16237,8 @@
             }
         }
 
-        // "Redo Shortlist": the user voted classically but has no real shortlist yet.
-        function showRedoShortlistModal(itemType, itemId) {
+        // "Auto-Generate Shortlist": the user voted classically but has no real shortlist yet.
+        function showAutoGenerateShortlistModal(itemType, itemId) {
             state.pendingShortlistItem = { itemType, itemId };
             state.modal = {
                 type: 'confirm',
@@ -16109,21 +16246,21 @@
                 message: 'How would you like to start your shortlist?',
                 buttons: [
                     { text: 'Cancel', action: 'closeModal', primary: false },
-                    { text: 'Start Fresh', action: 'confirmRedoShortlistFresh', primary: true },
-                    { text: 'Preload the Auto-Converted Shortlist', action: 'confirmRedoShortlistPreload', primary: false, color: 'blue' }
+                    { text: 'Start Fresh', action: 'confirmAutoGenerateShortlistFresh', primary: true },
+                    { text: 'Preload the Auto-Converted Shortlist', action: 'confirmAutoGenerateShortlistPreload', primary: false, color: 'blue' }
                 ]
             };
             document.body.classList.add('modal-open');
             render();
         }
 
-        function confirmRedoShortlistFresh() {
+        function confirmAutoGenerateShortlistFresh() {
             const pending = state.pendingShortlistItem;
             if (!pending) return closeModal();
             startShortlistVoting(pending.itemType, pending.itemId, 'empty');
         }
 
-        function confirmRedoShortlistPreload() {
+        function confirmAutoGenerateShortlistPreload() {
             const pending = state.pendingShortlistItem;
             if (!pending) return closeModal();
             startShortlistVoting(pending.itemType, pending.itemId, 'auto');
@@ -17305,7 +17442,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal() + renderNoticeModal();
 
             // Restore scroll positions
             savedScrolls.forEach(({ key, top }) => {
@@ -17554,15 +17691,19 @@
         window.backFromAverageCompareUser = backFromAverageCompareUser;
         window.toggleCardFormat = toggleCardFormat;
         window.startShortlistVoting = startShortlistVoting;
-        window.showRedoShortlistModal = showRedoShortlistModal;
-        window.confirmRedoShortlistFresh = confirmRedoShortlistFresh;
-        window.confirmRedoShortlistPreload = confirmRedoShortlistPreload;
+        window.showAutoGenerateShortlistModal = showAutoGenerateShortlistModal;
+        window.confirmAutoGenerateShortlistFresh = confirmAutoGenerateShortlistFresh;
+        window.confirmAutoGenerateShortlistPreload = confirmAutoGenerateShortlistPreload;
         window.toggleShortlistImage = toggleShortlistImage;
         window.handleShortlistYes = handleShortlistYes;
         window.handleShortlistNo = handleShortlistNo;
         window.setShortlistFilter = setShortlistFilter;
         window.finishShortlistVoting = finishShortlistVoting;
         window.setResultsFormat = setResultsFormat;
+        window.dismissSpotlight = dismissSpotlight;
+        window.showNoticeModal = showNoticeModal;
+        window.closeNoticeModal = closeNoticeModal;
+        window.markAvatarBroken = markAvatarBroken;
 
         // Initialize app
         // Check for existing session on load
