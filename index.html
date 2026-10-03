@@ -1140,7 +1140,22 @@
             pairsAnchorImageId: null,   // Selected anchor image ID for Pairs tab
             showPairsBreakdownModal: null,  // { imageAId, imageBId } or null
             pairsCorrCache: {},   // Cache of computed Pearson r values: 'minId-maxId' -> r
-            pairsCorrFilterKey: 'all'  // Fingerprint of active user filter for cache invalidation
+            pairsCorrFilterKey: 'all',  // Fingerprint of active user filter for cache invalidation
+            // ── Shortlist voting format (parallel to classic 1-5 voting) ──
+            votingFormat: 'classic',   // 'classic' | 'shortlist' — format of the active voting screen
+            cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'shortlist' (per-card display toggle, never persisted)
+            userShortlists: {},        // contestId -> { imageId: true } — current user's real rows in `shortlists`
+            shortlistSelected: {},     // imageId -> true — working set on the shortlist voting screen
+            shortlistSession: null,    // { itemType, itemId, title, contestByImage, persisted } while shortlist voting
+            shortlistFilter: [],       // multi-mode filter buckets: 'shortlisted' | 'unshortlisted'
+            resultsFormat: 'classic',  // 'classic' | 'shortlist' — results page voting-format switch
+            resultsFormatKey: null,    // scope key the shortlist switch was chosen for (so it resets on other pages)
+            shortlistData: null,       // cached shortlist results data (real rows + auto-converted votes) for the open results page
+            noticeModal: null,         // { kind: 'auth' | 'avatar' } - informational "how to fix it" modal
+            authModalDismissed: false, // once the session-expired modal was dismissed, do not show it again this page load
+            brokenAvatarUrl: null,     // avatar URL that failed to load in the top bar (set from the img onerror handler)
+            spotlightActive: false,    // the one-time Shortlist toggle callout was started on this page load
+            spotlightDismissed: false  // ...and has been dismissed
         };
 
         function shuffleArray(array) {
@@ -1214,10 +1229,25 @@
                 ...(discordToken ? { 'X-Discord-Token': discordToken } : {})
             };
 
-            return fetch(`${WORKER_URL}${endpoint}`, {
+            const response = await fetch(`${WORKER_URL}${endpoint}`, {
                 ...options,
                 headers: { ...defaultHeaders, ...options.headers }
             });
+            if (response.status === 401) detectAuthExpiry(response);
+            return response;
+        }
+
+        // Expired / invalid login: the Worker answers 401 {error: 'Authentication required' | 'Invalid token'} and
+        // Supabase answers 401 with a JWT error (PGRST300 / PGRST301 / "JWT expired"). Only that signature opens the
+        // recovery modal - other failures (uploads, validation, RLS) keep their existing handling.
+        function detectAuthExpiry(response) {
+            response.clone().json().then(body => {
+                const code = body && body.code;
+                const message = String((body && (body.message || body.error)) || '');
+                const isAuthFailure = code === 'PGRST300' || code === 'PGRST301' ||
+                    /jwt/i.test(message) || /^(Authentication required|Invalid token)$/i.test(message);
+                if (isAuthFailure) showNoticeModal('auth');
+            }).catch(() => {});
         }
 
         // Format date as "day month year" (e.g., "30 Nov 2025")
@@ -3977,7 +4007,7 @@
             }
 
             try {
-                const response = await fetchFromSupabase(`/rest/v1/contests?select=id,contest_number,title,is_locked,results_public,created_by,voter_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)&order=created_at.desc&limit=${limit}&offset=${offset}`);
+                const response = await fetchFromSupabase(`/rest/v1/contests?select=id,contest_number,title,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)&order=created_at.desc&limit=${limit}&offset=${offset}`);
 
                 const contests = await response.json();
 
@@ -4003,6 +4033,7 @@
                     creatorAvatar: contest.creator.avatar,
                     createdAt: contest.created_at,
                     voterCount: contest.voter_count ?? 0,
+                    shortlistCount: contest.shortlist_count ?? 0,
                     _fullImagesLoaded: false,
                     images: contest.images
                         .sort((a, b) => a.image_order - b.image_order)
@@ -4079,7 +4110,7 @@
 
         async function loadMergers() {
             try {
-                const response = await fetchFromSupabase(`/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`);
+                const response = await fetchFromSupabase(`/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`);
                 const mergers = await response.json();
                 if (Array.isArray(mergers)) {
                     state.mergers = mergers.map(m => ({
@@ -4093,6 +4124,7 @@
                         isLocked: m.is_locked || false,
                         resultsPublic: m.results_public !== false,
                         voterCount: m.voter_count ?? 0,
+                        shortlistCount: m.shortlist_count ?? 0,
                         type: 'merger'
                     }));
                 }
@@ -4103,7 +4135,7 @@
 
         async function loadExtracts() {
             try {
-                const response = await fetchFromSupabase(`/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`);
+                const response = await fetchFromSupabase(`/rest/v1/extracts?select=id,name,source_type,source_contest_id,image_ids,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!extracts_created_by_fkey(username,avatar)&order=created_at.desc`);
                 const extracts = await response.json();
                 if (Array.isArray(extracts)) {
                     state.extracts = extracts.map(e => ({
@@ -4120,6 +4152,7 @@
                         isLocked: e.is_locked || false,
                         resultsPublic: e.results_public !== false,
                         voterCount: e.voter_count ?? 0,
+                        shortlistCount: e.shortlist_count ?? 0,
                         type: 'extract'
                     }));
                 }
@@ -4145,7 +4178,7 @@
                     if (missingIds.length > 0) {
                         try {
                             const r = await fetchFromSupabase(
-                                `/rest/v1/contests?id=in.(${missingIds.join(',')})&select=id,contest_number,title,is_locked,results_public,created_by,voter_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)`
+                                `/rest/v1/contests?id=in.(${missingIds.join(',')})&select=id,contest_number,title,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)`
                             );
                             const missing = await r.json();
                             if (Array.isArray(missing)) {
@@ -4160,6 +4193,7 @@
                                     creatorAvatar: contest.creator.avatar,
                                     createdAt: contest.created_at,
                                     voterCount: contest.voter_count ?? 0,
+                    shortlistCount: contest.shortlist_count ?? 0,
                                     _fullImagesLoaded: false,
                                     images: contest.images
                                         .sort((a, b) => a.image_order - b.image_order)
@@ -4710,6 +4744,26 @@
                     offset += limit;
                 }
 
+                // Current shortlist rows inside the selected date range (paginated, like the other entry types), so an
+                // entry's timestamp is the latest row within the range. Failure here must not break the log.
+                let shortlistRows = [];
+                try {
+                    let slOffset = 0;
+                    while (true) {
+                        const slResponse = await fetchFromSupabase(
+                            `/rest/v1/shortlists?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=${limit}&offset=${slOffset}&select=user_id,contest_id,created_at,users!inner(username,avatar)&order=created_at.desc`
+                        );
+                        if (!slResponse.ok) break;
+                        const slBatch = await slResponse.json();
+                        if (!Array.isArray(slBatch)) break;
+                        shortlistRows.push(...slBatch);
+                        if (slBatch.length < limit) break;
+                        slOffset += limit;
+                    }
+                } catch (slError) {
+                    console.warn('Shortlist activity unavailable:', slError);
+                }
+
                 const [contestsResponse, mergersResponse, extractsResponse, usersResponse] = await Promise.all([
                     fetchFromSupabase(`/rest/v1/contests?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,title,created_at,created_by,creator:users!contests_created_by_fkey(username,avatar)&order=created_at.desc`),
                     fetchFromSupabase(`/rest/v1/mergers?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=2000&select=id,name,created_at,created_by,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`),
@@ -4782,6 +4836,27 @@
                             voteCount: userVotes.length,
                             totalImages: totalImages
                         });
+                    });
+                });
+
+                // "Made a shortlist for X": derived live from the shortlist rows that exist right now - one entry per
+                // user + contest, stamped with MAX(created_at) of those rows. Not a stored event, so deleted rows leave no trace.
+                const latestShortlist = new Map();
+                shortlistRows.forEach(row => {
+                    const key = `${row.user_id}-${row.contest_id}`;
+                    const existing = latestShortlist.get(key);
+                    if (!existing || new Date(row.created_at) > new Date(existing.created_at)) latestShortlist.set(key, row);
+                });
+                latestShortlist.forEach((row, key) => {
+                    const contest = state.contests.find(c => c.id === row.contest_id);
+                    activityMap.set(`shortlist-${key}`, {
+                        type: 'shortlist',
+                        userId: row.user_id,
+                        username: row.users?.username || 'Unknown User',
+                        avatar: row.users?.avatar || null,
+                        contestId: row.contest_id,
+                        contestTitle: contest?.title || 'Unknown Contest',
+                        timestamp: row.created_at
                     });
                 });
 
@@ -5035,6 +5110,7 @@
                 await loadContestImages(contest.id);
             }
             state.currentContest = contest;
+            resetShortlistState();
             state.shuffledImages = shuffleArray(contest.images);
             state.votes = {};
             state.currentImageIndex = 0;
@@ -5290,6 +5366,7 @@
             }
 
             // Reset voting state with clean slate
+            resetShortlistState();
             state.votes = {};
             state.hasSubmitted = false;
             state.shuffledImages = shuffleArray(state.currentContest.images);
@@ -5324,6 +5401,7 @@
                 );
 
                 // Prefill votes from previous submission
+                resetShortlistState();
                 state.votes = {};
                 userVotes.forEach(vote => {
                     state.votes[vote.image_id] = vote.score;
@@ -5437,6 +5515,7 @@
                 }
 
                 // Prefill votes from previous submissions
+                resetShortlistState();
                 state.votes = {};
                 allUserVotes.forEach(vote => {
                     state.votes[vote.image_id] = vote.score;
@@ -6032,6 +6111,7 @@
             // mergerContestIds is already set in the if/else block above
 
             // Shuffle all images together
+            resetShortlistState();
             state.shuffledImages = shuffleArray(allImages);
             state.votes = {};
             state.currentImageIndex = 0;
@@ -7240,6 +7320,14 @@
         async function backToHome() {
             console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
 
+            // Shortlist voting has no draft/autosave — every toggle is already saved, so just leave.
+            if (state.votingFormat === 'shortlist') {
+                exitShortlistVoting();
+            }
+            state.resultsFormat = 'classic';
+            state.resultsFormatKey = null;
+            state.shortlistData = null;
+
             // Check for both contest and merge voting in progress
             const isContestVoting = state.view === 'vote' && !state.hasSubmitted && state.currentContest && state.currentContest.images;
             const isMergeVoting = state.view === 'vote' && !state.hasSubmitted && state.currentMergerId && state.mergerContestIds && state.mergerContestIds.length > 0;
@@ -8324,13 +8412,14 @@
                     return 0;
                 };
 
-                const [totalVotes, totalContests, totalImages] = await Promise.all([
+                const [totalVotes, totalContests, totalImages, totalShortlists] = await Promise.all([
                     countTableRows('/rest/v1/votes'),
                     countTableRows('/rest/v1/contests'),
-                    countTableRows('/rest/v1/images')
+                    countTableRows('/rest/v1/images'),
+                    countTableRows('/rest/v1/shortlists').catch(() => 0)
                 ]);
 
-                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages };
+                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists };
 
                 state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
@@ -10391,7 +10480,7 @@
                                                 <h4 class="font-semibold text-gray-800 truncate">${contest.title}</h4>
                                             </div>
                                             <p class="text-xs text-gray-500">
-                                                ${contest.creatorName} • ${contest.images.length} images • ${contest.voterCount || 0} voters
+                                                ${contest.creatorName} • ${contest.images.length} images • ${contest.voterCount || 0} voters • ${contest.shortlistCount || 0} shortlists
                                             </p>
                                         </div>
                                     </div>
@@ -10709,13 +10798,18 @@
                         ` : `
                             <div class="flex items-center gap-2">
                                 <div class="relative">
+                                    <div class="flex items-center gap-1">
+                                    ${state.brokenAvatarUrl && state.brokenAvatarUrl === state.user.avatar ? `
+                                        <button onclick="showNoticeModal('avatar')" class="text-base leading-none hover:opacity-80 focus:outline-none" title="Your profile picture link has expired" aria-label="Your profile picture link has expired">⚠️</button>
+                                    ` : ''}
                                     <button onclick="toggleUserDropdown()" class="flex items-center gap-2 cursor-pointer hover:opacity-80 focus:outline-none">
-                                        <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="ghostAvatar(this)" />
+                                        <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="markAvatarBroken(this.getAttribute('src')); ghostAvatar(this)" />
                                         <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
                                         <svg class="w-4 h-4 transition-transform ${state.showUserDropdown ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                         </svg>
                                     </button>
+                                    </div>
                                     ${state.showUserDropdown ? `
                                         <div class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
                                             ${isAdmin ? `
@@ -11601,6 +11695,10 @@
                                             <span class="text-gray-600">${voterCount}👥</span>
                                         </div>
                                         <div class="flex items-center gap-1 whitespace-nowrap">
+                                            <span class="font-semibold text-gray-700">Shortlists:</span>
+                                            <span class="text-gray-600">${item.shortlistCount || 0}📝</span>
+                                        </div>
+                                        <div class="flex items-center gap-1 whitespace-nowrap">
                                             <span class="font-semibold text-gray-700">Images:</span>
                                             <span class="text-gray-600">${imageCount}🖼️</span>
                                         </div>
@@ -12247,16 +12345,25 @@
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
+                                                <span class="ml-auto whitespace-nowrap">${contest.voterCount || 0}👥 ${contest.shortlistCount || 0}📝 ${contest.images.length}🖼️</span>
                                             </div>
                                         </div>
                                     </div>
 
                                     <div class="flex gap-2">
+                                        ${!isBanned && !contest.isLocked ? renderCardFormatToggle('contest', contest.id, isPinned) : ''}
                                         ${isBanned ? `
                                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                                 🚫 Account restricted
                                             </div>
+                                        ` : (isShortlistCard('contest', contest.id) && !contest.isLocked) ? `
+                                            ${renderShortlistCardButton('contest', contest)}
+                                            <button
+                                                onclick='viewResults(${safeStringify(contest)})'
+                                                class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                                            >
+                                                View Results
+                                            </button>
                                         ` : contest.isLocked ? `
                                             <button
                                                 onclick='viewLockedResults(${safeStringify(contest)})'
@@ -12416,16 +12523,25 @@
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${merger.voterCount || 0}👥 ${merger.shortlistCount || 0}📝 ${totalImages}🖼️</span>
                             </div>
                         </div>
                     </div>
 
                     <div class="flex gap-2">
+                        ${!isBanned && !merger.isLocked ? renderCardFormatToggle('merger', merger.id, isPinned) : ''}
                         ${isBanned ? `
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
+                        ` : (isShortlistCard('merger', merger.id) && !merger.isLocked) ? `
+                            ${renderShortlistCardButton('merger', merger)}
+                            <button
+                                onclick='viewMergerResults("${merger.id}")'
+                                class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
+                            >
+                                View Results
+                            </button>
                         ` : merger.isLocked ? `
                             <button
                                 onclick='viewMergerResults("${merger.id}")'
@@ -12571,17 +12687,19 @@
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${extract.voterCount || 0}👥 ${extract.shortlistCount || 0}📝 ${imageCount}🖼️</span>
                             </div>
                         </div>
                     </div>
 
                     <div class="flex gap-2">
+                        ${!isBanned && !extract.isLocked ? renderCardFormatToggle('extract', extract.id) : ''}
                         ${isBanned ? `
                             <div class="flex-1 bg-red-100 border border-red-400 text-red-700 py-2 rounded-lg text-center text-xs">
                                 🚫 Account restricted
                             </div>
                         ` : `
+                            ${isShortlistCard('extract', extract.id) && !extract.isLocked ? renderShortlistCardButton('extract', extract) : ''}
                             <button
                                 onclick='viewExtractResults("${extract.id}")'
                                 class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
@@ -12729,14 +12847,17 @@
         }
 
         function renderMultiViewVoting() {
+            const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
             const isMergerVoting = state.currentMergerId && !state.currentContest;
-            const votingTitle = isMergerVoting
+            const votingTitle = isShortlist
+                ? state.shortlistSession.title
+                : isMergerVoting
                 ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
                 : (state.currentContest?.title || 'Voting');
 
             // Calculate voting progress
-            const votedCount = state.shuffledImages.filter(img => state.votes[img.id]).length;
+            const votedCount = state.shuffledImages.filter(img => isShortlist ? state.shortlistSelected[img.id] : state.votes[img.id]).length;
             const totalCount = state.shuffledImages.length;
 
             // Get image scale (use state.imageScale if available, default to 100)
@@ -12764,7 +12885,7 @@
                         <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
                             <div class="flex justify-between items-center mb-2">
                                 <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100">${votingTitle}</h2>
-                                <span class="text-gray-600 dark:text-gray-400 font-medium text-sm">${votedCount}/${totalCount} voted</span>
+                                <span class="text-gray-600 dark:text-gray-400 font-medium text-sm">${votedCount}/${totalCount} ${isShortlist ? 'shortlisted' : 'voted'}</span>
                             </div>
                             <!-- Progress bar -->
                             <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
@@ -12800,7 +12921,7 @@
                             <!-- Filter and Sort Controls — two-column layout -->
                             <div class="mt-3 flex gap-4 items-start">
                                 <!-- Left: Filter -->
-                                <div class="flex-1 min-w-0">
+                                ${isShortlist ? renderShortlistMultiFilter() : `<div class="flex-1 min-w-0">
                                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
                                     <div class="flex flex-wrap gap-1">
                                         ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
@@ -12821,7 +12942,7 @@
                                         ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
                                         : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
                                     }
-                                </div>
+                                </div>`}
                                 <!-- Right: Sort -->
                                 <div class="flex flex-col items-end shrink-0">
                                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
@@ -12843,7 +12964,12 @@
                                 ${(() => {
                                     // Apply filtering
                                     let filteredImages = state.shuffledImages;
-                                    if (state.multiModeFilter.length > 0) {
+                                    if (isShortlist && state.shortlistFilter.length > 0) {
+                                        filteredImages = filteredImages.filter(img =>
+                                            state.shortlistFilter.includes(state.shortlistSelected[img.id] ? 'shortlisted' : 'unshortlisted')
+                                        );
+                                    }
+                                    if (!isShortlist && state.multiModeFilter.length > 0) {
                                         filteredImages = filteredImages.filter(img => {
                                             const vote = state.votes[img.id];
                                             // Check if non-voted filter is selected and image has no vote
@@ -12858,14 +12984,14 @@
                                     // Apply sorting
                                     if (state.multiModeSort === 'highest') {
                                         filteredImages = [...filteredImages].sort((a, b) => {
-                                            const voteA = state.votes[a.id] || 0;
-                                            const voteB = state.votes[b.id] || 0;
+                                            const voteA = isShortlist ? (state.shortlistSelected[a.id] ? 1 : 0) : (state.votes[a.id] || 0);
+                                            const voteB = isShortlist ? (state.shortlistSelected[b.id] ? 1 : 0) : (state.votes[b.id] || 0);
                                             return voteB - voteA;
                                         });
                                     } else if (state.multiModeSort === 'lowest') {
                                         filteredImages = [...filteredImages].sort((a, b) => {
-                                            const voteA = state.votes[a.id] || 0;
-                                            const voteB = state.votes[b.id] || 0;
+                                            const voteA = isShortlist ? (state.shortlistSelected[a.id] ? 1 : 0) : (state.votes[a.id] || 0);
+                                            const voteB = isShortlist ? (state.shortlistSelected[b.id] ? 1 : 0) : (state.votes[b.id] || 0);
                                             return voteA - voteB;
                                         });
                                     }
@@ -12873,31 +12999,31 @@
 
                                     if (filteredImages.length === 0) {
                                         return `<div class="w-full py-10 text-center text-gray-500 dark:text-gray-400">
-                                            <p class="font-medium">No images match the active score filter.</p>
+                                            <p class="font-medium">No images match the active ${isShortlist ? 'shortlist' : 'score'} filter.</p>
                                             <p class="text-xs mt-1">Click a highlighted filter button above to remove it.</p>
                                         </div>`;
                                     }
 
                                     return filteredImages.map((image, idx) => {
-                                        const currentVote = state.votes[image.id];
-                                        const isHoverable = state.selectedScore !== null;
+                                        const currentVote = isShortlist ? (state.shortlistSelected[image.id] ? 5 : 0) : state.votes[image.id];
+                                        const isHoverable = isShortlist || state.selectedScore !== null;
                                         const borderColor = currentVote ? getScoreColor(currentVote) : 'transparent';
                                         return `
                                         <div class="relative" style="height: ${imageHeight}px;">
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
-                                                onclick="voteImageMulti('${image.id}')"
+                                                onclick="${isShortlist ? `toggleShortlistImage(${image.id})` : `voteImageMulti('${image.id}')`}"
                                                 style="height: ${imageHeight}px; border-color: ${borderColor};"
                                             >
                                                 <img src="${image.url}" alt="Image ${idx + 1}" class="h-full w-auto object-cover" />
 
-                                                <!-- Score indicator circle (top-left) -->
+                                                ${isShortlist ? renderShortlistCheckbox(!!currentVote) : `<!-- Score indicator circle (top-left) -->
                                                 <div class="absolute top-2 left-2">
                                                     <div class="rounded-full flex items-center justify-center font-bold shadow-lg ${currentVote ? '' : 'score-indicator-unvoted'}"
                                                          style="width: ${circleSize}px; height: ${circleSize}px; font-size: ${fontSize}px; ${currentVote ? `background-color: ${getScoreColor(currentVote)}; color: white;` : 'background-color: white; color: #9ca3af;'}">
                                                         ${currentVote || '?'}
                                                     </div>
-                                                </div>
+                                                </div>`}
                                             </div>
                                         </div>
                                     `;
@@ -12911,6 +13037,7 @@
                 <!-- Fixed bottom voting panel -->
                 <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t-2 border-gray-300 dark:border-gray-700 shadow-2xl z-50">
                     <div class="max-w-4xl mx-auto px-4 py-4">
+                        ${isShortlist ? renderShortlistMultiBottomPanel(votedCount, totalCount) : `
                         <!-- Mobile layout: stacked -->
                         <div class="flex flex-col sm:hidden items-center justify-center gap-4">
                             <!-- Info label -->
@@ -13006,6 +13133,7 @@
                                 ` : ''}
                             </div>
                         </div>
+                    `}
                     </div>
                 </div>
             `;
@@ -13017,13 +13145,16 @@
                 return renderMultiViewVoting();
             }
 
+            const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
             const currentImage = state.shuffledImages[state.currentImageIndex];
-            const currentVote = state.votes[currentImage.id];
+            const currentVote = isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
 
             // Determine voting context (contest or merger)
             const isMergerVoting = state.currentMergerId && !state.currentContest;
-            const votingTitle = isMergerVoting
+            const votingTitle = isShortlist
+                ? state.shortlistSession.title
+                : isMergerVoting
                 ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
                 : (state.currentContest?.title || 'Voting');
 
@@ -13052,7 +13183,7 @@
 
                                 const segmentImages = state.shuffledImages.slice(startIdx, endIdx);
 
-                                const votedCount = segmentImages.filter(img => state.votes[img.id]).length;
+                                const votedCount = segmentImages.filter(img => isShortlist ? state.shortlistSelected[img.id] : state.votes[img.id]).length;
                                 const totalCount = segmentImages.length;
                                 const hasCurrentImage = state.currentImageIndex >= startIdx && state.currentImageIndex < endIdx;
 
@@ -13060,6 +13191,9 @@
                                 let bgColor;
                                 if (hasCurrentImage) {
                                     bgColor = 'bg-mauve-400';
+                                } else if (isShortlist) {
+                                    // Shortlist: a segment is green when it contains any shortlisted image
+                                    bgColor = votedCount > 0 ? 'bg-green-500' : 'bg-gray-300';
                                 } else if (votedCount === totalCount) {
                                     bgColor = 'bg-green-500';
                                 } else if (votedCount > 0) {
@@ -13069,7 +13203,7 @@
                                 }
 
                                 const imageRange = startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`;
-                                const tooltip = `${imageRange} (${votedCount}/${totalCount} voted)`;
+                                const tooltip = `${imageRange} (${votedCount}/${totalCount} ${isShortlist ? 'shortlisted' : 'voted'})`;
 
                                 return `
                                     <div
@@ -13087,15 +13221,21 @@
                                 <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
                             </div>
 
-                            <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="height: 55vh;">
+                            <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="height: 55vh;${isShortlist ? ' touch-action: pan-y; user-select: none;' : ''}" ${isShortlist ? 'data-shortlist-swipe="1"' : ''}>
                                 <img
                                     src="${currentImage.url}"
                                     alt="Image ${state.currentImageIndex + 1}"
                                     class="max-h-full max-w-full object-contain"
                                     style="max-height: 100%; max-width: 100%;"
+                                    ${isShortlist ? 'draggable="false"' : ''}
                                     onload="this.parentElement.classList.remove('image-loading')"
                                 />
-                                ${currentVote ? `
+                                ${isShortlist ? (currentVote ? `
+                                    <div class="absolute top-2 right-2 bg-white dark:bg-gray-800 rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
+                                        <span>🔖</span>
+                                        <span class="font-semibold" style="color: ${getScoreColor(5)};">Shortlisted</span>
+                                    </div>
+                                ` : '') : currentVote ? `
                                     <div class="absolute top-2 right-2 bg-white dark:bg-gray-800 rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
                                         <svg class="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
@@ -13105,7 +13245,7 @@
                                 ` : ''}
                             </div>
 
-                            <div class="flex justify-center gap-2 mb-3">
+                            ${isShortlist ? renderShortlistYesNoButtons(currentVote) : `<div class="flex justify-center gap-2 mb-3">
                                 ${[1, 2, 3, 4, 5].map(score => `
                                     <button 
                                         data-score="${score}"
@@ -13126,7 +13266,7 @@
                                         ` : ''}
                                     </button>
                                 `).join('')}
-                            </div>
+                            </div>`}
 
                             <div class="flex justify-between items-center gap-2">
                                 <button
@@ -13137,7 +13277,14 @@
                                     ← Prev
                                 </button>
 
-                                ${allVoted ? `
+                                ${isShortlist ? `
+                                    <div class="flex flex-col items-center gap-1 text-center">
+                                        <button onclick="finishShortlistVoting()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-1 shadow-lg text-sm">
+                                            Done
+                                        </button>
+                                        <span class="text-[11px] text-gray-500 leading-tight">Each tick and untick saves right away.</span>
+                                    </div>
+                                ` : allVoted ? `
                                     <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-1 shadow-lg text-sm">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -13195,6 +13342,16 @@
             ];
 
             const canSwitchTabs = !isPrivate || isAdmin || isCreator;
+            const isShortlistFmt = isShortlistFormat();
+            // Divisive and Average have no shortlist equivalent — greyed out like the private-results tabs
+            const shortlistDisabledTabs = ['divisive', 'byVoter'];
+
+            const shortlistSubtitleMap = {
+                average: 'Images ranked by how many voters shortlisted them',
+                pairs: 'Jaccard overlap between image shortlists',
+                count: 'Number of shortlisted images per user',
+                userVotes: 'Individual shortlists'
+            };
 
             const subtitleMap = {
                 average: 'Total votes from all participants',
@@ -13214,7 +13371,7 @@
                                 <h2 class="text-2xl font-bold text-gray-800">${title}</h2>
                             </div>
                             ${customHeaderContent}
-                            <p class="text-gray-600 text-sm mb-1">${subtitle || subtitleMap[state.resultsView] || ''}</p>
+                            <p class="text-gray-600 text-sm mb-1">${subtitle || (isShortlistFmt ? shortlistSubtitleMap : subtitleMap)[state.resultsView] || ''}</p>
                             <p class="text-xs text-gray-500">Click on any image to see the vote breakdown</p>
 
                             ${isPrivate ? `
@@ -13231,15 +13388,19 @@
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
                                 ${renderGlobalFilters()}
+                                ${renderResultsFormatSwitch()}
                                 <div class="flex items-center justify-center gap-1 max-w-full">
                                     <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:-120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll left" aria-label="Scroll tabs left">&#8249;</button>
                                     <div class="tabs-scroll-container flex items-center gap-1 overflow-x-auto flex-nowrap py-0.5">
-                                        ${tabs.map(tab => `
+                                        ${tabs.map(tab => {
+                                            const tabEnabled = canSwitchTabs && !(isShortlistFmt && shortlistDisabledTabs.includes(tab.key));
+                                            return `
                                             <button
-                                                ${canSwitchTabs ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
-                                                class="flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${canSwitchTabs ? '' : 'opacity-50 cursor-not-allowed'}"
+                                                ${tabEnabled ? `onclick="setResultsView('${tab.key}')"` : 'disabled'}
+                                                class="flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium ${state.resultsView === tab.key ? 'bg-mauve-400 text-white' : 'bg-gray-200'} ${tabEnabled ? '' : 'opacity-50 cursor-not-allowed'}"
                                             >${tab.label}</button>
-                                        `).join('')}
+                                        `;
+                                        }).join('')}
                                     </div>
                                     <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll right" aria-label="Scroll tabs right">&#8250;</button>
                                 </div>
@@ -13252,7 +13413,7 @@
 
                         ${renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator)}
                     </div>
-                    ${state.showBreakdownModal ? ((() => { const bv = state.breakdownModalView || (state.resultsView === 'divisive' ? 'divisive' : 'image'); return bv === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal(); })()) : ''}
+                    ${state.showBreakdownModal && isShortlistFmt ? renderShortlistBreakdownModal() : state.showBreakdownModal ? ((() => { const bv = state.breakdownModalView || (state.resultsView === 'divisive' ? 'divisive' : 'image'); return bv === 'divisive' ? renderDivisiveBreakdownModal() : renderBreakdownModal(); })()) : ''}
                     ${state.showPairsBreakdownModal ? renderPairsBreakdownModal() : ''}
                 </div>
             `;
@@ -13291,6 +13452,11 @@
                 `;
             }
 
+            // Shortlist format: comparison screens are rendered by the shortlist (Jaccard) views
+            if (isShortlistFormat() && state.resultsView === 'userVotes' && state.comparisonView && state.shortlistData) {
+                return renderShortlistComparisonScreen();
+            }
+
             // Handle comparison views for By User tab
             if (state.resultsView === 'userVotes' && state.comparisonView === 'table') {
                 return renderComparisonTable() + (state.showBreakdownModal ? renderBreakdownModal() : '');
@@ -13323,6 +13489,7 @@
         }
 
         function renderTabControls(isPrivate, isAdmin, isCreator) {
+            if (isShortlistFormat()) return renderShortlistTabControls(isPrivate, isAdmin, isCreator);
             let html = '';
 
             // Count tab: score selection + mode toggle
@@ -13391,6 +13558,7 @@
         }
 
         function renderTabContent(imageSize, fontSize, isPrivate, isAdmin, isCreator) {
+            if (isShortlistFormat()) return renderShortlistTabContent(imageSize, fontSize);
             switch (state.resultsView) {
                 case 'average': return renderTotalTab(imageSize, fontSize);
                 case 'divisive': return renderDivisiveTab(imageSize, fontSize);
@@ -13626,8 +13794,8 @@
             </div>`;
         }
 
-        function renderCountUsersMode(imageSize) {
-            const data = generateCountDataUsers();
+        function renderCountUsersMode(imageSize, dataOverride) {
+            const data = dataOverride || generateCountDataUsers();
             if (!data || data.sortedCounts.length === 0) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No users have given the selected score(s).</p></div>`;
             }
@@ -14878,6 +15046,7 @@
             const totalContests = state.adminStats.totalContests ?? state.contests.length;
             const totalVotes = state.adminStats.totalVotes;
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
+            const totalShortlists = state.adminStats.totalShortlists ?? 0;
             const totalBannedUsers = state.bannedUsers.length;
             const totalImages = state.adminStats.totalImages ?? state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
@@ -14909,7 +15078,7 @@
                                             📊 Recent Activity
                                         </button>
                                     </div>
-                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
                                             <div class="text-xs text-gray-600">Total Contests</div>
@@ -14917,6 +15086,10 @@
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-blue-600">${totalVotes}</div>
                                             <div class="text-xs text-gray-600">Total Votes</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-pink-600">${totalShortlists}</div>
+                                            <div class="text-xs text-gray-600">Total Shortlists</div>
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
@@ -15077,6 +15250,8 @@
                         return { bg: 'bg-purple-100', hover: 'hover:bg-purple-200', icon: '👤', text: 'Joined the app' };
                     case 'vote_completed':
                         return { bg: 'bg-yellow-50', hover: 'hover:bg-yellow-100', icon: '✅', text: 'Completed voting on' };
+                    case 'shortlist':
+                        return { bg: 'bg-orange-100', hover: 'hover:bg-orange-200', icon: '🔖', text: 'Made a shortlist for' };
                     default: // vote (partial)
                         return { bg: 'bg-gray-100', hover: 'hover:bg-gray-200', icon: '🗳️', text: 'Voted on' };
                 }
@@ -15216,6 +15391,7 @@
                                     >
                                         <option value="">All Actions</option>
                                         <option value="vote" ${state.activityFilterAction === 'vote' ? 'selected' : ''}>Voted On</option>
+                                        <option value="shortlist" ${state.activityFilterAction === 'shortlist' ? 'selected' : ''}>Shortlisted</option>
                                         <option value="created" ${state.activityFilterAction === 'created' ? 'selected' : ''}>Created</option>
                                         <option value="signup" ${state.activityFilterAction === 'signup' ? 'selected' : ''}>Joined</option>
                                     </select>
@@ -15272,7 +15448,7 @@
                                         return filteredLogs.map(log => {
                                         const style = getEventStyle(log.type);
                                         const isSignup = log.type === 'signup';
-                                        const isCreation = log.type !== 'vote' && log.type !== 'vote_completed' && log.type !== 'signup';
+                                        const isCreation = log.type !== 'vote' && log.type !== 'vote_completed' && log.type !== 'signup' && log.type !== 'shortlist';
                                         const itemName = isCreation ? log.itemName : log.contestTitle;
 
                                         return `
@@ -15296,7 +15472,7 @@
                                                             ${log.username}
                                                         </span>
                                                         <span class="text-gray-600">
-                                                            ${isSignup ? style.text.toLowerCase() : `${style.text.toLowerCase()}: <span class="font-medium">${itemName}</span>`}
+                                                            ${isSignup ? style.text.toLowerCase() : `${style.text.toLowerCase()}${log.type === 'shortlist' ? '' : ':'} <span class="font-medium">${itemName}</span>`}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -15501,6 +15677,11 @@
             const isPrivate = mergedContests.some(c => c.resultsPublic === false);
             const canViewPrivateResults = isAdmin || isCreator;
 
+            // Shortlist format: comparison screens are rendered by the shortlist (Jaccard) views
+            if (isShortlistFormat() && state.resultsView === 'userVotes' && state.comparisonView && state.shortlistData) {
+                return renderShortlistComparisonScreen();
+            }
+
             // Create results structure similar to single contest
             const mergedResultsData = images.map(img => ({
                 id: img.id,
@@ -15613,6 +15794,1586 @@
         }
 
 
+        // ==================== SHORTLIST VOTING FORMAT ====================
+        // A parallel voting format to classic 1-5 scoring, opted into per item (contest / merger / extract).
+        // A shortlist is simply the set of image_ids a user has a row for in `shortlists` (keyed by the image's
+        // origin contest_id, exactly like `votes`). No row = not shortlisted; nothing else is ever recorded.
+        //
+        // Auto-conversion (classic votes -> shortlist view = every image scored 4 or 5) is READ-ONLY and derived in
+        // memory only. The derived set is never written to `shortlists` on its own.
+
+        // Classic flows start from a clean shortlist state (format, session and any cached shortlist results)
+        function resetShortlistState() {
+            state.votingFormat = 'classic';
+            state.shortlistSession = null;
+            state.shortlistSelected = {};
+            state.shortlistFilter = [];
+            state.resultsFormat = 'classic';
+            state.resultsFormatKey = null;
+            state.shortlistData = null;
+        }
+
+        // ---------- Shared item helpers ----------
+
+        function getShortlistItem(itemType, itemId) {
+            if (itemType === 'contest') return state.contests.find(c => c.id === itemId);
+            if (itemType === 'merger') return state.mergers.find(m => m.id === itemId);
+            return state.extracts.find(e => e.id === itemId);
+        }
+
+        // Contest ids whose `votes` / `shortlists` rows belong to an item.
+        function getShortlistItemContestIds(itemType, item) {
+            if (!item) return [];
+            if (itemType === 'contest') return [item.id];
+            if (itemType === 'merger') return item.contestIds || [];
+            if (item.sourceType === 'contest') return item.sourceContestId ? [item.sourceContestId] : [];
+            if (item.sourceType === 'merger') {
+                const merger = state.mergers.find(m => m.id === item.sourceMergerId);
+                return merger ? (merger.contestIds || []) : [];
+            }
+            return [];
+        }
+
+        // True when the user has at least one row for the item in a { contestId: { imageId: ... } } map.
+        // Extracts only count rows on the extract's own images.
+        function userHasRowsFor(itemType, item, rowsByContest) {
+            const extractImageIds = itemType === 'extract' ? new Set(item.imageIds || []) : null;
+            return getShortlistItemContestIds(itemType, item).some(contestId => {
+                const rows = rowsByContest[contestId];
+                if (!rows) return false;
+                return Object.keys(rows).some(imageId => !extractImageIds || extractImageIds.has(parseInt(imageId)));
+            });
+        }
+
+        // ---------- Card buttons ----------
+
+        function isShortlistCard(itemType, itemId) {
+            return state.cardFormats[`${itemType}_${itemId}`] === 'shortlist';
+        }
+
+        // Per-card, local-only toggle between the classic and shortlist button sets.
+        function toggleCardFormat(itemType, itemId) {
+            const key = `${itemType}_${itemId}`;
+            if (state.cardFormats[key] === 'shortlist') {
+                delete state.cardFormats[key];
+            } else {
+                state.cardFormats[key] = 'shortlist';
+            }
+            render();
+        }
+
+        // Icon shows the format the card is currently displaying: ⭐️ = classic, 🔖 = shortlist.
+        function renderCardFormatToggle(itemType, itemId, isPinned = false) {
+            const showingShortlist = isShortlistCard(itemType, itemId);
+            const toggle = `
+                <button
+                    onclick="toggleCardFormat('${itemType}', '${itemId}')"
+                    class="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm flex items-center gap-1"
+                    title="${showingShortlist ? 'Showing shortlist voting (click for classic 1-5 voting)' : 'Showing classic 1-5 voting (click for shortlist voting)'}"
+                >
+                    ${showingShortlist ? '🔖' : '⭐️'}
+                </button>
+            `;
+            if (!shouldShowSpotlight(itemType, itemId, isPinned)) return toggle;
+            return `
+                <div class="relative">
+                    ${toggle}
+                    <div class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
+                        New: tap here to try Shortlist voting
+                        <button onclick="dismissSpotlight()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
+                        <div class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ---------- One-time spotlight on the card format toggle ----------
+
+        // First pinned contest or merger (extracts are skipped), in the same most-recent-first order the Pinned section uses.
+        function getSpotlightTarget() {
+            const pinned = [...state.pinnedItems].sort((a, b) => new Date(b.pinned_at) - new Date(a.pinned_at));
+            for (const p of pinned) {
+                if (p.item_type === 'contest' && state.contests.some(c => c.id === p.item_id)) return { type: 'contest', id: p.item_id };
+                if (p.item_type === 'merger' && state.mergers.some(m => m.id === p.item_id)) return { type: 'merger', id: p.item_id };
+            }
+            return null;
+        }
+
+        // True while the callout should be drawn on this card. The "seen" flag is stored the moment it is first drawn,
+        // so it shows once per user ever; the X only hides it for the rest of this page view.
+        function shouldShowSpotlight(itemType, itemId, isPinned) {
+            if (!isPinned || !state.user || state.spotlightDismissed) return false;
+            const target = getSpotlightTarget();
+            if (!target || target.type !== itemType || target.id !== itemId) return false;
+            if (state.spotlightActive) return true;
+            const storageKey = `peony_shortlist_spotlight_seen_${state.user.id}`;
+            try {
+                if (localStorage.getItem(storageKey)) return false;
+                localStorage.setItem(storageKey, '1');
+            } catch (e) {
+                return false;   // cannot remember it, so do not risk showing it every visit
+            }
+            state.spotlightActive = true;
+            return true;
+        }
+
+        function dismissSpotlight() {
+            state.spotlightDismissed = true;
+            render();
+        }
+
+        // ---------- Recovery modals (expired login / broken avatar link) ----------
+
+        const NOTICE_MODALS = {
+            auth: {
+                title: 'Your session needs a refresh',
+                intro: "Login sessions expire after a while, and sometimes the app doesn't catch it automatically. Here's the fix:"
+            },
+            avatar: {
+                title: "Your profile picture isn't loading",
+                intro: "This usually happens when you've updated your Discord profile picture since you last logged in here - the old link stops working, so you might see a 👻 placeholder in the meantime. A quick re-login refreshes it:"
+            }
+        };
+
+        function showNoticeModal(kind) {
+            if (!state.isLoggedIn || state.noticeModal) return;
+            if (kind === 'auth' && state.authModalDismissed) return;
+            state.noticeModal = { kind };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function closeNoticeModal() {
+            if (state.noticeModal && state.noticeModal.kind === 'auth') state.authModalDismissed = true;
+            state.noticeModal = null;
+            document.body.classList.remove('modal-open');
+            render();
+        }
+
+        function markAvatarBroken(url) {
+            if (!url || state.brokenAvatarUrl === url) return;
+            state.brokenAvatarUrl = url;
+            setTimeout(render, 0);
+        }
+
+        // Same overlay / card structure as renderModal, with the app's existing yellow warning box (theme-aware).
+        function renderNoticeModal() {
+            if (!state.noticeModal) return '';
+            const content = NOTICE_MODALS[state.noticeModal.kind];
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-center justify-center z-[80] p-4" onclick="event.target === this && closeNoticeModal()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 modal-content" onclick="event.stopPropagation()">
+                        <div class="text-center mb-4">
+                            <div class="text-5xl mb-2">⚠️</div>
+                            <h3 class="text-xl font-bold text-gray-800">${content.title}</h3>
+                        </div>
+                        <div class="bg-yellow-50 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-sm mb-4">
+                            <p>${content.intro}</p>
+                            <ol class="list-decimal ml-5 mt-2 space-y-1">
+                                <li>Log out</li>
+                                <li>Refresh the page</li>
+                                <li>Log back in</li>
+                            </ol>
+                        </div>
+                        <div class="flex justify-center">
+                            <button onclick="closeNoticeModal()" class="px-5 py-2 rounded-lg font-semibold transition text-sm bg-gradient-to-r from-mauve-400 to-mauve-600 text-white hover:from-mauve-500 hover:to-mauve-700">Got it</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Make / Edit / Auto-Generate Shortlist, driven by (voted classically?) x (has a real shortlist?).
+        function renderShortlistCardButton(itemType, item) {
+            const hasVotes = userHasRowsFor(itemType, item, state.userVotedContests);
+            const hasShortlist = userHasRowsFor(itemType, item, state.userShortlists);
+            const makeClass = 'flex-1 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white py-2 rounded-lg font-semibold hover:from-mauve-500 hover:to-mauve-700 transition shadow-md text-sm';
+            const editClass = 'flex-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white py-2 rounded-lg font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md text-sm';
+
+            if (hasShortlist) {
+                return `<button onclick="startShortlistVoting('${itemType}', '${item.id}', 'existing')" class="${editClass}">Edit Shortlist</button>`;
+            }
+            if (hasVotes) {
+                return `<button onclick="showAutoGenerateShortlistModal('${itemType}', '${item.id}')" class="${editClass}">Auto-Generate Shortlist</button>`;
+            }
+            return `<button onclick="startShortlistVoting('${itemType}', '${item.id}', 'empty')" class="${makeClass}">Make a Shortlist</button>`;
+        }
+
+        // ---------- Loading rows ----------
+
+        // Paginated like fetchAllVotesPaginated (2000 row DB limit). Ordered by the composite key for stable paging.
+        async function fetchAllShortlistsPaginated(filterQuery, selectFields) {
+            let all = [];
+            let offset = 0;
+            const limit = 2000;
+            while (true) {
+                const response = await fetchFromSupabase(
+                    `/rest/v1/shortlists?${filterQuery}&order=user_id.asc,image_id.asc&limit=${limit}&offset=${offset}&select=${selectFields}`
+                );
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch shortlists: ${response.statusText}`);
+                }
+                const batch = await response.json();
+                if (!Array.isArray(batch)) break;
+                all = all.concat(batch);
+                if (batch.length < limit) break;
+                offset += limit;
+            }
+            return all;
+        }
+
+        // The current user's real shortlist rows, by contest. Drives the Make / Edit / Auto-Generate card buttons.
+        async function loadUserShortlists() {
+            if (!state.user) return;
+            try {
+                const rows = await fetchAllShortlistsPaginated(`user_id=eq.${state.user.id}`, 'contest_id,image_id');
+                const byContest = {};
+                rows.forEach(row => {
+                    if (!byContest[row.contest_id]) byContest[row.contest_id] = {};
+                    byContest[row.contest_id][row.image_id] = true;
+                });
+                state.userShortlists = byContest;
+            } catch (error) {
+                console.error('Error loading user shortlists:', error);
+            }
+        }
+
+        // ---------- Starting a shortlist voting session ----------
+
+        // Same image -> contest_id resolution as the classic submit (confirmSubmitVotes): merger voting looks the
+        // image up in the merger's contests (falling back to the first); extract voting uses the source contest or,
+        // for merger-sourced extracts, the owning contest inside the source merger.
+        function resolveShortlistContestId(itemType, item, imageId, contestIds) {
+            if (itemType === 'contest') return item.id;
+            if (itemType === 'merger') {
+                const contest = state.contests.find(c => contestIds.includes(c.id) && c.images.some(i => i.id === imageId));
+                return contest ? contest.id : contestIds[0];
+            }
+            if (item.sourceType === 'contest') return item.sourceContestId;
+            const merger = state.mergers.find(m => m.id === item.sourceMergerId);
+            if (!merger) return undefined;
+            const contest = state.contests.find(c => merger.contestIds.includes(c.id) && c.images.some(i => i.id === imageId));
+            return contest ? contest.id : merger.contestIds[0];
+        }
+
+        async function buildShortlistContext(itemType, itemId) {
+            const item = getShortlistItem(itemType, itemId);
+            if (!item) {
+                showAlert('This item could not be found.', '❌');
+                return null;
+            }
+            if (item.isLocked) {
+                showAlert('This is locked, so shortlists can no longer be changed.', '🔒');
+                return null;
+            }
+            if (itemType === 'extract' && item.sourceType !== 'contest' && item.sourceType !== 'merger') {
+                showAlert('Shortlists are not available for this extract.', '❌');
+                return null;
+            }
+
+            let contestIds = getShortlistItemContestIds(itemType, item);
+            await Promise.all(contestIds.map(contestId => loadContestImages(contestId)));
+
+            let images = [];
+            if (itemType === 'contest') {
+                images = item.images || [];
+            } else if (itemType === 'merger') {
+                // Locked contests inside a merger are skipped, as in classic merger voting
+                const unlocked = state.contests.filter(c => contestIds.includes(c.id) && !c.isLocked);
+                if (unlocked.length === 0) {
+                    showAlert('All contests in this merger are locked.', '🔒');
+                    return null;
+                }
+                contestIds = unlocked.map(c => c.id);
+                images = unlocked.flatMap(c => c.images);
+            } else {
+                const extractImageIds = new Set(item.imageIds || []);
+                images = state.contests
+                    .filter(c => contestIds.includes(c.id))
+                    .flatMap(c => c.images)
+                    .filter(img => extractImageIds.has(img.id));
+            }
+
+            const contestByImage = {};
+            images.forEach(img => {
+                const contestId = resolveShortlistContestId(itemType, item, img.id, contestIds);
+                if (contestId !== undefined) contestByImage[img.id] = contestId;
+            });
+            images = images.filter(img => contestByImage[img.id] !== undefined);
+
+            if (images.length === 0) {
+                showAlert('There are no images to shortlist here.', '❌');
+                return null;
+            }
+
+            return {
+                item,
+                title: itemType === 'contest' ? item.title : item.name,
+                images,
+                contestIds,
+                contestByImage
+            };
+        }
+
+        // mode: 'empty'    -> nothing pre-checked (Make a Shortlist / Start Fresh)
+        //       'existing' -> pre-check the user's real `shortlists` rows (Edit Shortlist)
+        //       'auto'     -> check images the user scored 4 or 5 (Auto-Generate Shortlist > Preload) and save them
+        //                     as real rows immediately, so the screen never shows checks that are not stored
+        // After that, rows are written one toggle at a time as the user changes things.
+        async function startShortlistVoting(itemType, itemId, mode = 'empty') {
+            if (!state.user) return;
+            state.modal = null;
+            state.pendingShortlistItem = null;
+            document.body.classList.remove('modal-open');
+            setLoading(mode === 'auto' ? 'Loading your previous votes...' : 'Loading your shortlist...');
+
+            try {
+                const ctx = await buildShortlistContext(itemType, itemId);
+                if (!ctx) {
+                    clearLoading();
+                    return;
+                }
+
+                const imageIdSet = new Set(ctx.images.map(img => img.id));
+                const userContestFilter = `contest_id=in.(${ctx.contestIds.join(',')})&user_id=eq.${state.user.id}`;
+
+                // Always read the real rows first so toggles never double-insert. If rows already exist (stale card),
+                // the real shortlist wins over 'empty' / 'auto' so nothing is silently overwritten.
+                const realRows = await fetchAllShortlistsPaginated(userContestFilter, 'image_id,contest_id');
+                const selected = {};
+                const persisted = {};
+
+                ctx.contestIds.forEach(contestId => { delete state.userShortlists[contestId]; });
+                realRows.forEach(row => {
+                    if (!state.userShortlists[row.contest_id]) state.userShortlists[row.contest_id] = {};
+                    state.userShortlists[row.contest_id][row.image_id] = true;
+                    if (imageIdSet.has(row.image_id)) {
+                        selected[row.image_id] = true;
+                        persisted[row.image_id] = true;
+                    }
+                });
+
+                if (realRows.length === 0 && mode === 'auto') {
+                    // Read-only derivation from classic votes (paginated like confirmRevoteWithPrefill)
+                    const votes = await fetchAllVotesPaginated(userContestFilter, 'image_id,score');
+                    votes.forEach(vote => {
+                        if (vote.score >= 4 && imageIdSet.has(vote.image_id)) selected[vote.image_id] = true;
+                    });
+                }
+
+                const session = {
+                    itemType,
+                    itemId,
+                    title: ctx.title,
+                    contestIds: ctx.contestIds,
+                    contestByImage: ctx.contestByImage,
+                    selected,
+                    persisted
+                };
+
+                // Auto-generate: save the whole auto-converted set right now, so every checked box on screen is
+                // already a real row. If this fails nothing is shown, so the screen never claims unsaved picks.
+                const autoImageIds = Object.keys(selected).map(Number);
+                if (mode === 'auto' && realRows.length === 0 && autoImageIds.length > 0) {
+                    await insertShortlistRows(session, autoImageIds);
+                }
+
+                clearTimeout(autoSaveTimer);
+                state.votingFormat = 'shortlist';
+                state.shortlistSession = session;
+                state.shortlistSelected = selected;
+                state.shortlistFilter = [];
+                state.shuffledImages = shuffleArray(ctx.images);
+                state.votes = {};
+                state.currentImageIndex = 0;
+                state.hasSubmitted = false;
+                state.results = null;
+                state.selectedScore = null;
+                state.multiModeFilter = [];
+                state.lastClickedImageId = null;
+                state.autosaveContext = { type: null, id: null };   // no autosave / drafts for shortlists
+
+                if (itemType === 'merger') {
+                    state.currentMergerId = itemId;
+                    state.mergerContestIds = ctx.contestIds;
+                    state.currentContest = null;
+                } else {
+                    state.currentMergerId = null;
+                    state.mergerContestIds = [];
+                    state.currentContest = itemType === 'contest'
+                        ? ctx.item
+                        : { id: itemId, title: ctx.title, images: ctx.images, isExtract: true, createdBy: ctx.item.createdBy };
+                }
+
+                state.votingMode = localStorage.getItem('peony_voting_mode') || 'single';
+                state.view = 'vote';
+                state.isLoading = false;
+                state.loadingMessage = '';
+
+                if (state.votingMode === 'multi') {
+                    state.isLoadingMultiModeImages = true;
+                    state.multiModeLoadedImages = 0;
+                    state.multiModeTotalImages = state.shuffledImages.length;
+                    render();
+                    loadImagesWithTracking(state.shuffledImages);
+                } else {
+                    state.isTransitioningVotingMode = true;
+                    render();
+                    setTimeout(() => {
+                        state.isTransitioningVotingMode = false;
+                        render();
+                    }, 400);
+                }
+
+                if (mode === 'auto' && autoImageIds.length > 0 && realRows.length === 0) {
+                    showToast(`Auto-generated shortlist saved (${autoImageIds.length} images with scores 4-5).`, '🔖');
+                }
+            } catch (error) {
+                console.error('Error starting shortlist voting:', error);
+                clearLoading();
+                showAlert('Failed to load your shortlist: ' + error.message, '❌');
+            }
+        }
+
+        // "Auto-Generate Shortlist": the user voted classically but has no real shortlist yet.
+        function showAutoGenerateShortlistModal(itemType, itemId) {
+            state.pendingShortlistItem = { itemType, itemId };
+            state.modal = {
+                type: 'confirm',
+                icon: '🔖',
+                message: 'How would you like to start your shortlist?',
+                buttons: [
+                    { text: 'Cancel', action: 'closeModal', primary: false },
+                    { text: 'Start Fresh', action: 'confirmAutoGenerateShortlistFresh', primary: true },
+                    { text: 'Preload the Auto-Converted Shortlist', action: 'confirmAutoGenerateShortlistPreload', primary: false, color: 'blue' }
+                ]
+            };
+            document.body.classList.add('modal-open');
+            render();
+        }
+
+        function confirmAutoGenerateShortlistFresh() {
+            const pending = state.pendingShortlistItem;
+            if (!pending) return closeModal();
+            startShortlistVoting(pending.itemType, pending.itemId, 'empty');
+        }
+
+        function confirmAutoGenerateShortlistPreload() {
+            const pending = state.pendingShortlistItem;
+            if (!pending) return closeModal();
+            startShortlistVoting(pending.itemType, pending.itemId, 'auto');
+        }
+
+        // ---------- Toggling (immediate write per toggle) ----------
+
+        // Writes are chained so rapid toggles reach the database in order.
+        let shortlistWriteChain = Promise.resolve();
+
+        function toggleShortlistImage(imageId) {
+            if (!state.shortlistSession) return;
+            applyShortlistChange(imageId, !state.shortlistSession.selected[imageId]);
+        }
+
+        function applyShortlistChange(imageId, shouldShortlist, skipRender = false) {
+            const session = state.shortlistSession;
+            if (!session) return;
+            if (shouldShortlist) {
+                session.selected[imageId] = true;
+            } else {
+                delete session.selected[imageId];
+            }
+            state.lastClickedImageId = imageId;
+            if (!skipRender) render();
+            shortlistWriteChain = shortlistWriteChain
+                .then(() => syncShortlistImage(session, imageId))
+                .catch(() => {});
+        }
+
+        async function insertShortlistRows(session, imageIds) {
+            const rows = imageIds
+                .map(imageId => ({ user_id: state.user.id, image_id: imageId, contest_id: session.contestByImage[imageId] }))
+                .filter(row => row.contest_id !== undefined);
+            if (rows.length === 0) return;
+            const response = await fetchFromSupabase('/rest/v1/shortlists', {
+                method: 'POST',
+                headers: { 'Prefer': 'return=minimal' },
+                body: JSON.stringify(rows)
+            });
+            if (!response.ok) {
+                throw new Error('Shortlist insert failed: ' + await response.text());
+            }
+            rows.forEach(row => {
+                session.persisted[row.image_id] = true;
+                if (!state.userShortlists[row.contest_id]) state.userShortlists[row.contest_id] = {};
+                state.userShortlists[row.contest_id][row.image_id] = true;
+            });
+            state.shortlistData = null;
+        }
+
+        async function deleteShortlistRow(session, imageId) {
+            const contestId = session.contestByImage[imageId];
+            const response = await fetchFromSupabase(
+                `/rest/v1/shortlists?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&image_id=eq.${imageId}`,
+                { method: 'DELETE', headers: { 'Prefer': 'return=minimal' } }
+            );
+            if (!response.ok) {
+                throw new Error('Shortlist delete failed: ' + await response.text());
+            }
+            delete session.persisted[imageId];
+            if (state.userShortlists[contestId]) {
+                delete state.userShortlists[contestId][imageId];
+                if (Object.keys(state.userShortlists[contestId]).length === 0) delete state.userShortlists[contestId];
+            }
+            state.shortlistData = null;
+        }
+
+        // Reconcile one image with the database: insert when newly checked, delete when unchecked.
+        async function syncShortlistImage(session, imageId) {
+            const want = !!session.selected[imageId];
+            try {
+                if (want && !session.persisted[imageId]) {
+                    await insertShortlistRows(session, [imageId]);
+                }
+                if (!want && session.persisted[imageId]) {
+                    await deleteShortlistRow(session, imageId);
+                }
+            } catch (error) {
+                console.error('Shortlist save failed:', error);
+                // Roll the local toggle back to what is actually stored
+                if (session.persisted[imageId]) {
+                    session.selected[imageId] = true;
+                } else {
+                    delete session.selected[imageId];
+                }
+                if (state.shortlistSession === session) {
+                    render();
+                    showToast('Could not save that shortlist change. Please try again.', '❌');
+                }
+            }
+        }
+
+        // Single mode: swipe right / Yes = shortlist and advance; swipe left / No = skip and advance.
+        // No never writes a rejection — it only removes the image if it was already on the shortlist (an edit).
+        function handleShortlistYes() {
+            if (!state.shortlistSession) return;
+            const image = state.shuffledImages[state.currentImageIndex];
+            if (!image) return;
+            if (!state.shortlistSession.selected[image.id]) applyShortlistChange(image.id, true, true);
+            advanceShortlistImage();
+        }
+
+        function handleShortlistNo() {
+            if (!state.shortlistSession) return;
+            const image = state.shuffledImages[state.currentImageIndex];
+            if (!image) return;
+            if (state.shortlistSession.selected[image.id]) applyShortlistChange(image.id, false, true);
+            advanceShortlistImage();
+        }
+
+        function advanceShortlistImage() {
+            if (state.currentImageIndex < state.shuffledImages.length - 1) {
+                state.currentImageIndex++;
+            }
+            render();
+        }
+
+        function setShortlistFilter(bucket) {
+            const index = state.shortlistFilter.indexOf(bucket);
+            if (index > -1) {
+                state.shortlistFilter.splice(index, 1);
+            } else {
+                state.shortlistFilter.push(bucket);
+            }
+            render();
+        }
+
+        // Swipe gestures on the single-mode image (touch and mouse drag). Right = Yes, left = No.
+        (function installShortlistSwipe() {
+            let start = null;
+            const MIN_DISTANCE = 60;
+
+            const begin = (x, y, target) => {
+                const zone = target && target.closest ? target.closest('[data-shortlist-swipe]') : null;
+                start = zone ? { x, y, time: Date.now() } : null;
+            };
+            const finish = (x, y) => {
+                if (!start) return;
+                const dx = x - start.x;
+                const dy = y - start.y;
+                const elapsed = Date.now() - start.time;
+                start = null;
+                if (state.view !== 'vote' || state.votingFormat !== 'shortlist' || state.votingMode !== 'single') return;
+                if (Math.abs(dx) < MIN_DISTANCE || Math.abs(dx) < Math.abs(dy) * 1.5 || elapsed > 1000) return;
+                if (dx > 0) handleShortlistYes(); else handleShortlistNo();
+            };
+
+            document.addEventListener('touchstart', e => {
+                const touch = e.changedTouches[0];
+                begin(touch.clientX, touch.clientY, e.target);
+            }, { passive: true });
+            document.addEventListener('touchend', e => {
+                const touch = e.changedTouches[0];
+                finish(touch.clientX, touch.clientY);
+            }, { passive: true });
+            document.addEventListener('touchcancel', () => { start = null; }, { passive: true });
+            document.addEventListener('mousedown', e => { if (e.button === 0) begin(e.clientX, e.clientY, e.target); });
+            document.addEventListener('mouseup', e => finish(e.clientX, e.clientY));
+        })();
+
+        // ---------- Voting screen pieces (used by the shared single / multi views) ----------
+
+        // Same checkbox treatment as the extract-creation image picker; checked = the score-5 green.
+        function renderShortlistCheckbox(isChecked) {
+            if (isChecked) {
+                return `
+                    <div class="absolute top-2 left-2 rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2" style="background-color: ${getScoreColor(5)}; border-color: ${getScoreColor(5)};">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                        </svg>
+                    </div>
+                `;
+            }
+            return `
+                <div class="absolute top-2 left-2 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-gray-300">
+                    <div class="w-4 h-4 border-2 border-gray-400 rounded"></div>
+                </div>
+            `;
+        }
+
+        // Two filter buckets instead of five: gray = not shortlisted, green = shortlisted (click to isolate, click again to clear).
+        function renderShortlistMultiFilter() {
+            const buckets = [
+                { key: 'unshortlisted', color: '#9ca3af', title: 'Show images that are not shortlisted' },
+                { key: 'shortlisted', color: getScoreColor(5), title: 'Show shortlisted images' }
+            ];
+            return `
+                <div class="flex-1 min-w-0">
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
+                    <div class="flex flex-wrap gap-2">
+                        ${buckets.map(bucket => {
+                            const isSelected = state.shortlistFilter.includes(bucket.key);
+                            return `
+                                <button
+                                    onclick="setShortlistFilter('${bucket.key}')"
+                                    class="w-7 h-7 rounded-full transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                    style="background-color: ${bucket.color};"
+                                    title="${bucket.title}"
+                                ></button>
+                            `;
+                        }).join('')}
+                    </div>
+                    ${state.shortlistFilter.length > 0
+                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.shortlistFilter.map(f => f === 'shortlisted' ? 'shortlisted' : 'not shortlisted').join(', ')}. Click again to remove.</p>`
+                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only shortlisted or not shortlisted images.</p>`
+                    }
+                </div>
+            `;
+        }
+
+        function renderShortlistMultiBottomPanel(shortlistedCount, totalCount) {
+            return `
+                <div class="flex items-center justify-between gap-4">
+                    <span class="text-sm text-gray-600 font-medium">
+                        Click images to add or remove them from your shortlist
+                        <span class="font-bold" style="color: ${getScoreColor(5)};">(${shortlistedCount}/${totalCount})</span>
+                    </span>
+                    <div class="flex flex-col items-end gap-1 flex-shrink-0">
+                        <button onclick="finishShortlistVoting()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg whitespace-nowrap">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Done
+                        </button>
+                        <span class="text-xs text-gray-500 leading-tight">Each tick and untick saves right away.</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderShortlistYesNoButtons(isShortlisted) {
+            return `
+                <div class="flex justify-center gap-3 mb-1">
+                    <button
+                        onclick="handleShortlistNo()"
+                        class="flex-1 max-w-[10rem] py-3 rounded-xl font-bold text-white text-base shadow-lg hover:scale-105 transition-transform"
+                        style="background-color: ${getScoreColor(1)};"
+                    >No</button>
+                    <button
+                        onclick="handleShortlistYes()"
+                        class="flex-1 max-w-[10rem] py-3 rounded-xl font-bold text-white text-base shadow-lg hover:scale-105 transition-transform ${isShortlisted ? 'ring-4 ring-offset-2' : ''}"
+                        style="background-color: ${getScoreColor(5)};"
+                    >Yes</button>
+                </div>
+                <p class="text-center text-xs text-gray-500 mb-3">Swipe right for Yes, left for No</p>
+            `;
+        }
+
+        // ---------- Leaving the voting screen ----------
+
+        // Refreshes the shortlist_count shown on cards (maintained by a DB trigger) once pending writes have landed.
+        async function refreshShortlistCounts(session) {
+            try {
+                await shortlistWriteChain;
+                const jobs = [];
+                if (session.contestIds.length > 0) {
+                    jobs.push(
+                        fetchFromSupabase(`/rest/v1/contests?id=in.(${session.contestIds.join(',')})&select=id,shortlist_count`)
+                            .then(r => r.ok ? r.json() : [])
+                            .then(rows => rows.forEach(row => {
+                                const contest = state.contests.find(c => c.id === row.id);
+                                if (contest) contest.shortlistCount = row.shortlist_count ?? 0;
+                            }))
+                    );
+                }
+                if (session.itemType !== 'contest') {
+                    const table = session.itemType === 'merger' ? 'mergers' : 'extracts';
+                    jobs.push(
+                        fetchFromSupabase(`/rest/v1/${table}?id=eq.${session.itemId}&select=id,shortlist_count`)
+                            .then(r => r.ok ? r.json() : [])
+                            .then(rows => rows.forEach(row => {
+                                const item = getShortlistItem(session.itemType, row.id);
+                                if (item) item.shortlistCount = row.shortlist_count ?? 0;
+                            }))
+                    );
+                }
+                await Promise.all(jobs);
+                if (!state.isLoading) render();
+            } catch (_) {
+                // count refresh is cosmetic
+            }
+        }
+
+        // Clears the shortlist session. Nothing is pending (every toggle saved immediately), so no draft prompt.
+        function exitShortlistVoting() {
+            const session = state.shortlistSession;
+            resetShortlistState();
+            state.shortlistSelected = {};
+            state.shortlistFilter = [];
+            state.hasSubmitted = true;
+            state.shortlistData = null;
+            if (session) refreshShortlistCounts(session);
+            return session;
+        }
+
+        async function finishShortlistVoting() {
+            const session = state.shortlistSession;
+            if (!session) return;
+            setLoading('Saving your shortlist...');
+            try { await shortlistWriteChain; } catch (_) { /* individual failures already rolled back */ }
+            exitShortlistVoting();
+
+            try {
+                if (session.itemType === 'contest') {
+                    const contest = state.contests.find(c => c.id === session.itemId);
+                    if (contest) await viewResults(contest);
+                } else if (session.itemType === 'merger') {
+                    await viewMergerResults(session.itemId);
+                } else {
+                    await viewExtractResults(session.itemId);
+                }
+            } catch (error) {
+                console.error('Error opening results after shortlist:', error);
+            }
+
+            if (state.view === 'vote') {
+                // Results are not viewable for this user (e.g. private results) — just go home
+                state.view = 'home';
+                state.currentContest = null;
+                window.location.hash = '';
+            } else {
+                state.resultsFormat = 'shortlist';
+                state.resultsFormatKey = getShortlistScopeKey();
+                await loadShortlistData();
+            }
+            clearLoading();
+        }
+
+        // ==================== SHORTLIST RESULTS ====================
+
+        // Identifies the open results page so cached shortlist data and the format switch never leak between pages.
+        function getShortlistScopeKey() {
+            if (state.view === 'mergedResults') return state.currentMergerId ? `merger:${state.currentMergerId}` : null;
+            if (state.view === 'results' && state.currentContest) {
+                return `${state.currentContest.isExtract ? 'extract' : 'contest'}:${state.currentContest.id}`;
+            }
+            return null;
+        }
+
+        function isShortlistFormat() {
+            if (state.resultsFormat !== 'shortlist') return false;
+            const key = getShortlistScopeKey();
+            return key !== null && key === state.resultsFormatKey;
+        }
+
+        // Contests whose rows are in scope plus the images shown. Merger = union over its contest_ids;
+        // extract = source contest(s) filtered to the extract's image_ids.
+        function getShortlistScope() {
+            if (state.view === 'mergedResults') {
+                const merged = state.mergedResults;
+                if (!merged) return null;
+                return {
+                    contestIds: merged.contestIds,
+                    images: merged.images.map(img => ({ id: img.id, url: img.url, contestId: img.contestId }))
+                };
+            }
+            const contest = state.currentContest;
+            if (!contest) return null;
+            if (contest.isExtract) {
+                let contestIds = [];
+                if (contest.extractSourceType === 'contest') {
+                    contestIds = contest.extractSourceContestId ? [contest.extractSourceContestId] : [];
+                } else if (contest.extractSourceType === 'merger') {
+                    const merger = state.mergers.find(m => m.id === contest.extractSourceMergerId);
+                    contestIds = merger ? merger.contestIds : [];
+                }
+                const extractImageIds = new Set(contest.extractImageIds || []);
+                const images = [];
+                contestIds.forEach(contestId => {
+                    const source = state.contests.find(c => c.id === contestId);
+                    (source?.images || []).forEach(img => {
+                        if (extractImageIds.has(img.id)) images.push({ id: img.id, url: img.url, contestId });
+                    });
+                });
+                return { contestIds, images };
+            }
+            return {
+                contestIds: [contest.id],
+                images: (contest.images || []).map(img => ({ id: img.id, url: img.url, contestId: contest.id }))
+            };
+        }
+
+        // Classic votes already in memory for the open results page (no extra request).
+        function collectClassicVotesForShortlist(scope) {
+            const votes = [];
+            if (state.view === 'mergedResults') {
+                (state.mergedResults?.images || []).forEach(img => {
+                    (img.voteBreakdown || []).forEach(v => votes.push({ ...v, imageId: img.id, contestId: img.contestId }));
+                });
+            } else {
+                const contestOfImage = new Map(scope.images.map(img => [img.id, img.contestId]));
+                (state.results || []).forEach(img => {
+                    (img.breakdown || []).forEach(v => votes.push({ ...v, imageId: img.id, contestId: contestOfImage.get(img.id) }));
+                });
+            }
+            return votes;
+        }
+
+        // Real `shortlists` rows + auto-converted classic votes, computed once per results page and cached.
+        function buildShortlistData(key, scope, rows) {
+            const imageContest = new Map(scope.images.map(img => [img.id, img.contestId]));
+            const voters = {};
+            const ensureVoter = (userId, username, avatar) => {
+                if (!voters[userId]) {
+                    voters[userId] = {
+                        userId, username, avatar,
+                        images: new Set(),          // image ids in this user's shortlist (real or auto-converted)
+                        scoreByImage: new Map(),    // classic scores, only for contests represented via auto-conversion
+                        contests: new Set()         // contests this user is represented in
+                    };
+                }
+                return voters[userId];
+            };
+
+            // A user "has a real shortlist" per contest, regardless of which images it covers
+            const hasRealShortlist = new Set();
+            rows.forEach(row => {
+                const user = row.users;
+                if (!user || user.is_banned) return;
+                hasRealShortlist.add(`${row.user_id}|${row.contest_id}`);
+                if (!imageContest.has(row.image_id)) return;
+                const voter = ensureVoter(row.user_id, user.username, user.avatar);
+                voter.images.add(row.image_id);
+                voter.contests.add(row.contest_id);
+            });
+
+            // Classic voters without a real shortlist in that contest: derive 4/5 -> shortlisted (in memory only)
+            collectClassicVotesForShortlist(scope).forEach(vote => {
+                if (vote.isBanned || vote.isBlocked || vote.contestId === undefined) return;
+                const voter = ensureVoter(vote.userId, vote.username, vote.avatar);
+                voter.contests.add(vote.contestId);
+                if (hasRealShortlist.has(`${vote.userId}|${vote.contestId}`)) return;
+                voter.scoreByImage.set(vote.imageId, vote.score);
+                if (vote.score >= 4) voter.images.add(vote.imageId);
+            });
+
+            return { key, images: scope.images, imageContest, voters };
+        }
+
+        async function loadShortlistData(force = false) {
+            const key = getShortlistScopeKey();
+            const scope = getShortlistScope();
+            if (!key || !scope) return;
+            if (!force && state.shortlistData && state.shortlistData.key === key) return;
+
+            setLoading('Loading shortlists...');
+            try {
+                const rows = scope.contestIds.length > 0
+                    ? await fetchAllShortlistsPaginated(
+                        `contest_id=in.(${scope.contestIds.join(',')})`,
+                        'user_id,image_id,contest_id,users!inner(id,username,avatar,is_banned)'
+                    )
+                    : [];
+                state.shortlistData = buildShortlistData(key, scope, rows);
+            } catch (error) {
+                console.error('Error loading shortlist results:', error);
+                state.shortlistData = null;
+                showAlert('Error loading shortlists: ' + error.message, '❌');
+            } finally {
+                clearLoading();
+            }
+        }
+
+        async function setResultsFormat(format) {
+            if ((format === 'shortlist') === isShortlistFormat()) return;
+            state.showBreakdownModal = null;
+            state.breakdownModalView = null;
+            document.body.classList.remove('modal-open');
+            state.comparisonView = null;
+            state.comparisonDetailUserId = null;
+            state.comparisonDetailCollapsed = {};
+            state.userFilterDropdownOpen = false;
+            state.averageTabCompareAll = false;
+            state.averageTabCompareUserId = null;
+
+            if (format === 'shortlist') {
+                state.resultsFormat = 'shortlist';
+                state.resultsFormatKey = getShortlistScopeKey();
+                // Divisive and Average do not exist for shortlists
+                if (state.resultsView === 'divisive' || state.resultsView === 'byVoter') {
+                    state.resultsView = 'average';
+                    state.showMyVotes = false;
+                }
+                await loadShortlistData();
+                const view = getShortlistView();
+                if (state.selectedVoterUserId && view && !view.voterMap.has(state.selectedVoterUserId)) {
+                    state.selectedVoterUserId = null;
+                }
+            } else {
+                state.resultsFormat = 'classic';
+                state.resultsFormatKey = null;
+                if (state.selectedVoterUserId && !state.contestVoters.some(v => v.userId === state.selectedVoterUserId)) {
+                    state.selectedVoterUserId = null;
+                }
+            }
+            render();
+        }
+
+        function renderResultsFormatSwitch() {
+            const isShortlist = isShortlistFormat();
+            return `
+                <div class="flex items-center justify-center gap-2">
+                    <label class="text-xs font-medium text-gray-700">Voting Format:</label>
+                    <button onclick="setResultsFormat('classic')" class="px-3 py-1 rounded-lg text-xs font-medium ${!isShortlist ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Classic ⭐️</button>
+                    <button onclick="setResultsFormat('shortlist')" class="px-3 py-1 rounded-lg text-xs font-medium ${isShortlist ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Shortlist 🔖</button>
+                </div>
+            `;
+        }
+
+        // Mirrors the private-results rules of the classic page: only the creator / admin see other people's data.
+        function isShortlistRestricted() {
+            if (!state.user || state.user.id === ADMIN_DISCORD_ID) return false;
+            if (state.view === 'mergedResults') {
+                const merger = state.mergers.find(m => m.id === state.currentMergerId);
+                if (merger && merger.createdBy === state.user.id) return false;
+                const contestIds = state.mergedResults?.contestIds || [];
+                return state.contests.some(c => contestIds.includes(c.id) && c.resultsPublic === false);
+            }
+            const contest = state.currentContest;
+            if (!contest) return false;
+            return contest.resultsPublic === false && contest.createdBy !== state.user.id;
+        }
+
+        // The data set the shortlist tabs render: real + auto-converted voters after the user filter / privacy rules.
+        function getShortlistView() {
+            const data = state.shortlistData;
+            if (!data) return null;
+
+            let allowed = null;
+            if (isShortlistRestricted()) allowed = new Set([state.user.id]);
+            const userFilter = getFilteredUserIds();
+            if (userFilter !== null) {
+                allowed = allowed ? new Set([...allowed].filter(id => userFilter.has(id))) : new Set(userFilter);
+            }
+
+            const voters = Object.values(data.voters)
+                .filter(v => allowed === null || allowed.has(v.userId))
+                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+            const voterMap = new Map(voters.map(v => [v.userId, v]));
+
+            const byImage = new Map(data.images.map(img => [img.id, []]));
+            voters.forEach(v => v.images.forEach(imageId => {
+                if (byImage.has(imageId)) byImage.get(imageId).push(v);
+            }));
+
+            // contestId -> the voters that count as "everyone who could have shortlisted this image".
+            // Single contest / extract: voters represented in the image's own contest. Merger: one shared pool of
+            // every real + auto-converted voter across all the merger's contests, whatever an image's source contest.
+            const presence = new Map();
+            if (state.view === 'mergedResults') {
+                new Set(data.imageContest.values()).forEach(contestId => presence.set(contestId, voters));
+            } else {
+                voters.forEach(v => v.contests.forEach(contestId => {
+                    if (!presence.has(contestId)) presence.set(contestId, []);
+                    presence.get(contestId).push(v);
+                }));
+            }
+
+            return { images: data.images, imageContest: data.imageContest, voters, voterMap, byImage, presence };
+        }
+
+        // ---------- Shortlist math (separate from the classic Pearson / match-based code) ----------
+
+        // Jaccard overlap = |A ∩ B| / |A ∪ B|; null when both sets are empty.
+        function shortlistJaccard(setA, setB) {
+            let shared = 0;
+            setA.forEach(x => { if (setB.has(x)) shared++; });
+            const union = setA.size + setB.size - shared;
+            return union === 0 ? null : shared / union;
+        }
+
+        // Pairs tab: Jaccard overlap between the anchor image's shortlisters and every other image's shortlisters.
+        function computeShortlistPairs(view, anchorId) {
+            const anchorUsers = new Set((view.byImage.get(anchorId) || []).map(v => v.userId));
+            return view.images
+                .filter(img => img.id !== anchorId)
+                .map(img => {
+                    const users = new Set((view.byImage.get(img.id) || []).map(v => v.userId));
+                    return { img, jaccard: shortlistJaccard(anchorUsers, users) };
+                });
+        }
+
+        // For a user's shortlist: average, over their shortlisted images, of (other voters who also shortlisted it /
+        // all other voters in the pool). The pool is the image's contest, or the whole merger in a merger view.
+        function computeCrowdAgreement(view, userId) {
+            const me = view.voterMap.get(userId);
+            if (!me) return { count: 0, pct: null };
+            let ratioSum = 0;
+            let counted = 0;
+            me.images.forEach(imageId => {
+                const others = (view.presence.get(view.imageContest.get(imageId)) || []).filter(v => v.userId !== userId);
+                if (others.length === 0) return;
+                const agreeing = others.filter(v => v.images.has(imageId)).length;
+                ratioSum += agreeing / others.length;
+                counted++;
+            });
+            return { count: me.images.size, pct: counted > 0 ? Math.round((ratioSum / counted) * 100) : null };
+        }
+
+        // Pairwise comparison of two users' shortlists.
+        function computeShortlistUserComparison(view, userIdA, userIdB) {
+            const a = view.voterMap.get(userIdA);
+            const b = view.voterMap.get(userIdB);
+            const setA = a ? a.images : new Set();
+            const setB = b ? b.images : new Set();
+            const imageById = new Map(view.images.map(img => [img.id, img]));
+            const toImages = ids => [...ids].map(id => imageById.get(id)).filter(Boolean);
+            return {
+                overlap: toImages([...setA].filter(id => setB.has(id))),
+                onlyA: toImages([...setA].filter(id => !setB.has(id))),
+                onlyB: toImages([...setB].filter(id => !setA.has(id))),
+                jaccard: shortlistJaccard(setA, setB)
+            };
+        }
+
+        function generateShortlistComparisonTable(view, userId) {
+            const me = view.voterMap.get(userId);
+            if (!me) return [];
+            return view.voters
+                .filter(v => v.userId !== userId)
+                .map(v => ({ v, jaccard: shortlistJaccard(me.images, v.images) }))
+                .filter(row => row.jaccard !== null)
+                .map(row => ({
+                    userId: row.v.userId,
+                    username: row.v.username,
+                    avatar: row.v.avatar,
+                    overlapPct: Math.round(row.jaccard * 100)
+                }));
+        }
+
+        // Count tab: shortlisted images per user (Users mode with every score selected, pre-locked).
+        function generateShortlistCountUsers(view) {
+            const imageFilterIds = getFilteredImageIds();
+            const grouped = {};
+            view.voters.forEach(v => {
+                let count = 0;
+                v.images.forEach(imageId => { if (imageFilterIds === null || imageFilterIds.has(imageId)) count++; });
+                if (!grouped[count]) grouped[count] = [];
+                grouped[count].push({ userId: v.userId, username: v.username, avatar: v.avatar, count });
+            });
+            const sortedCounts = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+            return { grouped, sortedCounts, maxCount: sortedCounts.length > 0 ? Math.max(sortedCounts[0], 1) : 0 };
+        }
+
+        // ---------- Shortlist results rendering ----------
+
+        function renderShortlistEmptyState(icon, title, message) {
+            return `<div class="text-center py-12"><div class="text-6xl mb-4">${icon}</div><h3 class="text-xl font-bold text-gray-800 mb-2">${title}</h3><p class="text-gray-600">${message}</p></div>`;
+        }
+
+        function renderShortlistImagesHiddenState() {
+            return renderShortlistEmptyState('🔍', 'All Images Hidden', 'You\'ve hidden all images using the image filter. Click the "Images" filter button above to show some images.');
+        }
+
+        function renderShortlistTabControls(isPrivate, isAdmin, isCreator) {
+            // Count has no score row or Users/Images toggle; Total / Pairs have no extra controls
+            if (state.resultsView !== 'userVotes') return '';
+            const view = getShortlistView();
+            if (!view || view.voters.length === 0) return '';
+
+            if (isShortlistRestricted()) {
+                return `<div class="flex justify-center items-center gap-2"><label class="text-xs font-medium text-gray-700">Viewing: Your Shortlist Only</label></div>`;
+            }
+            return `
+                <div class="flex justify-center items-center gap-2 flex-wrap">
+                    <label class="text-xs font-medium text-gray-700">Select User:</label>
+                    <select onchange="setResultsView('userVotes', this.value)" class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm">
+                        ${state.selectedVoterUserId === null ? '<option value="" selected disabled>Select a user...</option>' : ''}
+                        ${view.voters.map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
+                    </select>
+                    <button onclick="startComparison()" class="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare with others</button>
+                </div>
+            `;
+        }
+
+        function renderShortlistTabContent(imageSize, fontSize) {
+            if (!state.shortlistData || state.shortlistData.key !== getShortlistScopeKey()) {
+                return renderShortlistEmptyState('⏳', 'Loading Shortlists...', 'Please wait while the shortlists are loaded.');
+            }
+            const view = getShortlistView();
+            switch (state.resultsView) {
+                case 'pairs': return renderShortlistPairsTab(view, imageSize, fontSize);
+                case 'count': return renderShortlistCountTab(view, imageSize);
+                case 'userVotes': return renderShortlistByUserTab(view, imageSize);
+                default: return renderShortlistTotalTab(view, imageSize);
+            }
+        }
+
+        // Total: Count-tab layout (a block per shortlist count, highest first). The bar in each count block is
+        // proportional to that count; images carry no score overlay.
+        function renderShortlistTotalTab(view, imageSize) {
+            const imageFilterIds = getFilteredImageIds();
+            const isFilterEditing = state.imageFilterDropdownOpen;
+            if (!isFilterEditing && imageFilterIds !== null && imageFilterIds.size === 0) {
+                return renderShortlistImagesHiddenState();
+            }
+            if (view.images.length === 0) {
+                return renderShortlistEmptyState('📭', 'No Results', 'No images available.');
+            }
+
+            const grouped = {};
+            view.images.forEach(img => {
+                const count = (view.byImage.get(img.id) || []).length;
+                if (!grouped[count]) grouped[count] = [];
+                grouped[count].push(img);
+            });
+            const counts = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+            const maxCount = counts[0] || 0;
+            const isDark = document.body.classList.contains('dark-theme');
+
+            return `<div class="space-y-3">
+                ${counts.map(count => {
+                    const images = grouped[count].filter(img => isFilterEditing || isImageVisibleInFilter(img.id));
+                    if (images.length === 0) return '';
+                    const ratio = maxCount > 0 ? count / maxCount : 0;
+                    const hue = (270 + ratio * 330) % 360;
+                    const bgColor = count === 0
+                        ? 'rgb(156, 163, 175)'
+                        : (isDark ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`);
+                    const sectionKey = `shortlist_total_${count}`;
+                    const collapsed = isSectionCollapsed(sectionKey);
+
+                    return `
+                        <div class="flex items-stretch gap-2">
+                            <div class="w-16 flex-shrink-0 rounded-lg flex flex-col items-center justify-center gap-1 text-white font-bold text-sm shadow-lg px-2 py-2 cursor-pointer select-none" style="background-color: ${bgColor};" onclick="toggleSection('${sectionKey}')">
+                                <div class="flex items-center gap-1">
+                                    ${renderCollapseArrow(sectionKey)}
+                                    <div class="text-xl">${count}</div>
+                                </div>
+                                <div class="w-full h-1.5 rounded-full bg-white/30 overflow-hidden" title="${count} shortlisted">
+                                    <div class="h-full rounded-full bg-white" style="width: ${Math.round(ratio * 100)}%;"></div>
+                                </div>
+                            </div>
+                            ${!collapsed ? `
+                                <div class="flex-1 flex flex-wrap gap-1 items-start">
+                                    ${images.map(img => {
+                                        const isVisible = isImageVisibleInFilter(img.id);
+                                        return `
+                                        <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : `showBreakdown(${img.id})`}">
+                                            <div class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full" style="height: ${imageSize}px; border: 3px solid ${bgColor};">
+                                                <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                                            </div>
+                                            ${isFilterEditing ? `
+                                                <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                    ${isVisible ? '✓' : '✕'}
+                                                </div>
+                                            ` : ''}
+                                        </div>`;
+                                    }).join('')}
+                                </div>
+                            ` : '<div class="flex-1 text-sm text-gray-500 flex items-center">' + images.length + ' image' + (images.length !== 1 ? 's' : '') + '</div>'}
+                        </div>
+                    `;
+                }).join('')}
+            </div>`;
+        }
+
+        // Pairs: same anchor-image UX as the classic tab, ranked by Jaccard overlap (no average-score labels).
+        function renderShortlistPairsTab(view, imageSize, fontSize) {
+            const images = view.images;
+            if (images.length === 0) {
+                return renderShortlistEmptyState('📭', 'No Results', 'No shortlist data available.');
+            }
+
+            if (state.pairsAnchorImageId === null) {
+                return `
+                    <div class="mb-3 text-center">
+                        <p class="text-sm text-gray-600">Select an image to see which other images the same people shortlisted</p>
+                    </div>
+                    <div class="flex flex-wrap gap-1">
+                        ${images.map(item => `
+                            <div onclick="setPairsAnchor(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            const anchorId = state.pairsAnchorImageId;
+            const anchorItem = images.find(img => img.id === anchorId);
+            if (!anchorItem) {
+                return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">Anchor Not Found</h3><p class="text-gray-600">The selected anchor image is no longer available.</p><button onclick="setPairsAnchor(null)" class="mt-4 px-4 py-2 bg-gray-200 rounded-lg text-sm font-medium hover:bg-gray-300 transition">← Back</button></div>`;
+            }
+
+            const others = computeShortlistPairs(view, anchorId);
+            const pairsCats = [
+                { key: 'pairsj_vh', label: 'Very High Overlap', sublabel: '75%+',        test: j => j !== null && j >= 0.75,             color: 'bg-emerald-100 text-emerald-800', borderColor: 'rgb(16, 185, 129)' },
+                { key: 'pairsj_h',  label: 'High Overlap',      sublabel: '50–75%',      test: j => j !== null && j >= 0.5 && j < 0.75,  color: 'bg-green-100 text-green-800',     borderColor: 'rgb(34, 197, 94)' },
+                { key: 'pairsj_m',  label: 'Moderate Overlap',  sublabel: '25–50%',      test: j => j !== null && j >= 0.25 && j < 0.5,  color: 'bg-lime-100 text-lime-800',       borderColor: 'rgb(132, 204, 22)' },
+                { key: 'pairsj_l',  label: 'Low Overlap',       sublabel: 'under 25%',   test: j => j !== null && j > 0 && j < 0.25,     color: 'bg-yellow-100 text-yellow-800',   borderColor: 'rgb(234, 179, 8)' },
+                { key: 'pairsj_0',  label: 'No Overlap',        sublabel: 'never shortlisted together', test: j => j === 0,          color: 'bg-gray-100 text-gray-700',       borderColor: 'rgb(156, 163, 175)' },
+                { key: 'pairsj_na', label: 'No Data',           sublabel: 'neither image shortlisted', test: j => j === null,        color: 'bg-gray-100 text-gray-500',       borderColor: 'rgb(156, 163, 175)' }
+            ];
+            const categorised = pairsCats.map(cat => ({
+                ...cat,
+                items: others
+                    .filter(o => cat.test(o.jaccard))
+                    .sort((a, b) => (b.jaccard || 0) - (a.jaccard || 0))
+                    .map(o => ({ ...o.img, jaccard: o.jaccard }))
+            })).filter(cat => cat.items.length > 0);
+
+            const anchorThumbH = Math.max(48, Math.min(imageSize, 80));
+
+            return `
+                <div class="pairs-anchor-header mb-3 p-3 bg-gray-50 rounded-xl border border-gray-200 flex items-center gap-3">
+                    <button onclick="setPairsAnchor(null)" class="px-2 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex-shrink-0">← Back</button>
+                    <div class="relative rounded-lg overflow-hidden shadow-lg flex-shrink-0 cursor-pointer" style="height: ${anchorThumbH}px;" onclick="setPairsAnchor(null)" title="Click to change anchor">
+                        <img src="${anchorItem.url}" alt="Anchor image" class="h-full w-auto object-cover" style="height: ${anchorThumbH}px;" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Anchor</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Tap an image to see who shortlisted it · ⚓ to re-anchor</div>
+                    </div>
+                </div>
+
+                ${categorised.map(cat => {
+                    const collapsed = isSectionCollapsed(cat.key);
+                    return `
+                        <div class="mb-4">
+                            <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${cat.color} w-full flex items-center cursor-pointer select-none" onclick="toggleSection('${cat.key}')">
+                                ${renderCollapseArrow(cat.key)}
+                                ${cat.label} <span class="text-xs font-normal ml-1">(${cat.sublabel})</span>
+                                <span class="text-xs font-normal ml-auto">Count: ${cat.items.length}</span>
+                            </h3>
+                            ${!collapsed ? `
+                                <div class="flex flex-wrap gap-1">
+                                    ${cat.items.map(item => `
+                                        <div onclick="showBreakdown(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                            <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                                            ${item.jaccard !== null ? `
+                                                <div class="absolute top-0 right-0 px-1.5 py-0.5 rounded-bl-lg font-bold" style="background: rgba(0,0,0,0.7); color: ${cat.borderColor}; font-size: ${Math.max(8, fontSize - 1)}px;">
+                                                    ${Math.round(item.jaccard * 100)}%
+                                                </div>
+                                            ` : ''}
+                                            <button onclick="event.stopPropagation(); setPairsAnchor(${item.id})" class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center bg-black bg-opacity-50 hover:bg-opacity-80 transition" title="Set as anchor" style="font-size: 13px; line-height: 1;">⚓</button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join('')}
+            `;
+        }
+
+        function renderShortlistCountTab(view, imageSize) {
+            if (view.voters.length === 0) {
+                return renderShortlistEmptyState('📭', 'No Results', 'Nobody has a shortlist here yet.');
+            }
+            return renderCountUsersMode(imageSize, generateShortlistCountUsers(view));
+        }
+
+        // By User: just the images on the selected user's shortlist (real or auto-converted) — no bars, no scores.
+        function renderShortlistByUserTab(view, imageSize) {
+            if (!state.selectedVoterUserId) {
+                return renderShortlistEmptyState('👆', 'Select a User', 'Please select a user from the dropdown above to view their shortlist.');
+            }
+            const voter = view.voterMap.get(state.selectedVoterUserId);
+            if (!voter) {
+                return renderShortlistEmptyState('📭', 'No Shortlist', 'This user has no shortlist here.');
+            }
+            const imageFilterIds = getFilteredImageIds();
+            const images = view.images.filter(img => voter.images.has(img.id) && (imageFilterIds === null || imageFilterIds.has(img.id)));
+            if (images.length === 0) {
+                return renderShortlistEmptyState('📭', 'Nothing Shortlisted', 'This user hasn\'t shortlisted any images here.');
+            }
+            return `
+                <div class="flex flex-wrap gap-1">
+                    ${images.map(item => `
+                        <div onclick="showBreakdown(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                            <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // Header stat for ONE user's shortlist: "N shortlisted · M% crowd agreement" (not a pairwise number).
+        function renderShortlistUserStat(view, userId) {
+            const stat = computeCrowdAgreement(view, userId);
+            return `<span class="text-sm text-gray-600">${stat.count} shortlisted · ${stat.pct === null ? '—' : stat.pct + '%'} crowd agreement</span>`;
+        }
+
+        function renderShortlistComparisonScreen() {
+            const body = state.comparisonView === 'detail' ? renderShortlistComparisonDetail() : renderShortlistComparisonTable();
+            return body + (state.showBreakdownModal ? renderShortlistBreakdownModal() : '');
+        }
+
+        function renderShortlistComparisonTable() {
+            const view = getShortlistView();
+            const me = view ? view.voterMap.get(state.selectedVoterUserId) : null;
+            if (!view || !me) {
+                return `<div class="max-w-7xl mx-auto px-3 py-4"><div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                    <button onclick="backFromComparison()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition mb-4">← Back to votes</button>
+                    ${renderShortlistEmptyState('📭', 'No Shortlist', 'The selected user has no shortlist here.')}
+                </div></div>`;
+            }
+
+            let rows = generateShortlistComparisonTable(view, me.userId);
+            const sortKeys = state.comparisonTableSortKeys.length > 0 ? state.comparisonTableSortKeys : [{ key: 'overlapPct', direction: 'desc' }];
+            rows = [...rows].sort((a, b) => {
+                for (const sortKey of sortKeys) {
+                    let diff;
+                    if (sortKey.key === 'username') {
+                        diff = a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+                    } else {
+                        diff = a.overlapPct - b.overlapPct;
+                    }
+                    if (sortKey.direction === 'desc') diff = -diff;
+                    if (diff !== 0) return diff;
+                }
+                return 0;
+            });
+            const indicator = key => {
+                const sort = state.comparisonTableSortKeys.find(s => s.key === key);
+                return sort ? ` ${sort.direction === 'desc' ? '▼' : '▲'}` : '';
+            };
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                        <div class="flex items-center gap-3 mb-4 flex-wrap">
+                            <button onclick="backFromComparison()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
+                                <span>←</span> Back to votes
+                            </button>
+                            <img referrerpolicy="no-referrer" src="${me.avatar}" class="w-8 h-8 rounded-full" onerror="ghostAvatar(this)" />
+                            <h2 class="text-lg font-bold text-gray-800">Comparing: ${me.username}</h2>
+                            ${renderShortlistUserStat(view, me.userId)}
+                        </div>
+
+                        ${rows.length === 0 ? renderShortlistEmptyState('📭', 'Nobody to Compare', 'No other voters have a shortlist to compare with.') : `
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="border-b-2 border-gray-200">
+                                        <th class="text-left py-2 px-2 cursor-pointer select-none" onclick="toggleComparisonTableSort('username')">User${indicator('username')}</th>
+                                        <th class="text-center py-2 px-1 text-xs cursor-pointer select-none" onclick="toggleComparisonTableSort('overlapPct')">Overlap %${indicator('overlapPct')}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${rows.map(row => `
+                                        <tr class="border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition" onclick="showComparisonDetail('${row.userId}')">
+                                            <td class="py-2 px-2">
+                                                <div class="flex items-center gap-2">
+                                                    <img referrerpolicy="no-referrer" src="${row.avatar}" class="w-6 h-6 rounded-full" onerror="ghostAvatar(this)" />
+                                                    <span class="font-medium truncate max-w-[120px]">${row.username}</span>
+                                                </div>
+                                            </td>
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: #c4b5fd; color: #1f2937;">${row.overlapPct}%</span></td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        // "User X vs User Y": exactly three foldable sections — Overlapping, X Only, Y Only.
+        function renderShortlistComparisonDetail() {
+            const view = getShortlistView();
+            const x = view ? view.voterMap.get(state.selectedVoterUserId) : null;
+            const y = view ? view.voterMap.get(state.comparisonDetailUserId) : null;
+            if (!view || !x || !y) {
+                return `<div class="max-w-7xl mx-auto px-3 py-4"><div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                    <button onclick="backFromComparisonDetail()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition mb-4">← Back to comparison</button>
+                    ${renderShortlistEmptyState('📭', 'No Shortlist', 'One of these users has no shortlist here.')}
+                </div></div>`;
+            }
+
+            const comparison = computeShortlistUserComparison(view, x.userId, y.userId);
+            const imageSize = Math.max(30, Math.min(500, Math.floor(150 * (state.imageScale / 100))));
+            const sections = [
+                { key: 'sl_overlap', label: 'Overlapping', items: comparison.overlap, color: '#bbf7d0' },
+                { key: 'sl_only_x', label: `${x.username} Only`, items: comparison.onlyA, color: '#bfdbfe' },
+                { key: 'sl_only_y', label: `${y.username} Only`, items: comparison.onlyB, color: '#fed7aa' }
+            ];
+
+            return `
+                <div class="max-w-7xl mx-auto px-3 py-4">
+                    <div class="bg-white rounded-xl shadow-xl p-4 fade-in">
+                        <div class="flex items-center gap-3 mb-2 flex-wrap">
+                            <button onclick="backFromComparisonDetail()" class="px-3 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex items-center gap-1">
+                                <span>←</span> Back to comparison
+                            </button>
+                            <h2 class="text-lg font-bold text-gray-800">${x.username} vs ${y.username}</h2>
+                            <span class="text-sm font-semibold text-gray-600">Overlap ${comparison.jaccard === null ? '—' : Math.round(comparison.jaccard * 100) + '%'}</span>
+                        </div>
+                        <div class="flex items-center gap-2 mb-4">
+                            <img referrerpolicy="no-referrer" src="${y.avatar}" class="w-6 h-6 rounded-full" onerror="ghostAvatar(this)" />
+                            <span class="text-sm font-medium text-gray-700">${y.username}</span>
+                            ${renderShortlistUserStat(view, y.userId)}
+                        </div>
+
+                        <div class="mb-4 max-w-md">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs font-medium text-gray-700 whitespace-nowrap">Image Scale:</label>
+                                <button onclick="adjustScale(-1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">−</button>
+                                <input type="range" min="20" max="250" value="${state.imageScale}" oninput="updateScale(this.value)" class="flex-1 h-2 bg-gray-200 rounded-lg cursor-pointer" />
+                                <button onclick="adjustScale(1)" class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 flex items-center justify-center font-bold text-gray-700 transition">+</button>
+                                <span class="text-xs font-medium text-gray-700 w-10">${state.imageScale}%</span>
+                            </div>
+                        </div>
+
+                        <div style="overflow-y: auto;">
+                            ${sections.map(section => {
+                                const collapsed = !!state.comparisonDetailCollapsed[section.key];
+                                return `
+                                    <div class="mb-4">
+                                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${section.color};" onclick="toggleComparisonDetailSection('${section.key}')">
+                                            <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${section.label}
+                                            <span class="text-xs font-normal ml-auto">Count: ${section.items.length}</span>
+                                        </h3>
+                                        ${!collapsed ? `
+                                            <div class="flex flex-wrap gap-1">
+                                                ${section.items.map(item => `
+                                                    <div onclick="showBreakdown(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
+                                                        <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
+                                                    </div>
+                                                `).join('')}
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Image breakdown for the shortlist format. No edit / block controls. Users represented through
+        // auto-conversion show their actual classic score in a colored circle instead of a plain checkmark.
+        function renderShortlistBreakdownModal() {
+            const view = getShortlistView();
+            if (!view) return '';
+            const imageId = state.showBreakdownModal;
+            const image = view.images.find(img => img.id === imageId);
+            if (!image) return '';
+
+            const shortlisters = view.byImage.get(imageId) || [];
+            const shortlisterIds = new Set(shortlisters.map(v => v.userId));
+            const notShortlisted = (view.presence.get(view.imageContest.get(imageId)) || []).filter(v => !shortlisterIds.has(v.userId));
+            const totalVoters = shortlisters.length + notShortlisted.length;
+            const yesColor = getScoreColor(5);
+            const noColor = getScoreColor(1);
+
+            const renderVoter = (voter, isShortlisted) => {
+                const autoScore = voter.scoreByImage.get(imageId);
+                const isCurrentUser = state.user && voter.userId === state.user.id;
+                const marker = autoScore !== undefined
+                    ? `<span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(autoScore)};" title="Converted from their score of ${autoScore}">${autoScore}</span>`
+                    : (isShortlisted ? `<span class="text-green-600 font-bold flex-shrink-0">✓</span>` : '');
+                return `
+                    <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
+                        <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
+                        <span class="text-sm flex-1 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
+                        ${marker}
+                    </div>
+                `;
+            };
+
+            const renderColumn = (title, color, voters, isShortlisted) => `
+                <div>
+                    <h4 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block" style="color: ${color}; background-color: ${color}20;">
+                        ${title} (${voters.length})
+                    </h4>
+                    ${voters.length > 0 ? `
+                        <div class="grid grid-cols-1 gap-2 mt-2">${voters.map(v => renderVoter(v, isShortlisted)).join('')}</div>
+                    ` : `<div class="text-gray-400 italic text-sm mt-2 ml-3">Nobody</div>`}
+                </div>
+            `;
+
+            return `
+                <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closeBreakdown()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                        <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-xl font-bold text-gray-800">Shortlist Breakdown</h3>
+                                    <button onclick="jumpToPairs(${image.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">⚓</button>
+                                </div>
+                                <button onclick="closeBreakdown()" class="text-gray-500 hover:text-gray-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-y-auto flex-1 p-4">
+                            <div class="mb-3 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100" style="max-height: 400px;">
+                                <img src="${image.url}" alt="Image" class="max-w-full max-h-[400px] object-contain" />
+                            </div>
+
+                            <div class="bg-gray-50 rounded-lg p-3 mb-3">
+                                <div class="text-center">
+                                    <div class="text-2xl font-bold text-gray-400">Shortlisted by ${shortlisters.length}</div>
+                                    <div class="text-xs text-gray-500 mt-1">of ${totalVoters} voter${totalVoters !== 1 ? 's' : ''}</div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                ${renderColumn('Shortlisted', yesColor, shortlisters, true)}
+                                ${renderColumn('Not Shortlisted', noColor, notShortlisted, false)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderLogoutConfirmModal() {
             if (!state.showLogoutConfirmModal) return '';
 
@@ -15684,7 +17445,7 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal();
+            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal() + renderNoticeModal();
 
             // Restore scroll positions
             savedScrolls.forEach(({ key, top }) => {
@@ -15931,6 +17692,21 @@
         window.backFromAverageCompareAll = backFromAverageCompareAll;
         window.showAverageCompareUser = showAverageCompareUser;
         window.backFromAverageCompareUser = backFromAverageCompareUser;
+        window.toggleCardFormat = toggleCardFormat;
+        window.startShortlistVoting = startShortlistVoting;
+        window.showAutoGenerateShortlistModal = showAutoGenerateShortlistModal;
+        window.confirmAutoGenerateShortlistFresh = confirmAutoGenerateShortlistFresh;
+        window.confirmAutoGenerateShortlistPreload = confirmAutoGenerateShortlistPreload;
+        window.toggleShortlistImage = toggleShortlistImage;
+        window.handleShortlistYes = handleShortlistYes;
+        window.handleShortlistNo = handleShortlistNo;
+        window.setShortlistFilter = setShortlistFilter;
+        window.finishShortlistVoting = finishShortlistVoting;
+        window.setResultsFormat = setResultsFormat;
+        window.dismissSpotlight = dismissSpotlight;
+        window.showNoticeModal = showNoticeModal;
+        window.closeNoticeModal = closeNoticeModal;
+        window.markAvatarBroken = markAvatarBroken;
 
         // Initialize app
         // Check for existing session on load
@@ -16091,6 +17867,7 @@
                     loadMergers(),
                     loadExtracts(),
                     loadUserVotes(),
+                    loadUserShortlists(),
                     loadAllUserAutosaves(),
                     loadPinnedItems()
                 ]);
