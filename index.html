@@ -4115,25 +4115,129 @@
             }
         }
 
+        const MERGER_SELECT = 'id,name,contest_ids,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)';
+        const CONTEST_SELECT = 'id,contest_number,title,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!contests_created_by_fkey(username,avatar),images(id,url,image_order)';
+
+        function mapMergerRow(m) {
+            return {
+                id: m.id,
+                name: m.name,
+                createdBy: m.created_by,
+                creatorName: m.creator.username,
+                creatorAvatar: m.creator.avatar,
+                createdAt: m.created_at,
+                contestIds: m.contest_ids,
+                isLocked: m.is_locked || false,
+                resultsPublic: m.results_public !== false,
+                voterCount: m.voter_count ?? 0,
+                shortlistCount: m.shortlist_count ?? 0,
+                type: 'merger'
+            };
+        }
+
+        function mapContestRow(contest) {
+            return {
+                id: contest.id,
+                contestNumber: contest.contest_number,
+                title: contest.title,
+                isLocked: contest.is_locked,
+                resultsPublic: contest.results_public,
+                createdBy: contest.created_by,
+                creatorName: contest.creator.username,
+                creatorAvatar: contest.creator.avatar,
+                createdAt: contest.created_at,
+                voterCount: contest.voter_count ?? 0,
+                shortlistCount: contest.shortlist_count ?? 0,
+                _fullImagesLoaded: false,
+                images: contest.images
+                    .sort((a, b) => a.image_order - b.image_order)
+                    .map(img => ({ id: img.id, url: img.url }))
+            };
+        }
+
+        // THE single "make sure these contests are in state.contests" helper. Cache first, one batched request
+        // (id=in.(...)) for only the missing ones, and an in-flight map so overlapping callers never fetch a contest twice.
+        // Resolves true when it added anything.
+        const contestLoadsInFlight = new Map();   // contestId -> Promise
+
+        async function ensureContestsLoaded(contestIds) {
+            const ids = [...new Set((contestIds || []).filter(Boolean))];
+            const missing = ids.filter(id => !state.contests.some(c => c.id === id) && !contestLoadsInFlight.has(id));
+            if (missing.length > 0) {
+                const load = (async () => {
+                    try {
+                        const response = await fetchFromSupabase(`/rest/v1/contests?id=in.(${missing.join(',')})&select=${CONTEST_SELECT}`);
+                        const rows = response.ok ? await response.json() : [];
+                        if (Array.isArray(rows)) {
+                            const have = new Set(state.contests.map(c => c.id));
+                            rows.map(mapContestRow).filter(c => !have.has(c.id)).forEach(c => state.contests.push(c));
+                        }
+                    } catch (error) {
+                        console.error('Error loading contests:', error);
+                    }
+                })();
+                missing.forEach(id => contestLoadsInFlight.set(id, load));
+                load.then(() => missing.forEach(id => contestLoadsInFlight.delete(id)));
+            }
+            const waiting = [...new Set(ids.map(id => contestLoadsInFlight.get(id)).filter(Boolean))];
+            await Promise.all(waiting);
+            return missing.length > 0;
+        }
+
+        // Same idea for the source merger of an extract-of-a-merger (normally already cached by loadMergers)
+        async function ensureMergersLoaded(mergerIds) {
+            const missing = [...new Set((mergerIds || []).filter(Boolean))].filter(id => !state.mergers.some(m => m.id === id));
+            if (missing.length === 0) return false;
+            try {
+                const response = await fetchFromSupabase(`/rest/v1/mergers?id=in.(${missing.join(',')})&select=${MERGER_SELECT}`);
+                const rows = response.ok ? await response.json() : [];
+                if (Array.isArray(rows)) rows.map(mapMergerRow).forEach(m => { if (!state.mergers.some(x => x.id === m.id)) state.mergers.push(m); });
+            } catch (error) {
+                console.error('Error loading mergers:', error);
+            }
+            return true;
+        }
+
+        // Cards ask for what they depend on the first time they render. Requests made in the same tick are merged, so
+        // merger and extract cards with overlapping contests produce ONE batched fetch through ensureContestsLoaded.
+        const cardDepsSeen = new Set();
+        const cardDepsPending = { contestIds: new Set(), mergerIds: new Set() };
+        let cardDepsTimer = null;
+
+        function requestCardDependencies(itemType, item) {
+            const key = `${itemType}_${item.id}`;
+            if (cardDepsSeen.has(key)) return;
+            cardDepsSeen.add(key);
+            if (itemType === 'merger') {
+                (item.contestIds || []).forEach(id => cardDepsPending.contestIds.add(id));
+            } else if (itemType === 'extract') {
+                if (item.sourceType === 'contest' && item.sourceContestId) cardDepsPending.contestIds.add(item.sourceContestId);
+                else if (item.sourceType === 'merger' && item.sourceMergerId) cardDepsPending.mergerIds.add(item.sourceMergerId);
+            }
+            if (cardDepsPending.contestIds.size + cardDepsPending.mergerIds.size > 0 && !cardDepsTimer) {
+                cardDepsTimer = setTimeout(flushCardDependencies, 0);
+            }
+        }
+
+        async function flushCardDependencies() {
+            cardDepsTimer = null;
+            const mergerIds = [...cardDepsPending.mergerIds];
+            const contestIds = new Set(cardDepsPending.contestIds);
+            cardDepsPending.mergerIds.clear();
+            cardDepsPending.contestIds.clear();
+
+            const mergersAdded = await ensureMergersLoaded(mergerIds);
+            mergerIds.forEach(id => (state.mergers.find(m => m.id === id)?.contestIds || []).forEach(cid => contestIds.add(cid)));
+            const contestsAdded = await ensureContestsLoaded([...contestIds]);
+            if ((mergersAdded || contestsAdded) && !state.isInitializing) render();
+        }
+
         async function loadMergers() {
             try {
-                const response = await fetchFromSupabase(`/rest/v1/mergers?select=id,name,contest_ids,is_locked,results_public,created_by,voter_count,shortlist_count,created_at,creator:users!mergers_created_by_fkey(username,avatar)&order=created_at.desc`);
+                const response = await fetchFromSupabase(`/rest/v1/mergers?select=${MERGER_SELECT}&order=created_at.desc`);
                 const mergers = await response.json();
                 if (Array.isArray(mergers)) {
-                    state.mergers = mergers.map(m => ({
-                        id: m.id,
-                        name: m.name,
-                        createdBy: m.created_by,
-                        creatorName: m.creator.username,
-                        creatorAvatar: m.creator.avatar,
-                        createdAt: m.created_at,
-                        contestIds: m.contest_ids,
-                        isLocked: m.is_locked || false,
-                        resultsPublic: m.results_public !== false,
-                        voterCount: m.voter_count ?? 0,
-                        shortlistCount: m.shortlist_count ?? 0,
-                        type: 'merger'
-                    }));
+                    state.mergers = mergers.map(mapMergerRow);
                 }
             } catch (error) {
                 console.error('Error loading mergers:', error);
@@ -11982,13 +12086,14 @@
                         <div class="space-y-2 max-h-64 overflow-y-auto">
                             ${users.map(user => {
                                 const bestScore = user.hasAuto ? Math.max(...user.scoreByImage.values()) : null;
+                                const qualifyingCount = user.hasAuto ? [...user.scoreByImage.values()].filter(score => score >= 4).length : 0;
                                 return `
                                     <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${user.userId}')">
                                         <img referrerpolicy="no-referrer" src="${user.avatar}" alt="${user.username}" class="w-8 h-8 rounded-full flex-shrink-0" onerror="ghostAvatar(this)" />
                                         <span class="text-sm font-medium text-gray-700 flex-1">${user.username}</span>
                                         <span class="text-xs text-gray-500">${user.images.size} image${user.images.size !== 1 ? 's' : ''}</span>
                                         ${user.hasReal ? '<span class="text-green-600 font-bold">✓</span>' : ''}
-                                        ${bestScore !== null ? `<span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(bestScore)};" title="Built from their classic scores">${bestScore}</span>` : ''}
+                                        ${bestScore !== null ? `<span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(bestScore)};" title="Built from their classic scores">${bestScore}</span><span class="text-xs font-semibold text-gray-600" title="${qualifyingCount} score${qualifyingCount !== 1 ? 's' : ''} of 4 or 5 made up their shortlist">×${qualifyingCount}</span>` : ''}
                                     </div>
                                 `;
                             }).join('')}
@@ -12548,6 +12653,7 @@
         }
 
         function renderMergerCard(merger, isPinned = false, unvotedLabel = null) {
+            requestCardDependencies('merger', merger);
             // Get contest details for the merged contests
             const mergedContests = state.contests.filter(c => merger.contestIds.includes(c.id));
             const totalImages = mergedContests.reduce((sum, c) => sum + c.images.length, 0);
@@ -12716,6 +12822,7 @@
         }
 
         function renderExtractCard(extract, isPinned = false) {
+            requestCardDependencies('extract', extract);
             // Get source reference
             let sourceRef = 'Unknown';
             if (extract.sourceType === 'contest') {
@@ -17141,14 +17248,17 @@
                 (totalOf(b.userId) - totalOf(a.userId)) || a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
         }
 
-        // Classic "total score" per user: sum of their (non-blocked, non-banned) scores in the loaded results
+        // Classic "popularity" per user: their AVERAGE score (non-blocked, non-banned votes in the loaded results),
+        // computed with the same power mean / scoring formula as the Total tab.
         function getClassicVoterTotals() {
-            const totals = {};
+            const scoresByUser = {};
             (state.results || []).forEach(img => (img.breakdown || []).forEach(v => {
                 if (v.isBlocked || v.isBanned) return;
-                totals[v.userId] = (totals[v.userId] || 0) + v.score;
+                (scoresByUser[v.userId] = scoresByUser[v.userId] || []).push(v.score);
             }));
-            return userId => totals[userId] || 0;
+            const averages = {};
+            Object.keys(scoresByUser).forEach(userId => { averages[userId] = powerMean(scoresByUser[userId], state.scoringFormula); });
+            return userId => averages[userId] || 0;
         }
 
         function setCountShortlistValue(value) {
