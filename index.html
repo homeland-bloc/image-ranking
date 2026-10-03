@@ -11360,7 +11360,7 @@
                                             onclick="${isExpanded ? 'showMorePinnedItems()' : 'togglePinnedSection()'}"
                                             class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
-                                            ${isExpanded ? 'Show 6 more items' : `Show all ${allPinnedItems.length} pinned items`}
+                                            Load more votings
                                         </button>
                                     ` : ''}
                                 </div>
@@ -11659,7 +11659,7 @@
                                             onclick="loadMoreContests()"
                                             class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
-                                            Load more contests from server
+                                            Load more votings
                                         </button>
                                     `}
                                 ` : ''}
@@ -11688,7 +11688,7 @@
                                         onclick="${state.isAllContestsSectionExpanded ? 'showMoreAllItems()' : 'toggleAllContestsSection()'}"
                                         class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
                                     >
-                                        Show 6 more items
+                                        Load more votings
                                     </button>
                                 ` : ''}
                                 ${hasMoreDbItems ? `
@@ -11701,7 +11701,7 @@
                                             onclick="loadMoreContests()"
                                             class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
-                                            Show 6 more items
+                                            Load more votings
                                         </button>
                                     `}
                                 ` : ''}
@@ -13728,7 +13728,7 @@
                             <label class="text-xs font-medium text-gray-700">Select User:</label>
                             <select onchange="setResultsView('userVotes', this.value)" class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm">
                                 ${state.selectedVoterUserId === null ? '<option value="" selected disabled>Select a user...</option>' : ''}
-                                ${orderVotersForByUser(state.contestVoters, getClassicVoterTotals()).map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
+                                ${state.contestVoters.map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
                             </select>
                             <button onclick="startComparison()" class="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare with others</button>
                         </div>
@@ -14061,6 +14061,7 @@
                     ...img,
                     averageScore: userVotesMap[img.id] || 0,
                     userVoteScore: userVotesMap[img.id],
+                    imageAverage: img.averageScore,
                     isBlocked: blockedVotesSet.has(img.id)
                 })).filter(img => img.userVoteScore);
 
@@ -14073,6 +14074,7 @@
 
             return sortedKeys.map(key => {
                 const group = grouped[key];
+                group.items = orderImagesForByUser(group.items, img => img.imageAverage || 0);
                 const score = group.score;
                 const colorStyle = getScoreColor(score);
                 const sectionKey = `byuser_${score}`;
@@ -17239,26 +17241,16 @@
             render();
         }
 
-        function orderVotersForByUser(voters, totalOf) {
+        // By User image grid order: Popular = highest average / shortlist count first, Random = shuffled.
+        // Random ranks are kept per image until Random is chosen again. Ties keep the original order.
+        function orderImagesForByUser(images, popularityOf) {
             if (state.byUserOrder === 'random') {
-                const rank = id => (state.byUserRandomRanks[id] ??= Math.random());
-                return [...voters].sort((a, b) => rank(a.userId) - rank(b.userId));
+                const rank = id => (state.byUserRandomRanks[`img_${id}`] ??= Math.random());
+                return [...images].sort((a, b) => rank(a.id) - rank(b.id));
             }
-            return [...voters].sort((a, b) =>
-                (totalOf(b.userId) - totalOf(a.userId)) || a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
-        }
-
-        // Classic "popularity" per user: their AVERAGE score (non-blocked, non-banned votes in the loaded results),
-        // computed with the same power mean / scoring formula as the Total tab.
-        function getClassicVoterTotals() {
-            const scoresByUser = {};
-            (state.results || []).forEach(img => (img.breakdown || []).forEach(v => {
-                if (v.isBlocked || v.isBanned) return;
-                (scoresByUser[v.userId] = scoresByUser[v.userId] || []).push(v.score);
-            }));
-            const averages = {};
-            Object.keys(scoresByUser).forEach(userId => { averages[userId] = powerMean(scoresByUser[userId], state.scoringFormula); });
-            return userId => averages[userId] || 0;
+            return images.map((img, index) => ({ img, index }))
+                .sort((a, b) => (popularityOf(b.img) - popularityOf(a.img)) || (a.index - b.index))
+                .map(entry => entry.img);
         }
 
         function setCountShortlistValue(value) {
@@ -17310,14 +17302,13 @@
             if (isShortlistRestricted()) {
                 return `<div class="flex justify-center items-center gap-2"><label class="text-xs font-medium text-gray-700">Viewing: Your Shortlist Only</label></div>`;
             }
-            const ordered = orderVotersForByUser(view.voters, userId => view.voterMap.get(userId).images.size);
             return `
                 ${renderByUserOrderSwitch()}
                 <div class="flex justify-center items-center gap-2 flex-wrap">
                     <label class="text-xs font-medium text-gray-700">Select User:</label>
                     <select onchange="setResultsView('userVotes', this.value)" class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm">
                         ${state.selectedVoterUserId === null ? '<option value="" selected disabled>Select a user...</option>' : ''}
-                        ${ordered.map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
+                        ${view.voters.map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
                     </select>
                     <button onclick="startComparison()" class="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare with others</button>
                 </div>
@@ -17518,7 +17509,10 @@
                 return renderShortlistEmptyState('📭', 'No Shortlist', 'This user has no shortlist here.');
             }
             const imageFilterIds = getFilteredImageIds();
-            const images = view.images.filter(img => voter.images.has(img.id) && (imageFilterIds === null || imageFilterIds.has(img.id)));
+            const images = orderImagesForByUser(
+                view.images.filter(img => voter.images.has(img.id) && (imageFilterIds === null || imageFilterIds.has(img.id))),
+                img => (view.byImage.get(img.id) || []).length
+            );
             if (images.length === 0) {
                 return renderShortlistEmptyState('📭', 'Nothing Shortlisted', 'This user hasn\'t shortlisted any images here.');
             }
