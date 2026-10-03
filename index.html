@@ -1146,7 +1146,7 @@
             cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'shortlist' (per-card display toggle, never persisted)
             userShortlists: {},        // contestId -> { imageId: true } — current user's real rows in `shortlists`
             shortlistSelected: {},     // imageId -> true — working set on the shortlist voting screen
-            shortlistSession: null,    // { itemType, itemId, title, contestByImage, persisted, materialize } while shortlist voting
+            shortlistSession: null,    // { itemType, itemId, title, contestByImage, persisted } while shortlist voting
             shortlistFilter: [],       // multi-mode filter buckets: 'shortlisted' | 'unshortlisted'
             resultsFormat: 'classic',  // 'classic' | 'shortlist' — results page voting-format switch
             resultsFormatKey: null,    // scope key the shortlist switch was chosen for (so it resets on other pages)
@@ -4744,13 +4744,14 @@
                     offset += limit;
                 }
 
-                // Shortlist inserts in the same window (paginated). Failure here must not break the log.
+                // Current shortlist rows from the window start onward (paginated, no upper bound so each user + contest
+                // MAX(created_at) is the true latest). Failure here must not break the log.
                 let shortlistRows = [];
                 try {
                     let slOffset = 0;
                     while (true) {
                         const slResponse = await fetchFromSupabase(
-                            `/rest/v1/shortlists?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=${limit}&offset=${slOffset}&select=user_id,contest_id,created_at,users!inner(username,avatar)&order=created_at.desc`
+                            `/rest/v1/shortlists?created_at=gte.${weekStartISO}&limit=${limit}&offset=${slOffset}&select=user_id,contest_id,created_at,users!inner(username,avatar)&order=created_at.desc`
                         );
                         if (!slResponse.ok) break;
                         const slBatch = await slResponse.json();
@@ -4838,20 +4839,16 @@
                     });
                 });
 
-                // Shortlist activity: one entry per user + contest (latest insert), like the vote entries.
-                // Only inserts are recorded in the database; removals leave no row to log.
-                const shortlistsByUserContest = new Map();
+                // "Made a shortlist for X": derived live from the shortlist rows that exist right now - one entry per
+                // user + contest, stamped with MAX(created_at) of those rows. Not a stored event, so deleted rows leave no trace.
+                const latestShortlist = new Map();
                 shortlistRows.forEach(row => {
                     const key = `${row.user_id}-${row.contest_id}`;
-                    const existing = shortlistsByUserContest.get(key);
-                    if (!existing) {
-                        shortlistsByUserContest.set(key, { row, count: 1 });
-                    } else {
-                        existing.count++;
-                        if (new Date(row.created_at) > new Date(existing.row.created_at)) existing.row = row;
-                    }
+                    const existing = latestShortlist.get(key);
+                    if (!existing || new Date(row.created_at) > new Date(existing.created_at)) latestShortlist.set(key, row);
                 });
-                shortlistsByUserContest.forEach(({ row, count }, key) => {
+                latestShortlist.forEach((row, key) => {
+                    if (new Date(row.created_at) > weekEnd) return;   // latest change is after the selected window
                     const contest = state.contests.find(c => c.id === row.contest_id);
                     activityMap.set(`shortlist-${key}`, {
                         type: 'shortlist',
@@ -4860,8 +4857,7 @@
                         avatar: row.users?.avatar || null,
                         contestId: row.contest_id,
                         contestTitle: contest?.title || 'Unknown Contest',
-                        timestamp: row.created_at,
-                        shortlistCount: count
+                        timestamp: row.created_at
                     });
                 });
 
@@ -13283,9 +13279,12 @@
                                 </button>
 
                                 ${isShortlist ? `
-                                    <button onclick="finishShortlistVoting()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-1 shadow-lg text-sm">
-                                        Done
-                                    </button>
+                                    <div class="flex flex-col items-center gap-1 text-center">
+                                        <button onclick="finishShortlistVoting()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-1 shadow-lg text-sm">
+                                            Done
+                                        </button>
+                                        <span class="text-[11px] text-gray-500 leading-tight">Each tick and untick saves right away.</span>
+                                    </div>
                                 ` : allVoted ? `
                                     <button onclick="submitVotes()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-4 py-2 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-1 shadow-lg text-sm">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -15253,7 +15252,7 @@
                     case 'vote_completed':
                         return { bg: 'bg-yellow-50', hover: 'hover:bg-yellow-100', icon: '✅', text: 'Completed voting on' };
                     case 'shortlist':
-                        return { bg: 'bg-pink-50', hover: 'hover:bg-pink-100', icon: '🔖', text: 'Shortlisted in' };
+                        return { bg: 'bg-orange-100', hover: 'hover:bg-orange-200', icon: '🔖', text: 'Made a shortlist for' };
                     default: // vote (partial)
                         return { bg: 'bg-gray-100', hover: 'hover:bg-gray-200', icon: '🗳️', text: 'Voted on' };
                 }
@@ -15474,7 +15473,7 @@
                                                             ${log.username}
                                                         </span>
                                                         <span class="text-gray-600">
-                                                            ${isSignup ? style.text.toLowerCase() : `${style.text.toLowerCase()}: <span class="font-medium">${itemName}</span>${log.type === 'shortlist' ? ` <span class="text-gray-500">(${log.shortlistCount} 🔖)</span>` : ''}`}
+                                                            ${isSignup ? style.text.toLowerCase() : `${style.text.toLowerCase()}${log.type === 'shortlist' ? '' : ':'} <span class="font-medium">${itemName}</span>`}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -15859,6 +15858,7 @@
             const spotlightTarget = getSpotlightTarget();
             if (state.spotlightActive && spotlightTarget && spotlightTarget.type === itemType && spotlightTarget.id === itemId) {
                 state.spotlightDismissed = true;
+                markSpotlightSeen();
             }
             const key = `${itemType}_${itemId}`;
             if (state.cardFormats[key] === 'shortlist') {
@@ -15885,7 +15885,7 @@
             return `
                 <div class="relative">
                     ${toggle}
-                    <div class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
+                    <div data-spotlight="1" class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
                         New: tap here to try Shortlist voting
                         <button onclick="dismissSpotlight()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
                         <div class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
@@ -15906,26 +15906,42 @@
             return null;
         }
 
-        // True while the callout should be drawn on this card. It is stored as seen the first time it is actually
-        // rendered, so it appears once per user ever (until then it stays up for this page load, until dismissed).
+        // True while the callout should be drawn on this card. Rendering alone does not use it up: the "seen" flag is
+        // stored only when the callout is dismissed (X), its toggle is clicked, or it has stayed up for 5 seconds.
         function shouldShowSpotlight(itemType, itemId, isPinned) {
             if (!isPinned || !state.user || state.spotlightDismissed) return false;
             const target = getSpotlightTarget();
             if (!target || target.type !== itemType || target.id !== itemId) return false;
             if (state.spotlightActive) return true;
-            const storageKey = `peony_shortlist_spotlight_seen_${state.user.id}`;
             try {
-                if (localStorage.getItem(storageKey)) return false;
-                localStorage.setItem(storageKey, '1');
+                if (localStorage.getItem(getSpotlightStorageKey())) return false;
             } catch (e) {
                 return false;   // cannot remember it, so do not risk showing it every visit
             }
             state.spotlightActive = true;
+            clearTimeout(state.spotlightTimer);
+            state.spotlightTimer = setTimeout(() => {
+                if (document.querySelector('[data-spotlight]')) {
+                    markSpotlightSeen();
+                } else {
+                    state.spotlightActive = false;   // never actually on screen for 5s - leave the flag unused
+                }
+            }, 5000);
             return true;
+        }
+
+        function getSpotlightStorageKey() {
+            return `peony_shortlist_spotlight_seen_${state.user.id}`;
+        }
+
+        function markSpotlightSeen() {
+            clearTimeout(state.spotlightTimer);
+            try { localStorage.setItem(getSpotlightStorageKey(), '1'); } catch (e) { /* ignore */ }
         }
 
         function dismissSpotlight() {
             state.spotlightDismissed = true;
+            markSpotlightSeen();
             render();
         }
 
@@ -16124,8 +16140,9 @@
 
         // mode: 'empty'    -> nothing pre-checked (Make a Shortlist / Start Fresh)
         //       'existing' -> pre-check the user's real `shortlists` rows (Edit Shortlist)
-        //       'auto'     -> pre-check images the user scored 4 or 5 (Auto-Generate Shortlist > Preload)
-        // Pre-checking is local state only. Rows are written one toggle at a time as the user changes things.
+        //       'auto'     -> check images the user scored 4 or 5 (Auto-Generate Shortlist > Preload) and save them
+        //                     as real rows immediately, so the screen never shows checks that are not stored
+        // After that, rows are written one toggle at a time as the user changes things.
         async function startShortlistVoting(itemType, itemId, mode = 'empty') {
             if (!state.user) return;
             state.modal = null;
@@ -16148,7 +16165,6 @@
                 const realRows = await fetchAllShortlistsPaginated(userContestFilter, 'image_id,contest_id');
                 const selected = {};
                 const persisted = {};
-                let materialize = false;
 
                 ctx.contestIds.forEach(contestId => { delete state.userShortlists[contestId]; });
                 realRows.forEach(row => {
@@ -16166,23 +16182,28 @@
                     votes.forEach(vote => {
                         if (vote.score >= 4 && imageIdSet.has(vote.image_id)) selected[vote.image_id] = true;
                     });
-                    // The preloaded set stays local until the user changes something; that first change saves the
-                    // set they curated as their real shortlist (otherwise only the edit itself would be stored).
-                    materialize = Object.keys(selected).length > 0;
                 }
 
-                clearTimeout(autoSaveTimer);
-                state.votingFormat = 'shortlist';
-                state.shortlistSession = {
+                const session = {
                     itemType,
                     itemId,
                     title: ctx.title,
                     contestIds: ctx.contestIds,
                     contestByImage: ctx.contestByImage,
                     selected,
-                    persisted,
-                    materialize
+                    persisted
                 };
+
+                // Auto-generate: save the whole auto-converted set right now, so every checked box on screen is
+                // already a real row. If this fails nothing is shown, so the screen never claims unsaved picks.
+                const autoImageIds = Object.keys(selected).map(Number);
+                if (mode === 'auto' && realRows.length === 0 && autoImageIds.length > 0) {
+                    await insertShortlistRows(session, autoImageIds);
+                }
+
+                clearTimeout(autoSaveTimer);
+                state.votingFormat = 'shortlist';
+                state.shortlistSession = session;
                 state.shortlistSelected = selected;
                 state.shortlistFilter = [];
                 state.shuffledImages = shuffleArray(ctx.images);
@@ -16227,8 +16248,8 @@
                     }, 400);
                 }
 
-                if (mode === 'auto' && materialize) {
-                    showToast('Auto-converted shortlist loaded (scores 4-5). Nothing is saved until you change something.', '🔖');
+                if (mode === 'auto' && autoImageIds.length > 0 && realRows.length === 0) {
+                    showToast(`Auto-generated shortlist saved (${autoImageIds.length} images with scores 4-5).`, '🔖');
                 }
             } catch (error) {
                 console.error('Error starting shortlist voting:', error);
@@ -16333,12 +16354,7 @@
         async function syncShortlistImage(session, imageId) {
             const want = !!session.selected[imageId];
             try {
-                if (session.materialize) {
-                    // First change after "Preload the Auto-Converted Shortlist": store the set the user is curating.
-                    const pending = Object.keys(session.selected).map(Number).filter(id => !session.persisted[id]);
-                    if (pending.length > 0) await insertShortlistRows(session, pending);
-                    session.materialize = false;
-                } else if (want && !session.persisted[imageId]) {
+                if (want && !session.persisted[imageId]) {
                     await insertShortlistRows(session, [imageId]);
                 }
                 if (!want && session.persisted[imageId]) {
@@ -16484,12 +16500,15 @@
                         Click images to add or remove them from your shortlist
                         <span class="font-bold" style="color: ${getScoreColor(5)};">(${shortlistedCount}/${totalCount})</span>
                     </span>
-                    <button onclick="finishShortlistVoting()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg whitespace-nowrap">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        Done
-                    </button>
+                    <div class="flex flex-col items-end gap-1 flex-shrink-0">
+                        <button onclick="finishShortlistVoting()" class="bg-gradient-to-r from-green-500 to-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:from-green-600 hover:to-green-800 transition flex items-center gap-2 shadow-lg whitespace-nowrap">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Done
+                        </button>
+                        <span class="text-xs text-gray-500 leading-tight">Each tick and untick saves right away.</span>
+                    </div>
                 </div>
             `;
         }
@@ -16809,11 +16828,18 @@
                 if (byImage.has(imageId)) byImage.get(imageId).push(v);
             }));
 
-            const presence = new Map();   // contestId -> voters represented in that contest
-            voters.forEach(v => v.contests.forEach(contestId => {
-                if (!presence.has(contestId)) presence.set(contestId, []);
-                presence.get(contestId).push(v);
-            }));
+            // contestId -> the voters that count as "everyone who could have shortlisted this image".
+            // Single contest / extract: voters represented in the image's own contest. Merger: one shared pool of
+            // every real + auto-converted voter across all the merger's contests, whatever an image's source contest.
+            const presence = new Map();
+            if (state.view === 'mergedResults') {
+                new Set(data.imageContest.values()).forEach(contestId => presence.set(contestId, voters));
+            } else {
+                voters.forEach(v => v.contests.forEach(contestId => {
+                    if (!presence.has(contestId)) presence.set(contestId, []);
+                    presence.get(contestId).push(v);
+                }));
+            }
 
             return { images: data.images, imageContest: data.imageContest, voters, voterMap, byImage, presence };
         }
@@ -16840,7 +16866,7 @@
         }
 
         // For a user's shortlist: average, over their shortlisted images, of (other voters who also shortlisted it /
-        // all other voters represented in that image's contest).
+        // all other voters in the pool). The pool is the image's contest, or the whole merger in a merger view.
         function computeCrowdAgreement(view, userId) {
             const me = view.voterMap.get(userId);
             if (!me) return { count: 0, pct: null };
