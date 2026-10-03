@@ -14061,7 +14061,6 @@
                     ...img,
                     averageScore: userVotesMap[img.id] || 0,
                     userVoteScore: userVotesMap[img.id],
-                    imageAverage: img.averageScore,
                     isBlocked: blockedVotesSet.has(img.id)
                 })).filter(img => img.userVoteScore);
 
@@ -14074,7 +14073,8 @@
 
             return sortedKeys.map(key => {
                 const group = grouped[key];
-                group.items = orderImagesForByUser(group.items, img => img.imageAverage || 0);
+                // Popular = the existing order (by overall average, untouched). Random only shuffles inside each group.
+                if (state.byUserOrder === 'random') group.items = shuffleByUserImages(group.items);
                 const score = group.score;
                 const colorStyle = getScoreColor(score);
                 const sectionKey = `byuser_${score}`;
@@ -17241,13 +17241,16 @@
             render();
         }
 
-        // By User image grid order: Popular = highest average / shortlist count first, Random = shuffled.
+        // Random order for the classic By User groups (no sorting is added for Popular - that is the default order)
+        function shuffleByUserImages(images) {
+            const rank = id => (state.byUserRandomRanks[`img_${id}`] ??= Math.random());
+            return [...images].sort((a, b) => rank(a.id) - rank(b.id));
+        }
+
+        // Shortlist By User image grid order: Popular = highest average / shortlist count first, Random = shuffled.
         // Random ranks are kept per image until Random is chosen again. Ties keep the original order.
         function orderImagesForByUser(images, popularityOf) {
-            if (state.byUserOrder === 'random') {
-                const rank = id => (state.byUserRandomRanks[`img_${id}`] ??= Math.random());
-                return [...images].sort((a, b) => rank(a.id) - rank(b.id));
-            }
+            if (state.byUserOrder === 'random') return shuffleByUserImages(images);
             return images.map((img, index) => ({ img, index }))
                 .sort((a, b) => (popularityOf(b.img) - popularityOf(a.img)) || (a.index - b.index))
                 .map(entry => entry.img);
