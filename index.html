@@ -4744,14 +4744,14 @@
                     offset += limit;
                 }
 
-                // Current shortlist rows from the window start onward (paginated, no upper bound so each user + contest
-                // MAX(created_at) is the true latest). Failure here must not break the log.
+                // Current shortlist rows inside the selected date range (paginated, like the other entry types), so an
+                // entry's timestamp is the latest row within the range. Failure here must not break the log.
                 let shortlistRows = [];
                 try {
                     let slOffset = 0;
                     while (true) {
                         const slResponse = await fetchFromSupabase(
-                            `/rest/v1/shortlists?created_at=gte.${weekStartISO}&limit=${limit}&offset=${slOffset}&select=user_id,contest_id,created_at,users!inner(username,avatar)&order=created_at.desc`
+                            `/rest/v1/shortlists?created_at=gte.${weekStartISO}&created_at=lte.${weekEndISO}&limit=${limit}&offset=${slOffset}&select=user_id,contest_id,created_at,users!inner(username,avatar)&order=created_at.desc`
                         );
                         if (!slResponse.ok) break;
                         const slBatch = await slResponse.json();
@@ -4848,7 +4848,6 @@
                     if (!existing || new Date(row.created_at) > new Date(existing.created_at)) latestShortlist.set(key, row);
                 });
                 latestShortlist.forEach((row, key) => {
-                    if (new Date(row.created_at) > weekEnd) return;   // latest change is after the selected window
                     const contest = state.contests.find(c => c.id === row.contest_id);
                     activityMap.set(`shortlist-${key}`, {
                         type: 'shortlist',
@@ -15854,12 +15853,6 @@
 
         // Per-card, local-only toggle between the classic and shortlist button sets.
         function toggleCardFormat(itemType, itemId) {
-            // Clicking the spotlighted toggle for the first time also dismisses the callout
-            const spotlightTarget = getSpotlightTarget();
-            if (state.spotlightActive && spotlightTarget && spotlightTarget.type === itemType && spotlightTarget.id === itemId) {
-                state.spotlightDismissed = true;
-                markSpotlightSeen();
-            }
             const key = `${itemType}_${itemId}`;
             if (state.cardFormats[key] === 'shortlist') {
                 delete state.cardFormats[key];
@@ -15885,7 +15878,7 @@
             return `
                 <div class="relative">
                     ${toggle}
-                    <div data-spotlight="1" class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
+                    <div class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
                         New: tap here to try Shortlist voting
                         <button onclick="dismissSpotlight()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
                         <div class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
@@ -15906,42 +15899,26 @@
             return null;
         }
 
-        // True while the callout should be drawn on this card. Rendering alone does not use it up: the "seen" flag is
-        // stored only when the callout is dismissed (X), its toggle is clicked, or it has stayed up for 5 seconds.
+        // True while the callout should be drawn on this card. The "seen" flag is stored the moment it is first drawn,
+        // so it shows once per user ever; the X only hides it for the rest of this page view.
         function shouldShowSpotlight(itemType, itemId, isPinned) {
             if (!isPinned || !state.user || state.spotlightDismissed) return false;
             const target = getSpotlightTarget();
             if (!target || target.type !== itemType || target.id !== itemId) return false;
             if (state.spotlightActive) return true;
+            const storageKey = `peony_shortlist_spotlight_seen_${state.user.id}`;
             try {
-                if (localStorage.getItem(getSpotlightStorageKey())) return false;
+                if (localStorage.getItem(storageKey)) return false;
+                localStorage.setItem(storageKey, '1');
             } catch (e) {
                 return false;   // cannot remember it, so do not risk showing it every visit
             }
             state.spotlightActive = true;
-            clearTimeout(state.spotlightTimer);
-            state.spotlightTimer = setTimeout(() => {
-                if (document.querySelector('[data-spotlight]')) {
-                    markSpotlightSeen();
-                } else {
-                    state.spotlightActive = false;   // never actually on screen for 5s - leave the flag unused
-                }
-            }, 5000);
             return true;
-        }
-
-        function getSpotlightStorageKey() {
-            return `peony_shortlist_spotlight_seen_${state.user.id}`;
-        }
-
-        function markSpotlightSeen() {
-            clearTimeout(state.spotlightTimer);
-            try { localStorage.setItem(getSpotlightStorageKey(), '1'); } catch (e) { /* ignore */ }
         }
 
         function dismissSpotlight() {
             state.spotlightDismissed = true;
-            markSpotlightSeen();
             render();
         }
 
@@ -15954,7 +15931,7 @@
             },
             avatar: {
                 title: "Your profile picture isn't loading",
-                intro: "This usually happens when you've updated your Discord profile picture since you last logged in here - the old link stops working. A quick re-login refreshes it:"
+                intro: "This usually happens when you've updated your Discord profile picture since you last logged in here - the old link stops working, so you might see a 👻 placeholder in the meantime. A quick re-login refreshes it:"
             }
         };
 
