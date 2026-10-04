@@ -941,15 +941,6 @@
         body.cold-theme .border-gray-300 { border-color: #c5d9e8 !important; }
         body.cold-theme .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #c5d9e8 !important; }
 
-        /* ===== Light themes (Light, Cold): white text on the score-3 yellow is only 1.9:1, so use dark text ===== */
-        body:not(.dark-theme) .bg-gradient-to-r.from-yellow-500.to-yellow-600,
-        body:not(.dark-theme) [style*="background-color: rgb(234, 179, 8);"],
-        body:not(.dark-theme) [style$="background-color: rgb(234, 179, 8)"],
-        body:not(.dark-theme) [style*="background:rgb(234, 179, 8);"],
-        body:not(.dark-theme) [style*="background: rgb(234, 179, 8);"] {
-            color: #1f2937 !important;
-        }
-
         /* ===== Hot Theme (dark-theme + hot-theme classes applied together) ===== */
 
         /* Body background: dark gray → dark red */
@@ -13663,7 +13654,7 @@
                 if (startIdx < imageCount) {
                     panel = `
                         <div class="bg-gray-100 px-2 py-1.5 border-b border-gray-200">
-                            <div class="text-xs font-medium text-gray-600 mb-1">${startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`}</div>
+                            <div class="text-xs font-medium text-gray-600 mb-1">${startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`} - tap a segment below to jump to that image</div>
                             <div class="flex gap-1">
                                 ${state.shuffledImages.slice(startIdx, endIdx).map((img, i) => {
                                     const idx = startIdx + i;
@@ -16737,6 +16728,10 @@
                     await insertShortlistRows(session, autoImageIds);
                 }
 
+                // A brand-new shortlist (Start Fresh / Make a Shortlist with no real rows) starts with nothing skipped.
+                // Edit Shortlist (real rows) and Preload keep the saved set.
+                if (mode === 'empty' && realRows.length === 0) clearSkippedImages(itemType, itemId);
+
                 clearTimeout(autoSaveTimer);
                 state.votingFormat = 'shortlist';
                 state.shortlistSession = session;
@@ -16817,6 +16812,7 @@
         function confirmAutoGenerateShortlistFresh() {
             const pending = state.pendingShortlistItem;
             if (!pending) return closeModal();
+            clearSkippedImages(pending.itemType, pending.itemId);
             startShortlistVoting(pending.itemType, pending.itemId, 'empty');
         }
 
@@ -16929,6 +16925,13 @@
             return `peony_sl_skipped_${state.user ? state.user.id : 'anon'}_${session.itemType}_${session.itemId}`;
         }
 
+        // Forgets the saved explicit-skip set of one item so its voting screen starts without red tiles or segments
+        function clearSkippedImages(itemType, itemId) {
+            try {
+                sessionStorage.removeItem(getSkippedStorageKey({ itemType, itemId }));
+            } catch (e) { /* storage unavailable: nothing saved to clear */ }
+        }
+
         function loadSkippedImages(session, imageIdSet) {
             const skipped = {};
             try {
@@ -16958,10 +16961,10 @@
         }
 
         // ---------- Prank: "ItsADifferentConcept" (purely visual, never touches votes, shortlists or the database) ----------
-        // After a real vote action there is a 0.8% chance a mirrored copy of the image appears. It has a synthetic id,
+        // After a real vote action there is a 4% chance (PRANK_CHANCE) a mirrored copy of the image appears. It has a synthetic id,
         // is never part of state.shuffledImages / votes / shortlists, and any vote on it just removes it.
 
-        const PRANK_CHANCE = 0.008;
+        const PRANK_CHANCE = 0.04;   // 4% per roll
         let prankSerial = 0;
 
         function rollPrank() {
@@ -17242,6 +17245,8 @@
         // Same theme-aware gradient as the "View Results" button on the home cards
         const VIEW_RESULTS_BTN_CLASS = 'bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md';
 
+        const SHORTLIST_AUTOSAVE_CAPTION = 'Each tick and untick saves as you go.';
+
         function renderShortlistMultiBottomPanel(shortlistedCount, totalCount) {
             return `
                 <div class="flex items-center justify-between gap-4">
@@ -17249,11 +17254,12 @@
                         Click images to add or remove them from your shortlist
                         <span class="font-bold" style="color: ${getScoreColor(5)};">(${shortlistedCount}/${totalCount})</span>
                     </span>
+                    <span class="hidden sm:block flex-1 text-center text-sm text-gray-500 leading-tight whitespace-nowrap">${SHORTLIST_AUTOSAVE_CAPTION}</span>
                     <div class="flex flex-col items-end gap-1 flex-shrink-0">
                         <button onclick="finishShortlistVoting()" class="${VIEW_RESULTS_BTN_CLASS} px-8 py-3 rounded-lg whitespace-nowrap">
                             View Results
                         </button>
-                        <span class="text-xs text-gray-500 leading-tight">Each tick and untick saves right away.</span>
+                        <span class="text-sm text-gray-500 leading-tight text-right max-w-[11rem] sm:hidden">${SHORTLIST_AUTOSAVE_CAPTION}</span>
                     </div>
                 </div>
             `;
@@ -17261,31 +17267,31 @@
 
         // Prev on the left; View Results (same look as the card button) next to Next on the right. The whole row swipes (left = next, right = previous).
         function renderShortlistNavRow() {
+            // Narrow: Prev / View Results / Next share one row (View Results truly centred) with the caption centred underneath.
+            // Wide (sm+): Prev, caption filling the free space, then View Results and Next on the right.
             return `
-                <div class="flex justify-between items-center gap-2" data-swipe="nav" style="touch-action: pan-y; user-select: none;">
+                <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-x-2 gap-y-2 sm:flex sm:gap-2" data-swipe="nav" style="touch-action: pan-y; user-select: none;">
                     <button
                         onclick="navigateImage('prev')"
                         ${state.currentImageIndex === 0 ? 'disabled' : ''}
-                        class="flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm flex-shrink-0"
+                        class="col-start-1 row-start-1 justify-self-start flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm flex-shrink-0"
                     >
                         ← Prev
                     </button>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        <button
-                            onclick="finishShortlistVoting()"
-                            class="${VIEW_RESULTS_BTN_CLASS} px-6 py-2 rounded-lg text-sm"
-                        >
-                            View Results
-                        </button>
-                        <button
-                            onclick="navigateImage('next')"
-                            class="flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition text-sm"
-                        >
-                            Next →
-                        </button>
-                    </div>
+                    <p class="col-span-3 row-start-2 text-sm text-gray-500 leading-tight text-center sm:flex-1 sm:col-auto sm:row-auto">${SHORTLIST_AUTOSAVE_CAPTION}</p>
+                    <button
+                        onclick="finishShortlistVoting()"
+                        class="${VIEW_RESULTS_BTN_CLASS} col-start-2 row-start-1 px-4 sm:px-6 py-2 rounded-lg text-sm whitespace-nowrap flex-shrink-0"
+                    >
+                        View Results
+                    </button>
+                    <button
+                        onclick="navigateImage('next')"
+                        class="col-start-3 row-start-1 justify-self-end flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition text-sm flex-shrink-0"
+                    >
+                        Next →
+                    </button>
                 </div>
-                <p class="text-[11px] text-gray-500 leading-tight text-center mt-2">Each tick and untick saves right away.</p>
             `;
         }
 
@@ -17295,14 +17301,14 @@
                 <div class="flex gap-3 mb-3" data-swipe="vote" style="touch-action: pan-y; user-select: none;">
                     <button
                         onclick="handleShortlistNo()"
-                        class="flex-1 py-3 px-2 rounded-xl font-bold text-white text-sm sm:text-base shadow-lg hover:scale-[1.02] transition-transform ${status === 'no' ? 'ring-4 ring-offset-2' : ''}"
+                        class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'no' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(1)}; ring-color: ${getScoreColor(1)};"
-                    >← Swipe left to Skip ✕</button>
+                    ><span class="hidden sm:inline">← </span>Swipe left to Skip<span class="hidden sm:inline"> ✕</span></button>
                     <button
                         onclick="handleShortlistYes()"
-                        class="flex-1 py-3 px-2 rounded-xl font-bold text-white text-sm sm:text-base shadow-lg hover:scale-[1.02] transition-transform ${status === 'yes' ? 'ring-4 ring-offset-2' : ''}"
+                        class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'yes' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(5)}; ring-color: ${getScoreColor(5)};"
-                    >Swipe right to Shortlist ✓ →</button>
+                    >Swipe right to Shortlist<span class="hidden sm:inline"> ✓ →</span></button>
                 </div>
             `;
         }
