@@ -76,10 +76,13 @@
             --mauve-300: 216 143 184; --mauve-400: 199 123 166; --mauve-500: 183 110 158; --mauve-600: 168 101 144; --mauve-700: 153 92 130;
             --blue-400: 96 165 250; --blue-500: 59 130 246; --blue-600: 37 99 235; --blue-700: 29 78 216;
         }
-        /* Cold theme: gingerbread replaces mauve, glacier blue replaces blue (white text stays >= 4.5:1) */
+        /* Cold theme: gingerbread replaces mauve, a snowy-to-deep glacier blue replaces blue.
+           Mauve gradient runs 4.1:1 -> 8.0:1 and blue gradient 3.1:1 -> 4.6:1 against white text */
         body.cold-theme {
-            --mauve-300: 184 131 95; --mauve-400: 154 100 68; --mauve-500: 139 90 60; --mauve-600: 122 78 51; --mauve-700: 106 67 44;
-            --blue-400: 47 120 168; --blue-500: 47 120 168; --blue-600: 43 111 158; --blue-700: 35 93 134;
+            --mauve-300: 190 138 98; --mauve-400: 168 113 74; --mauve-500: 150 99 65; --mauve-600: 130 84 54; --mauve-700: 112 71 46;
+            --blue-400: 72 153 208; --blue-500: 72 153 208; --blue-600: 42 122 181; --blue-700: 30 88 132;
+            /* Gingerbread -> Christmas-tree evergreen -> glacier blue (shared by the app bar and the logo circles) */
+            --cold-bar-gradient: linear-gradient(to right, #a8714a 0%, #a8714a 6%, #2e7d4f 32%, #2e7d4f 56%, #2a7ab5 100%);
         }
         
         @keyframes tickAppear {
@@ -903,15 +906,29 @@
 
         /* ===== Cold Theme (light-based; body.cold-theme only, no dark-theme class) ===== */
 
-        /* Snowy page background */
+        /* Icy page background: clearly blue at the top, fading to white */
         body.cold-theme {
-            background: linear-gradient(to bottom, #eef5fa, #e1edf5) !important;
+            background: linear-gradient(to bottom, #b9d9ef, #ffffff) !important;
+            background-attachment: fixed !important;
         }
 
-        /* App bar: deep glacier blue (white text >= 4.8:1 on every stop) */
+        /* App bar: gingerbread -> evergreen -> glacier blue (white text >= 4.1:1 on every stop) */
         body.cold-theme .app-bar-bg {
-            background-image: linear-gradient(to right, #26668f, #2b6f9e 50%, #2f78a8) !important;
+            background-image: var(--cold-bar-gradient) !important;
         }
+
+        /* Peony logo circles (app bar and login screen) share the app bar gradient */
+        body.cold-theme .peony-logo {
+            background-image: var(--cold-bar-gradient) !important;
+            box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.55);
+        }
+
+        /* Merger cards: deeper, more saturated ice blue with a stronger border so they stand out */
+        body.cold-theme .merger-card {
+            background-color: #b0d5f0 !important;
+            border-color: #2f78ad !important;
+        }
+        body.cold-theme .merger-card .text-gray-500 { color: #4b5563 !important; }
 
         /* Ice-tinted cards, panels and borders */
         body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
@@ -11094,7 +11111,7 @@
                 <header class="safe-header app-bar-bg bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-2 sm:py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
-                            <div onclick="backToHome()" class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500 cursor-pointer hover:opacity-80 transition">
+                            <div onclick="backToHome()" class="peony-logo w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500 cursor-pointer hover:opacity-80 transition">
                                 <span class="text-xl">🌺</span>
                             </div>
                             <h1 onclick="backToHome()" class="text-xl font-bold cursor-pointer hover:opacity-80 transition">Peony</h1>
@@ -11194,7 +11211,7 @@
                         </div>
                     ` : ''}
                     <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <div class="peony-logo w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌺</span>
                         </div>
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
@@ -12917,7 +12934,7 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
+                <div class="merger-card bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
                     ${unvotedLabel ? `
                         <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                             ${unvotedLabel}
