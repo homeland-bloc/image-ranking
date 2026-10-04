@@ -14225,7 +14225,7 @@
 
                     return `
                         <div class="flex items-stretch gap-2">
-                            <div class="${opts.suffix ? 'w-20' : 'w-16'} flex-shrink-0 rounded-lg flex items-center justify-center gap-1 text-white font-bold text-sm shadow-lg px-2 py-2 cursor-pointer select-none" style="background-color: ${bgColor};" onclick="toggleSection('${sectionKey}')">
+                            <div class="${opts.suffix || opts.wide ? 'w-20' : 'w-16'} flex-shrink-0 rounded-lg flex items-center justify-center gap-1 text-white font-bold text-sm shadow-lg px-2 py-2 cursor-pointer select-none" style="background-color: ${bgColor};" onclick="toggleSection('${sectionKey}')">
                                 ${renderCollapseArrow(sectionKey)}
                                 <div class="text-xl">${count}${opts.suffix || ''}</div>
                             </div>
@@ -17208,16 +17208,27 @@
 
         // Real `shortlists` rows + auto-converted classic votes. Computed ONCE per results page / info modal and
         // cached (state.shortlistData / the modal's pool); every shortlist tab reads that cache.
+        //
+        // PARTICIPATION RULE (the one shared rule for every shortlist count): a user is ELIGIBLE for an image iff they took
+        // part in the image's home contest - they have at least one real shortlists row in that contest, or their classic
+        // votes in that contest auto-convert to a non-empty set (real rows override auto-conversion for that contest).
+        // participation: Map(contestId -> Set(userId)) is computed here once; nothing recomputes it per tab.
         function buildShortlistData(key, scope, rows, votes) {
             const imageContest = new Map(scope.images.map(img => [img.id, img.contestId]));
             const voters = {};
+            const participation = new Map();
+            const markParticipation = (contestId, userId) => {
+                if (!participation.has(contestId)) participation.set(contestId, new Set());
+                participation.get(contestId).add(userId);
+            };
             const ensureVoter = (userId, username, avatar) => {
                 if (!voters[userId]) {
                     voters[userId] = {
                         userId, username, avatar,
                         images: new Set(),          // image ids in this user's shortlist (real or auto-converted)
                         scoreByImage: new Map(),    // classic scores, only for contests represented via auto-conversion
-                        contests: new Set(),        // contests this user is represented in
+                        contests: new Set(),        // contests this user took part in (real or auto-converted)
+                        realContests: new Set(),    // ...of which through a real shortlists row
                         hasReal: false,             // has at least one real shortlist row
                         hasAuto: false              // is represented through auto-conversion in at least one contest
                     };
@@ -17231,24 +17242,26 @@
                 const user = row.users;
                 if (!user || user.is_banned) return;
                 hasRealShortlist.add(`${row.user_id}|${row.contest_id}`);
-                if (!imageContest.has(row.image_id)) return;
                 const voter = ensureVoter(row.user_id, user.username, user.avatar);
-                voter.images.add(row.image_id);
                 voter.contests.add(row.contest_id);
+                voter.realContests.add(row.contest_id);
                 voter.hasReal = true;
+                markParticipation(row.contest_id, row.user_id);
+                if (imageContest.has(row.image_id)) voter.images.add(row.image_id);
             });
 
             deriveAutoConvertedShortlists(votes.filter(v => imageContest.has(v.imageId)), hasRealShortlist).forEach(entry => {
                 const voter = ensureVoter(entry.userId, entry.username, entry.avatar);
                 voter.contests.add(entry.contestId);
                 voter.hasAuto = true;
+                markParticipation(entry.contestId, entry.userId);
                 entry.scores.forEach((score, imageId) => {
                     voter.scoreByImage.set(imageId, score);
                     if (score >= 4) voter.images.add(imageId);
                 });
             });
 
-            return { key, images: scope.images, imageContest, voters };
+            return { key, images: scope.images, imageContest, voters, participation };
         }
 
         async function loadShortlistData(force = false) {
@@ -17370,20 +17383,23 @@
                 if (byImage.has(imageId)) byImage.get(imageId).push(v);
             }));
 
-            // contestId -> the voters that count as "everyone who could have shortlisted this image".
-            // Single contest / extract: voters represented in the image's own contest. Merger: one shared pool of
-            // every real + auto-converted voter across all the merger's contests, whatever an image's source contest.
+            // contestId -> the (filtered) voters ELIGIBLE for that contest's images, per the participation rule in buildShortlistData
             const presence = new Map();
-            if (state.view === 'mergedResults') {
-                new Set(data.imageContest.values()).forEach(contestId => presence.set(contestId, voters));
-            } else {
-                voters.forEach(v => v.contests.forEach(contestId => {
-                    if (!presence.has(contestId)) presence.set(contestId, []);
-                    presence.get(contestId).push(v);
-                }));
-            }
+            const presenceIds = new Map();
+            data.participation.forEach((userIds, contestId) => {
+                const eligible = voters.filter(v => userIds.has(v.userId));
+                presence.set(contestId, eligible);
+                presenceIds.set(contestId, new Set(eligible.map(v => v.userId)));
+            });
 
-            return { images: data.images, imageContest: data.imageContest, voters, voterMap, byImage, presence };
+            const view = { images: data.images, imageContest: data.imageContest, voters, voterMap, byImage, presence, presenceIds };
+            // Voters eligible for an image / for both images of a pair
+            view.eligibleFor = imageId => presence.get(data.imageContest.get(imageId)) || [];
+            view.eligibleForBoth = (idA, idB) => {
+                const idsB = presenceIds.get(data.imageContest.get(idB));
+                return view.eligibleFor(idA).filter(v => idsB && idsB.has(v.userId));
+            };
+            return view;
         }
 
         // ---------- Shortlist math (separate from the classic Pearson / match-based code) ----------
@@ -17407,21 +17423,29 @@
                 });
         }
 
-        // For a user's shortlist: average, over their shortlisted images, of (other voters who also shortlisted it /
-        // all other voters in the pool). The pool is the image's contest, or the whole merger in a merger view.
-        function computeCrowdAgreement(view, userId) {
+        // Crowd agreement for one user, INCLUDING themself: over the images on their shortlist, the average of
+        // (a) how many users shortlisted each image and (b) that count as a share of the image's eligible users.
+        // `images` limits it to the Images filter. Returns { count, avgCount, pct } (avgCount / pct null with no images).
+        function computeCrowdAgreement(view, userId, imageFilterIds = null) {
             const me = view.voterMap.get(userId);
-            if (!me) return { count: 0, pct: null };
+            if (!me) return { count: 0, avgCount: null, pct: null };
+            let countSum = 0;
             let ratioSum = 0;
             let counted = 0;
             me.images.forEach(imageId => {
-                const others = (view.presence.get(view.imageContest.get(imageId)) || []).filter(v => v.userId !== userId);
-                if (others.length === 0) return;
-                const agreeing = others.filter(v => v.images.has(imageId)).length;
-                ratioSum += agreeing / others.length;
+                if (imageFilterIds !== null && !imageFilterIds.has(imageId)) return;
+                const shortlisted = (view.byImage.get(imageId) || []).length;
+                const eligible = view.eligibleFor(imageId).length;
+                if (shortlisted === 0 || eligible === 0) return;
+                countSum += shortlisted;
+                ratioSum += shortlisted / eligible;
                 counted++;
             });
-            return { count: me.images.size, pct: counted > 0 ? Math.round((ratioSum / counted) * 100) : null };
+            return {
+                count: me.images.size,
+                avgCount: counted > 0 ? countSum / counted : null,
+                pct: counted > 0 ? Math.round((ratioSum / counted) * 100) : null
+            };
         }
 
         // Pairwise comparison of two users' shortlists.
@@ -17456,18 +17480,25 @@
                 }));
         }
 
-        // Count tab: one number per user - shortlisted images (# or % of the images) or their crowd agreement (%).
-        function generateShortlistCountUsers(view, value, mode, totalImages) {
+        // Count tab: one number per user - shortlisted images (# or % of the images in the contests they took part in)
+        // or their crowd agreement (average number or share of users who shortlisted the images they picked).
+        function generateShortlistCountUsers(view, value, mode) {
             const imageFilterIds = getFilteredImageIds();
             const grouped = {};
             view.voters.forEach(v => {
                 let metric;
                 if (value === 'crowd') {
-                    metric = computeCrowdAgreement(view, v.userId).pct ?? 0;
+                    const stat = computeCrowdAgreement(view, v.userId, imageFilterIds);
+                    metric = mode === 'pct' ? (stat.pct ?? 0) : Math.round((stat.avgCount ?? 0) * 10) / 10;
                 } else {
                     let count = 0;
                     v.images.forEach(imageId => { if (imageFilterIds === null || imageFilterIds.has(imageId)) count++; });
-                    metric = mode === 'pct' ? (totalImages > 0 ? Math.round((count / totalImages) * 100) : 0) : count;
+                    if (mode === 'pct') {
+                        const total = view.images.filter(img => v.contests.has(view.imageContest.get(img.id)) && (imageFilterIds === null || imageFilterIds.has(img.id))).length;
+                        metric = total > 0 ? Math.round((count / total) * 100) : 0;
+                    } else {
+                        metric = count;
+                    }
                 }
                 if (!grouped[metric]) grouped[metric] = [];
                 grouped[metric].push({ userId: v.userId, username: v.username, avatar: v.avatar, count: metric });
@@ -17520,12 +17551,10 @@
 
         function setCountShortlistValue(value) {
             state.countShortlistValue = value;
-            if (value === 'crowd') state.countShowMode = 'pct';   // crowd agreement is inherently a percentage
             render();
         }
 
         function setCountShowMode(mode) {
-            if (mode === 'num' && state.countShortlistValue === 'crowd') return;
             state.countShowMode = mode;
             render();
         }
@@ -17535,12 +17564,12 @@
             render();
         }
 
-        function renderShowModeSwitch(handler, mode, disableNum = false) {
-            const btn = (key, label, disabled) => `<button ${disabled ? 'disabled' : `onclick="${handler}('${key}')"`} class="px-3 py-1 rounded-lg text-xs font-medium ${mode === key ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}">${label}</button>`;
+        function renderShowModeSwitch(handler, mode) {
+            const btn = (key, label) => `<button onclick="${handler}('${key}')" class="px-3 py-1 rounded-lg text-xs font-medium ${mode === key ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">${label}</button>`;
             return `
                 <div class="flex items-center justify-center gap-2 mb-2">
                     <label class="text-xs font-medium text-gray-700">Show:</label>
-                    ${btn('num', '#', disableNum)}${btn('pct', '%', false)}
+                    ${btn('num', '#')}${btn('pct', '%')}
                 </div>
             `;
         }
@@ -17555,8 +17584,8 @@
                         ${valueBtn('count', 'Shortlist Count')}${valueBtn('crowd', 'Crowd Agreement')}
                     </div>
                     <p class="text-xs text-gray-500 text-center max-w-md mx-auto mt-1">${isCrowd
-                        ? "Crowd Agreement: how often this person's picks were also picked by others, on average."
-                        : 'Shortlist Count: how many images this person shortlisted.'}</p>
+                        ? 'Crowd Agreement: the average number (or share) of users who shortlisted the images this user picked, including themselves.'
+                        : 'Shortlist Count: how many images this user shortlisted (or the share of the images in the contests they took part in).'}</p>
                 `;
             }
             // Total / Pairs have no extra controls
@@ -17754,13 +17783,12 @@
             }
             const imageFilterIds = getFilteredImageIds();
             const totalImages = view.images.filter(img => imageFilterIds === null || imageFilterIds.has(img.id)).length;
-            const isCrowd = state.countShortlistValue === 'crowd';
-            const mode = isCrowd ? 'pct' : state.countShowMode;
-            const data = generateShortlistCountUsers(view, state.countShortlistValue, mode, totalImages);
+            const mode = state.countShowMode;
+            const data = generateShortlistCountUsers(view, state.countShortlistValue, mode);
             return `
-                ${renderShowModeSwitch('setCountShowMode', mode, isCrowd)}
+                ${renderShowModeSwitch('setCountShowMode', mode)}
                 <p class="text-xs text-gray-500 text-center mb-3">${totalImages} image${totalImages !== 1 ? 's' : ''} total</p>
-                ${renderCountUsersMode(imageSize, data, mode === 'pct' ? { suffix: '%' } : {})}
+                ${renderCountUsersMode(imageSize, data, mode === 'pct' ? { suffix: '%' } : (state.countShortlistValue === 'crowd' ? { wide: true } : {}))}
             `;
         }
 
@@ -17960,9 +17988,8 @@
             const imgB = view.images.find(i => i.id === imageBId);
             if (!imgA || !imgB) return '';
 
-            // Everyone who could have shortlisted either image (one shared pool in a merger, the contest's voters otherwise)
-            const pool = new Map();
-            [imageAId, imageBId].forEach(id => (view.presence.get(view.imageContest.get(id)) || []).forEach(v => pool.set(v.userId, v)));
+            // Only users who took part in BOTH images' home contests
+            const pool = new Map(view.eligibleForBoth(imageAId, imageBId).map(v => [v.userId, v]));
             const columns = { both: [], onlyA: [], onlyB: [], neither: [] };
             [...pool.values()].sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase())).forEach(v => {
                 const hasA = v.images.has(imageAId), hasB = v.images.has(imageBId);
@@ -18031,7 +18058,8 @@
 
             const shortlisters = view.byImage.get(imageId) || [];
             const shortlisterIds = new Set(shortlisters.map(v => v.userId));
-            const notShortlisted = (view.presence.get(view.imageContest.get(imageId)) || []).filter(v => !shortlisterIds.has(v.userId));
+            // Only users who took part in this image's home contest are listed at all (see the participation rule)
+            const notShortlisted = view.eligibleFor(imageId).filter(v => !shortlisterIds.has(v.userId));
             const totalVoters = shortlisters.length + notShortlisted.length;
             const yesColor = getScoreColor(5);
             const noColor = getScoreColor(1);
@@ -18041,7 +18069,7 @@
                 const isCurrentUser = state.user && voter.userId === state.user.id;
                 const marker = autoScore !== undefined
                     ? `<span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(autoScore)};" title="Converted from their score of ${autoScore}">${autoScore}</span>`
-                    : (isShortlisted ? `<span class="text-green-600 font-bold flex-shrink-0">✓</span>` : '');
+                    : (isShortlisted ? `<span class="text-green-600 font-bold flex-shrink-0">✓</span>` : `<span class="text-red-600 font-bold flex-shrink-0">✗</span>`);
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
