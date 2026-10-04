@@ -1254,7 +1254,7 @@
             cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'classic' | 'shortlist' (per-card session override of the saved format, never persisted)
             userShortlists: {},        // contestId -> { imageId: true } — current user's real rows in `shortlists`
             shortlistSelected: {},     // imageId -> true — working set on the shortlist voting screen
-            shortlistSession: null,    // { itemType, itemId, title, contestByImage, persisted } while shortlist voting
+            shortlistSession: null,    // { itemType, itemId, title, contestByImage, selected (= desiredShortlist), savedShortlist } while shortlist voting
             countShortlistValue: 'count',  // Count tab (shortlist): 'count' | 'crowd'
             countShowMode: 'num',      // Count tab (shortlist): 'num' | 'pct'
             byUserOrder: 'popular',    // By User dropdown order: 'popular' | 'random'
@@ -4760,7 +4760,9 @@
         }
 
         // Brief non-intrusive "Auto-saved ✓" toast at bottom-center
-        function showAutoSaveToast() {
+        // `text` / `opts` let the shortlist saver reuse it for "Saving…" and failures (opts.hold keeps it visible,
+        // opts.background overrides the green); plain calls behave exactly as before.
+        function showAutoSaveToast(text = 'Auto-saved \u2713', opts = {}) {
             const existing = document.getElementById('autosave-toast');
             if (existing) { existing.remove(); }
             const toast = document.createElement('div');
@@ -4770,7 +4772,7 @@
                 'bottom:24px',
                 'left:50%',
                 'transform:translateX(-50%)',
-                'background:#22c55e',
+                `background:${opts.background || '#22c55e'}`,
                 'color:#fff',
                 'padding:5px 14px',
                 'border-radius:999px',
@@ -4782,10 +4784,11 @@
                 'pointer-events:none',
                 'white-space:nowrap'
             ].join(';');
-            toast.textContent = 'Auto-saved \u2713';
+            toast.textContent = text;
             document.body.appendChild(toast);
             requestAnimationFrame(() => {
                 toast.style.opacity = '1';
+                if (opts.hold) return;
                 setTimeout(() => {
                     toast.style.opacity = '0';
                     setTimeout(() => { if (toast.parentNode) toast.remove(); }, 200);
@@ -7564,8 +7567,9 @@
         async function backToHome() {
             console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
 
-            // Shortlist voting has no draft/autosave — every toggle is already saved, so just leave.
+            // Shortlist voting has no draft/autosave: pending ticks are flushed first, then we leave.
             if (state.votingFormat === 'shortlist') {
+                if (!(await flushShortlistBeforeLeaving())) return;   // alert shown, stay on the voting screen
                 exitShortlistVoting();
             }
             state.resultsFormat = 'classic';
@@ -7667,7 +7671,11 @@
             render();
         }
 
-        function toggleVotingMode() {
+        async function toggleVotingMode() {
+            // Switching between single and multi mode flushes pending shortlist ticks first
+            if (state.votingFormat === 'shortlist' && state.shortlistSession) {
+                if (!(await flushShortlistBeforeLeaving())) return;
+            }
             cancelVoteHold();
             state.prank = null;
             state.progressPanelIndex = null;
@@ -16784,7 +16792,7 @@
                 // the real shortlist wins over 'empty' / 'auto' so nothing is silently overwritten.
                 const realRows = await fetchAllShortlistsPaginated(userContestFilter, 'image_id,contest_id');
                 const selected = {};
-                const persisted = {};
+                const savedShortlist = {};
 
                 ctx.contestIds.forEach(contestId => { delete state.userShortlists[contestId]; });
                 realRows.forEach(row => {
@@ -16792,7 +16800,7 @@
                     state.userShortlists[row.contest_id][row.image_id] = true;
                     if (imageIdSet.has(row.image_id)) {
                         selected[row.image_id] = true;
-                        persisted[row.image_id] = true;
+                        savedShortlist[row.image_id] = true;
                     }
                 });
 
@@ -16811,8 +16819,9 @@
                     contestIds: ctx.contestIds,
                     contestByImage: ctx.contestByImage,
                     selected,
-                    persisted
+                    savedShortlist
                 };
+                resetShortlistSaver(session);
 
                 // Auto-generate: save the whole auto-converted set right now, so every checked box on screen is
                 // already a real row. If this fails nothing is shown, so the screen never claims unsaved picks.
@@ -16915,10 +16924,57 @@
             startShortlistVoting(pending.itemType, pending.itemId, 'auto');
         }
 
-        // ---------- Toggling (immediate write per toggle) ----------
+        // ---------- Toggling: adaptive saver (isolated ticks save at once, rapid bursts are batched) ----------
+        //
+        // desiredShortlist = session.selected (what the screen shows), savedShortlist = session.savedShortlist (image ids
+        // known to be in the database for this user and item). The pending diff is always desired minus saved (inserts)
+        // and saved minus desired (deletes), so an image toggled back to its saved state sends nothing.
 
-        // Writes are chained so rapid toggles reach the database in order.
-        let shortlistWriteChain = Promise.resolve();
+        const BURST_COUNT = 4;          // this many toggles inside BURST_WINDOW_MS switch the saver to burst mode
+        const BURST_WINDOW_MS = 3000;   // sliding window used to count toggles
+        const IDLE_MS = 2000;           // burst mode: flush after this long without any toggle ...
+        const MAX_WAIT_MS = 10000;      // ... or this long after the first held change, whichever comes first
+        const SAVE_RETRY_BASE_MS = 2000;     // failed flush: retry after 2s, 4s, 8s ... capped below
+        const SAVE_RETRY_MAX_MS = 30000;
+        const SAVE_FAILURES_BEFORE_TOAST = 3;
+        const SAVE_CHUNK_SIZE = 300;    // ids per request: short delete URL and keepalive bodies stay well under 64 KB; normally everything fits in one
+
+        // One saver per shortlist session. `inFlight` is the single writer slot: there is never more than one request.
+        const shortlistSaver = {
+            session: null,
+            toggleTimes: [],      // timestamps of recent toggles (sliding window)
+            lastToggleAt: 0,
+            pendingSince: null,   // time of the first toggle since the last flush started (MAX_WAIT_MS anchor)
+            burst: false,
+            timer: null,          // burst-mode flush timer
+            retryTimer: null,
+            inFlight: null,
+            failures: 0,
+            failedShown: false,
+            toastShown: false
+        };
+
+        function resetShortlistSaver(session) {
+            clearTimeout(shortlistSaver.timer);
+            clearTimeout(shortlistSaver.retryTimer);
+            Object.assign(shortlistSaver, {
+                session, toggleTimes: [], lastToggleAt: 0, pendingSince: null, burst: false, timer: null, retryTimer: null,
+                inFlight: null, failures: 0, failedShown: false, toastShown: false
+            });
+        }
+
+        function getShortlistDiff(session) {
+            const inserts = [];
+            const deletes = [];
+            Object.keys(session.selected).forEach(id => { if (!session.savedShortlist[id]) inserts.push(Number(id)); });
+            Object.keys(session.savedShortlist).forEach(id => { if (!session.selected[id]) deletes.push(Number(id)); });
+            return { inserts, deletes };
+        }
+
+        function hasShortlistDiff(session) {
+            const { inserts, deletes } = getShortlistDiff(session);
+            return inserts.length > 0 || deletes.length > 0;
+        }
 
         // Multi mode tile click: an undecided or skipped image becomes shortlisted; unticking a shortlisted one marks it skipped (red)
         function toggleShortlistImage(imageId) {
@@ -16929,6 +16985,7 @@
             renderAfterMultiInteraction(imageId);
         }
 
+        // Local state changes at once (checkbox, red / skip marks, progress bar); the database follows via the saver
         function applyShortlistChange(imageId, shouldShortlist, skipRender = false) {
             const session = state.shortlistSession;
             if (!session) return;
@@ -16939,10 +16996,199 @@
             }
             state.lastClickedImageId = imageId;
             if (!skipRender) render();
-            shortlistWriteChain = shortlistWriteChain
-                .then(() => syncShortlistImage(session, imageId))
-                .catch(() => {});
+            onShortlistToggled(session);
         }
+
+        // 5c: record the toggle in the sliding window, then decide between an immediate save and holding for a burst
+        function onShortlistToggled(session) {
+            const saver = shortlistSaver;
+            if (saver.session !== session) return;
+            const now = Date.now();
+            saver.lastToggleAt = now;
+            saver.toggleTimes.push(now);
+            saver.toggleTimes = saver.toggleTimes.filter(t => now - t < BURST_WINDOW_MS);
+            if (saver.pendingSince === null) saver.pendingSince = now;
+            decideShortlistSave(session);
+        }
+
+        // Runs after every toggle and again whenever a request finishes, for whatever is pending then
+        function decideShortlistSave(session) {
+            const saver = shortlistSaver;
+            if (saver.session !== session) return;
+            if (!hasShortlistDiff(session)) {
+                clearTimeout(saver.timer);
+                saver.timer = null;
+                saver.pendingSince = null;
+                return;
+            }
+            if (saver.inFlight) return;      // the finishing request re-runs this decision
+            if (saver.retryTimer) return;    // a failed save is waiting for its backoff retry
+            const now = Date.now();
+            const recent = saver.toggleTimes.filter(t => now - t < BURST_WINDOW_MS).length;
+            if (!saver.burst && recent < BURST_COUNT) {
+                flushShortlist(session, { batched: false });   // normal mode: save this tick right away
+                return;
+            }
+            saver.burst = true;
+            const since = saver.pendingSince === null ? now : saver.pendingSince;
+            saver.pendingSince = since;
+            const wait = Math.max(0, Math.min(saver.lastToggleAt + IDLE_MS, since + MAX_WAIT_MS) - now);
+            clearTimeout(saver.timer);
+            saver.timer = setTimeout(() => {
+                saver.timer = null;
+                flushShortlist(session, { batched: true });
+            }, wait);
+        }
+
+        // 5b: the single writer. Returns a promise for "this flush succeeded" (true when nothing was pending).
+        function flushShortlist(session, { batched = false } = {}) {
+            const saver = shortlistSaver;
+            if (saver.session !== session) return Promise.resolve(true);
+            if (saver.inFlight) return saver.inFlight.then(() => flushShortlist(session, { batched }));
+            clearTimeout(saver.timer);
+            saver.timer = null;
+            clearTimeout(saver.retryTimer);
+            saver.retryTimer = null;
+
+            // 5d: snapshot the diff when the request starts
+            const { inserts, deletes } = getShortlistDiff(session);
+            if (inserts.length === 0 && deletes.length === 0) {
+                saver.pendingSince = null;
+                return Promise.resolve(true);
+            }
+            saver.pendingSince = null;
+            if (batched) showShortlistSaveStatus('saving');
+
+            const run = (async () => {
+                let ok = false;
+                try {
+                    await sendShortlistChanges(session, inserts, deletes);
+                    ok = true;
+                } catch (error) {
+                    console.error('Shortlist save failed:', error);
+                }
+                saver.inFlight = null;
+                if (saver.session !== session) return ok;
+                if (ok) {
+                    invalidateShortlistCaches(session);
+                    const recovered = saver.failedShown;
+                    saver.failures = 0;
+                    saver.failedShown = false;
+                    saver.toastShown = false;
+                    if (batched) saver.burst = false;   // back to normal mode, re-evaluated on the next toggle
+                    if (batched || recovered) showShortlistSaveStatus('saved');
+                } else {
+                    saver.failures++;
+                    saver.failedShown = true;
+                    showShortlistSaveStatus('failed');
+                    if (saver.failures >= SAVE_FAILURES_BEFORE_TOAST && !saver.toastShown) {
+                        saver.toastShown = true;
+                        showToast('Your shortlist changes could not be saved yet. They are kept on this screen and we keep retrying.', '❌');
+                    }
+                    const delay = Math.min(SAVE_RETRY_BASE_MS * Math.pow(2, saver.failures - 1), SAVE_RETRY_MAX_MS);
+                    saver.retryTimer = setTimeout(() => {
+                        saver.retryTimer = null;
+                        flushShortlist(session, { batched: true });
+                    }, delay);
+                }
+                if (ok) decideShortlistSave(session);   // whatever was toggled while the request was in flight
+                return ok;
+            })();
+            saver.inFlight = run;
+            return run;
+        }
+
+        // Every write uses fetch keepalive (bodies are small), so a request already in flight when the tab is hidden or
+        // closed is still finished by the browser. Inserts then deletes, in chunks. Saved state is updated per finished request, so a failure part-way keeps the
+        // exact remainder pending.
+        async function sendShortlistChanges(session, inserts, deletes) {
+            for (let i = 0; i < inserts.length; i += SAVE_CHUNK_SIZE) {
+                const chunk = inserts.slice(i, i + SAVE_CHUNK_SIZE);
+                const rows = chunk
+                    .map(imageId => ({ user_id: state.user.id, image_id: imageId, contest_id: session.contestByImage[imageId] }))
+                    .filter(row => row.contest_id !== undefined);
+                if (rows.length > 0) {
+                    const response = await fetchFromSupabase('/rest/v1/shortlists', {
+                        method: 'POST',
+                        headers: { 'Prefer': 'resolution=ignore-duplicates,return=minimal' },
+                        body: JSON.stringify(rows),
+                        keepalive: true
+                    });
+                    if (!response.ok) throw new Error('Shortlist insert failed: ' + await response.text());
+                }
+                chunk.forEach(imageId => markShortlistSaved(session, imageId, true));
+            }
+            for (let i = 0; i < deletes.length; i += SAVE_CHUNK_SIZE) {
+                const chunk = deletes.slice(i, i + SAVE_CHUNK_SIZE);
+                const response = await fetchFromSupabase(
+                    `/rest/v1/shortlists?user_id=eq.${state.user.id}&image_id=in.(${chunk.join(',')})`,
+                    { method: 'DELETE', headers: { 'Prefer': 'return=minimal' }, keepalive: true }
+                );
+                if (!response.ok) throw new Error('Shortlist delete failed: ' + await response.text());
+                chunk.forEach(imageId => markShortlistSaved(session, imageId, false));
+            }
+        }
+
+        function markShortlistSaved(session, imageId, saved) {
+            const contestId = session.contestByImage[imageId];
+            if (saved) {
+                session.savedShortlist[imageId] = true;
+                if (contestId !== undefined) {
+                    if (!state.userShortlists[contestId]) state.userShortlists[contestId] = {};
+                    state.userShortlists[contestId][imageId] = true;
+                }
+            } else {
+                delete session.savedShortlist[imageId];
+                if (state.userShortlists[contestId]) {
+                    delete state.userShortlists[contestId][imageId];
+                    if (Object.keys(state.userShortlists[contestId]).length === 0) delete state.userShortlists[contestId];
+                }
+            }
+        }
+
+        // 5i: everything that reads the shortlists table is dropped or flagged for refresh after each successful flush.
+        // Card counts (maintained by a DB trigger) are re-read by exitShortlistVoting, so no render happens mid-voting.
+        function invalidateShortlistCaches(session) {
+            state.shortlistData = null;              // results pages, info modal
+            state.leaderboardShortlistStats = null;  // leaderboard
+            state.userLeaderboardData = null;
+        }
+
+        // 5g: reuses the classic "Auto-saved" toast. Immediate single-toggle saves in normal mode show nothing.
+        function showShortlistSaveStatus(kind) {
+            if (kind === 'saving') showAutoSaveToast('Saving…', { hold: true });
+            else if (kind === 'saved') showAutoSaveToast('Auto-saved ✓');
+            else showAutoSaveToast('Not saved yet - retrying…', { hold: true, background: '#ef4444' });
+        }
+
+        // 5e: leaving the screen. Resolves true once nothing is pending; otherwise shows an alert and resolves false.
+        async function flushShortlistBeforeLeaving() {
+            const session = state.shortlistSession;
+            if (!session || shortlistSaver.session !== session) return true;
+            if (!shortlistSaver.inFlight && !hasShortlistDiff(session)) return true;
+            let ok = true;
+            for (let guard = 0; guard < 50; guard++) {
+                ok = await flushShortlist(session, { batched: false });
+                if (!ok || !hasShortlistDiff(session)) break;
+            }
+            if (!ok || hasShortlistDiff(session)) {
+                showAlert('Your latest shortlist changes could not be saved. Check your connection and try again.', '❌');
+                return false;
+            }
+            return true;
+        }
+
+        // 5e: tab hidden or page closing - fire whatever is pending (keepalive, so the browser finishes it).
+        // Skipped while a request is already in flight: that request is keepalive too, and a second one could let an
+        // older snapshot overwrite a newer one. The finishing request re-decides the remainder.
+        function flushShortlistOnPageHide() {
+            const session = state.shortlistSession;
+            if (!session || state.view !== 'vote' || shortlistSaver.session !== session) return;
+            if (shortlistSaver.inFlight || !hasShortlistDiff(session)) return;
+            flushShortlist(session, { batched: false });
+        }
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushShortlistOnPageHide(); });
+        window.addEventListener('pagehide', flushShortlistOnPageHide);
 
         async function insertShortlistRows(session, imageIds) {
             const rows = imageIds
@@ -16957,56 +17203,8 @@
             if (!response.ok) {
                 throw new Error('Shortlist insert failed: ' + await response.text());
             }
-            rows.forEach(row => {
-                session.persisted[row.image_id] = true;
-                if (!state.userShortlists[row.contest_id]) state.userShortlists[row.contest_id] = {};
-                state.userShortlists[row.contest_id][row.image_id] = true;
-            });
+            rows.forEach(row => markShortlistSaved(session, row.image_id, true));
             state.shortlistData = null;
-        }
-
-        async function deleteShortlistRow(session, imageId) {
-            const contestId = session.contestByImage[imageId];
-            const response = await fetchFromSupabase(
-                `/rest/v1/shortlists?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&image_id=eq.${imageId}`,
-                { method: 'DELETE', headers: { 'Prefer': 'return=minimal' } }
-            );
-            if (!response.ok) {
-                throw new Error('Shortlist delete failed: ' + await response.text());
-            }
-            delete session.persisted[imageId];
-            if (state.userShortlists[contestId]) {
-                delete state.userShortlists[contestId][imageId];
-                if (Object.keys(state.userShortlists[contestId]).length === 0) delete state.userShortlists[contestId];
-            }
-            state.shortlistData = null;
-        }
-
-        // Reconcile one image with the database: insert when newly checked, delete when unchecked.
-        async function syncShortlistImage(session, imageId) {
-            const want = !!session.selected[imageId];
-            try {
-                if (want && !session.persisted[imageId]) {
-                    await insertShortlistRows(session, [imageId]);
-                }
-                if (!want && session.persisted[imageId]) {
-                    await deleteShortlistRow(session, imageId);
-                }
-            } catch (error) {
-                console.error('Shortlist save failed:', error);
-                // Roll the local toggle back to what is actually stored
-                if (session.persisted[imageId]) {
-                    session.selected[imageId] = true;
-                    delete state.shortlistSkipped[imageId];
-                    saveSkippedImages();
-                } else {
-                    delete session.selected[imageId];
-                }
-                if (state.shortlistSession === session) {
-                    render();
-                    showToast('Could not save that shortlist change. Please try again.', '❌');
-                }
-            }
         }
 
         // ---------- Explicit "no" state (shortlist format only; session storage, NEVER written to the database) ----------
@@ -17460,7 +17658,6 @@
         // Refreshes the shortlist_count shown on cards (maintained by a DB trigger) once pending writes have landed.
         async function refreshShortlistCounts(session) {
             try {
-                await shortlistWriteChain;
                 const jobs = [];
                 if (session.contestIds.length > 0) {
                     jobs.push(
@@ -17490,9 +17687,12 @@
             }
         }
 
-        // Clears the shortlist session. Nothing is pending (every toggle saved immediately), so no draft prompt.
+        // Clears the shortlist session. Callers flush the saver first (flushShortlistBeforeLeaving), so nothing is pending and no draft prompt is needed.
         function exitShortlistVoting() {
             const session = state.shortlistSession;
+            resetShortlistSaver(null);
+            const saveToast = document.getElementById('autosave-toast');
+            if (saveToast) saveToast.remove();
             resetShortlistState();
             state.shortlistSelected = {};
             state.shortlistFilter = [];
@@ -17506,7 +17706,11 @@
             const session = state.shortlistSession;
             if (!session) return;
             setLoading('Saving your shortlist...');
-            try { await shortlistWriteChain; } catch (_) { /* individual failures already rolled back */ }
+            // Results must not load before the flush has finished; on failure stay on this screen
+            if (!(await flushShortlistBeforeLeaving())) {
+                clearLoading();
+                return;
+            }
             exitShortlistVoting();
 
             try {
