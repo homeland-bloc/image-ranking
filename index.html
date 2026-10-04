@@ -77,12 +77,13 @@
             --blue-400: 96 165 250; --blue-500: 59 130 246; --blue-600: 37 99 235; --blue-700: 29 78 216;
         }
         /* Cold theme: gingerbread replaces mauve, a snowy-to-deep glacier blue replaces blue.
-           Mauve gradient runs 4.1:1 -> 8.0:1 and blue gradient 3.1:1 -> 4.6:1 against white text */
+           Mauve gradient runs 4.1:1 -> 8.0:1 and blue gradient 3.1:1 -> 4.6:1 against white text.
+           App bar stops (white text): #8a5532 6.1:1, #256a41 6.5:1, #21699a 5.9:1 */
         body.cold-theme {
             --mauve-300: 190 138 98; --mauve-400: 168 113 74; --mauve-500: 150 99 65; --mauve-600: 130 84 54; --mauve-700: 112 71 46;
             --blue-400: 72 153 208; --blue-500: 72 153 208; --blue-600: 42 122 181; --blue-700: 30 88 132;
             /* Gingerbread -> Christmas-tree evergreen -> glacier blue (shared by the app bar and the logo circles) */
-            --cold-bar-gradient: linear-gradient(to right, #a8714a 0%, #a8714a 6%, #2e7d4f 32%, #2e7d4f 56%, #2a7ab5 100%);
+            --cold-bar-gradient: linear-gradient(to right, #8a5532 0%, #8a5532 6%, #256a41 32%, #256a41 56%, #21699a 100%);
         }
         
         @keyframes tickAppear {
@@ -912,7 +913,7 @@
             background-attachment: fixed !important;
         }
 
-        /* App bar: gingerbread -> evergreen -> glacier blue (white text >= 4.1:1 on every stop) */
+        /* App bar: gingerbread -> evergreen -> glacier blue (white text >= 5.9:1 on every stop) */
         body.cold-theme .app-bar-bg {
             background-image: var(--cold-bar-gradient) !important;
         }
@@ -923,12 +924,37 @@
             box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.55);
         }
 
-        /* Merger cards: deeper, more saturated ice blue with a stronger border so they stand out */
+        /* Merger cards: ice blue that stands out from the page without dominating (title 8.1:1, byline 5.9:1, caption 5.9:1) */
         body.cold-theme .merger-card {
-            background-color: #b0d5f0 !important;
-            border-color: #2f78ad !important;
+            background-color: #d0e6f8 !important;
+            border-color: #5f9bc9 !important;
         }
         body.cold-theme .merger-card .text-gray-500 { color: #4b5563 !important; }
+
+        /* Home folders: "Pinned" is Christmas red and "All Votings" Christmas-tree green, each with a slight left-to-right gradient.
+           White on the headers: red 5.9:1 -> 8.1:1, green 5.3:1 -> 7.3:1 */
+        body.cold-theme .cold-pinned-header {
+            background-image: linear-gradient(to right, #c0262d, #9c1c26) !important;
+            box-shadow: 0 4px 10px rgba(156, 28, 38, 0.28) !important;
+        }
+        body.cold-theme .cold-all-header {
+            background-image: linear-gradient(to right, #1f7a4d, #176338) !important;
+            box-shadow: 0 4px 10px rgba(23, 99, 56, 0.28) !important;
+        }
+        /* White header buttons (search, create) keep a green label that matches the header */
+        body.cold-theme .cold-all-btn { color: #176338 !important; }
+        body.cold-theme .cold-all-btn:hover { background-color: #e3f3ea !important; }
+        /* "Load more votings": tinted gradient pill, label >= 5.8:1 (green) and >= 6.2:1 (red) at rest, >= 5.1:1 on the hover stops */
+        body.cold-theme .cold-pinned-more {
+            background-image: linear-gradient(to right, #fdeeee, #f8dcde) !important;
+            color: #9c1c26 !important;
+        }
+        body.cold-theme .cold-pinned-more:hover { background-image: linear-gradient(to right, #f8dcde, #f1c6c9) !important; }
+        body.cold-theme .cold-all-more {
+            background-image: linear-gradient(to right, #e9f6ef, #d3ebde) !important;
+            color: #176338 !important;
+        }
+        body.cold-theme .cold-all-more:hover { background-image: linear-gradient(to right, #d3ebde, #bfe0cf) !important; }
 
         /* Ice-tinted cards, panels and borders */
         body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
@@ -11613,7 +11639,7 @@
 
                             return `
                                 <div class="mb-4">
-                                    <div class="bg-gradient-to-r from-red-500 to-red-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
+                                    <div class="cold-pinned-header bg-gradient-to-r from-red-500 to-red-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-3 flex-1">
                                                 <button
@@ -11641,7 +11667,7 @@
                                     ${hasMore ? `
                                         <button
                                             onclick="${isExpanded ? 'showMorePinnedItems()' : 'togglePinnedSection()'}"
-                                            class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
+                                            class="cold-pinned-more w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
                                             Load more votings
                                         </button>
@@ -11652,7 +11678,7 @@
                         return '';
                     })()}
 
-                    <div class="bg-gradient-to-r from-green-500 to-green-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-2">
+                    <div class="cold-all-header bg-gradient-to-r from-green-500 to-green-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-2">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-3 flex-1">
                                 <button
@@ -11669,10 +11695,10 @@
                             </div>
                             ${!isBanned ? `
                                 <div class="flex items-center gap-2">
-                                    <button onclick="toggleFilters()" class="bg-white text-green-700 p-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg" title="Search & Filter">
+                                    <button onclick="toggleFilters()" class="cold-all-btn bg-white text-green-700 p-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg" title="Search & Filter">
                                         🔍
                                     </button>
-                                    <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
+                                    <button onclick="openUnifiedCreateModal()" class="cold-all-btn bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
                                         + Create
                                     </button>
                                 </div>
@@ -11940,7 +11966,7 @@
                                     ` : `
                                         <button
                                             onclick="loadMoreContests()"
-                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                            class="cold-all-more w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
                                             Load more votings
                                         </button>
@@ -11969,7 +11995,7 @@
                                 ${hasMoreClientItems ? `
                                     <button
                                         onclick="${state.isAllContestsSectionExpanded ? 'showMoreAllItems()' : 'toggleAllContestsSection()'}"
-                                        class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
+                                        class="cold-all-more w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
                                     >
                                         Load more votings
                                     </button>
@@ -11982,7 +12008,7 @@
                                     ` : `
                                         <button
                                             onclick="loadMoreContests()"
-                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                            class="cold-all-more w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
                                             Load more votings
                                         </button>
