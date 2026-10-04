@@ -13393,7 +13393,7 @@
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
                     ${renderAutosaveStatusBar()}
-                    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in">
+                    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
                         <!-- Header with progress -->
                         <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
                             <div class="flex justify-between items-center mb-2">
@@ -13564,7 +13564,7 @@
                 </div>
 
                 <!-- Fixed bottom voting panel -->
-                <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t-2 border-gray-300 dark:border-gray-700 shadow-2xl z-50">
+                <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t-2 border-gray-300 dark:border-gray-700 shadow-2xl z-50" data-vote-card="1">
                     <div class="max-w-4xl mx-auto px-4 py-4">
                         ${isShortlist ? renderShortlistMultiBottomPanel(votedCount, totalCount) : `
                         <!-- Mobile layout: stacked -->
@@ -13777,7 +13777,7 @@
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     ${renderAutosaveStatusBar()}
-                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
                         ${renderSingleProgressBar(isShortlist, segmentCount, imagesPerSegment)}
 
                         <div class="p-3">
@@ -17081,7 +17081,40 @@
 
         function startPrank(kind, imageId) {
             prankSerial++;
-            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}` };
+            // spawnedAt lets the dismiss listener ignore the very event that created the fake (event.timeStamp <= spawnedAt)
+            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
+        }
+
+        // Any click or tap inside the voting card (image area, vote / Skip / Shortlist buttons, progress bar and panel,
+        // Prev / Next / View Results, caption, and in multi mode the tiles and the filter / scale / sort controls)
+        // dismisses the fake for good. A document-level BUBBLE listener runs after the click's own action, so removing
+        // the fake can never shift the click target. App bar, user menu and modals are outside [data-vote-card].
+        function prankDismissClick(e) {
+            const prank = state.prank;
+            if (!prank || state.view !== 'vote' || state.voteHold) return;
+            if (e.timeStamp <= prank.spawnedAt) return;   // the click that spawned the fake never dismisses it
+            if (!e.target.closest || !e.target.closest('[data-vote-card]')) return;
+            if (prank.kind === 'multi') {
+                renderAfterMultiInteraction(prank.imageId, false);   // keeps the tile under the pointer in place
+            } else if (hasSinglePrank()) {
+                // A click that performed its own action (progress segment ...) already moved on; only a click on a
+                // non-action area (image, empty space, caption) advances, as if the fake had been voted on.
+                const isAction = !!e.target.closest('[onclick], button, a, input, select, textarea, label');
+                if (isAction) { state.prank = null; render(); } else resolveSinglePrank();
+            }
+        }
+
+        // Called from render(): the listener exists only while a fake is on the voting screen
+        let prankListenerAttached = false;
+        function syncPrankListener() {
+            const want = !!state.prank && state.view === 'vote';
+            if (want && !prankListenerAttached) {
+                document.addEventListener('click', prankDismissClick);
+                prankListenerAttached = true;
+            } else if (!want && prankListenerAttached) {
+                document.removeEventListener('click', prankDismissClick);
+                prankListenerAttached = false;
+            }
         }
 
         function hasSinglePrank() {
@@ -18630,6 +18663,7 @@
         function render() {
             const app = document.getElementById('app');
             if (state.view !== 'vote') { cancelVoteHold(); state.prank = null; }   // neither the hold nor the prank outlives the voting screen
+            syncPrankListener();
 
             // Save scroll positions of elements that should be preserved across re-renders
             const savedScrolls = [];
