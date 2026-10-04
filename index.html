@@ -9377,6 +9377,9 @@
 
             // Clear cached data if switching to a different user
             if (state.viewingUserId !== userId) {
+                state.userProfileVotedContests = [];
+                state.userProfileShortlistContests = [];
+                state.userProfileTotalVotes = 0;
                 state.userProfileVoteDistribution = null;
                 state.showVoteSpread = false;
                 state.showGlobalSimilarity = false;
@@ -9418,6 +9421,15 @@
                 state.userProfileTotalVotes = 0;
             }
 
+            // Real shortlist rows only (auto-converted shortlists have no rows, and the classic star already covers them)
+            try {
+                const shortlistRows = await fetchAllShortlistsPaginated(`user_id=eq.${userId}`, 'contest_id');
+                state.userProfileShortlistContests = [...new Set(shortlistRows.map(r => r.contest_id))];
+            } catch (error) {
+                console.error('Error loading user shortlists:', error);
+                state.userProfileShortlistContests = [];
+            }
+
             render();
         }
 
@@ -9452,6 +9464,7 @@
             state.showUserProfileModal = false;
             state.viewingUserId = null;
             state.userProfileVotedContests = [];
+            state.userProfileShortlistContests = [];
             // Note: userProfileVoteDistribution and globalSimilarityResults are NOT cleared — they persist for reopen
             state.showVoteSpread = false;
             state.showGlobalSimilarity = false;
@@ -12422,8 +12435,9 @@
             const userVotedContestIds = state.userProfileVotedContests || [];
 
             // Get contests this user has voted on (INCLUDING ones they created)
+            const userShortlistContestIds = state.userProfileShortlistContests || [];
             const votedContests = state.contests.filter(contest =>
-                userVotedContestIds.includes(contest.id)
+                userVotedContestIds.includes(contest.id) || userShortlistContestIds.includes(contest.id)
             );
 
             // Get mergers where user voted on source contests (INCLUDING ones they created)
@@ -12452,7 +12466,13 @@
             ];
 
             // Only show contests in the voted section (mergers/extracts are derivative)
-            const allVotedItems = votedContests.map(c => ({ ...c, itemType: 'contest' }));
+            // Union of classic-voted and really-shortlisted contests, one entry each, with a star / bookmark marker
+            const allVotedItems = votedContests.map(c => ({
+                ...c,
+                itemType: 'contest',
+                hasClassic: userVotedContestIds.includes(c.id),
+                hasShortlist: userShortlistContestIds.includes(c.id)
+            }));
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isBanned = state.bannedUsers.includes(userId);
@@ -12736,9 +12756,11 @@
                                         const hoverClass = item.itemType === 'merger' ? 'hover:text-blue-900 hover:bg-blue-50' :
                                                           item.itemType === 'extract' ? 'hover:text-yellow-900 hover:bg-yellow-50' :
                                                           'hover:text-mauve-600 hover:bg-gray-50';
+                                        const markers = (item.hasClassic ? '<span role="img" aria-label="Classic votes">⭐</span>' : '') +
+                                                        (item.hasShortlist ? '<span role="img" aria-label="Shortlist">🔖</span>' : '');
                                         return `
                                             <div class="text-sm ${colorClass} ${hoverClass} transition p-2 rounded font-medium">
-                                                • ${title}
+                                                • ${title}${markers ? ` <span class="ml-1">${markers}</span>` : ''}
                                             </div>
                                         `;
                                     }).join('')}
