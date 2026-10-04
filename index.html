@@ -9716,6 +9716,19 @@
                     }
                 });
 
+                // Real shortlists rows only (classic votes are never converted here): rows per user and distinct contests per user
+                const shortlistStats = {};
+                try {
+                    const shortlistRows = await fetchAllShortlistsPaginated('user_id=not.is.null', 'user_id,contest_id');
+                    shortlistRows.forEach(row => {
+                        if (!shortlistStats[row.user_id]) shortlistStats[row.user_id] = { rows: 0, contestIds: new Set() };
+                        shortlistStats[row.user_id].rows++;
+                        if (row.contest_id) shortlistStats[row.user_id].contestIds.add(row.contest_id);
+                    });
+                } catch (shortlistError) {
+                    console.error('Leaderboard shortlists error:', shortlistError);
+                }
+
                 // Build items-created map from already-loaded state data
                 const createdMap = {};
                 [...(state.contests || []), ...(state.mergers || []), ...(state.extracts || [])].forEach(item => {
@@ -9724,6 +9737,9 @@
 
                 // Merge with allUsers for display info
                 const rows = [];
+                const emptyStats = () => ({ totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0}, scoreSum: 0, contestVotes: {} });
+                // Users with only shortlists (no classic votes) still get a row
+                Object.keys(shortlistStats).forEach(userId => { if (!statsMap[userId]) statsMap[userId] = emptyStats(); });
                 for (const [userId, s] of Object.entries(statsMap)) {
                     const userInfo = state.allUsers.find(u => u.id === userId);
                     if (!userInfo) continue;
@@ -9741,6 +9757,8 @@
                         totalVotes: s.totalVotes,
                         totalContests,
                         totalCreated: createdMap[userId] || 0,
+                        totalShortlisted: shortlistStats[userId] ? shortlistStats[userId].rows : 0,
+                        totalShortlists: shortlistStats[userId] ? shortlistStats[userId].contestIds.size : 0,
                         score1: s.scores[1],
                         score2: s.scores[2],
                         score3: s.scores[3],
@@ -9809,6 +9827,8 @@
                 { value: 'totalVotes',       label: 'Total Votes' },
                 { value: 'totalContests',    label: 'Contests Voted In' },
                 { value: 'totalCreated',     label: 'Items Created' },
+                { value: 'totalShortlisted', label: 'Total Shortlisted' },
+                { value: 'totalShortlists',  label: 'Total Shortlists' },
                 { value: 'scoreFrequency',   label: 'Score Frequency' },
                 { value: 'totalAvg',         label: 'Total Average Score' },
             ];
@@ -9826,6 +9846,8 @@
                     case 'totalVotes':      return r.totalVotes;
                     case 'totalContests':   return r.totalContests;
                     case 'totalCreated':    return r.totalCreated;
+                    case 'totalShortlisted': return r.totalShortlisted;
+                    case 'totalShortlists': return r.totalShortlists;
                     case 'scoreFrequency':  return showCount
                         ? (r[`score${selectedScore}`] || 0)
                         : (r.totalVotes > 0 ? ((r[`score${selectedScore}`] || 0) / r.totalVotes) * 100 : 0);
@@ -9919,6 +9941,10 @@
                 if (statType === 'totalVotes') {
                     const total = data.reduce((s, r) => s + r.totalVotes, 0);
                     appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} votes</span>`;
+                } else if (statType === 'totalShortlisted') {
+                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${data.reduce((sum, r) => sum + r.totalShortlisted, 0).toLocaleString()} images shortlisted</span>`;
+                } else if (statType === 'totalShortlists') {
+                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${data.reduce((sum, r) => sum + r.totalShortlists, 0).toLocaleString()} shortlists</span>`;
                 } else if (statType === 'totalCreated') {
                     const total = (state.contests?.length || 0) + (state.mergers?.length || 0) + (state.extracts?.length || 0);
                     appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} items</span>`;
