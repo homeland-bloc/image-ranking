@@ -926,9 +926,10 @@
 
         /* ===== Light themes (Light, Cold): white text on the score-3 yellow is only 1.9:1, so use dark text ===== */
         body:not(.dark-theme) .bg-gradient-to-r.from-yellow-500.to-yellow-600,
-        body:not(.dark-theme) [style*="background-color: rgb(234, 179, 8)"],
-        body:not(.dark-theme) [style*="background:rgb(234, 179, 8)"],
-        body:not(.dark-theme) [style*="background: rgb(234, 179, 8)"] {
+        body:not(.dark-theme) [style*="background-color: rgb(234, 179, 8);"],
+        body:not(.dark-theme) [style$="background-color: rgb(234, 179, 8)"],
+        body:not(.dark-theme) [style*="background:rgb(234, 179, 8);"],
+        body:not(.dark-theme) [style*="background: rgb(234, 179, 8);"] {
             color: #1f2937 !important;
         }
 
@@ -1182,6 +1183,7 @@
             votingModeSession: null, // session-only mode override from the voting-screen toggle (only used once votingModePref is set)
             modeCalloutActive: false,    // the one-time voting-mode callout was started on this page load
             modeCalloutDismissed: false, // ...and has been dismissed
+            linkFormat: null,  // format param of the shared link being opened ('classic' | 'shortlist')
             pendingRoute: null,  // Store route to redirect after login (e.g., '#contest=uuid')
             // Results tab enhancements
             collapsedSections: {},  // { sectionKey: true } for collapsed sections (persists across tab switches)
@@ -1210,8 +1212,8 @@
             loadingMoreContests: false,  // True while loading more contests
             pairsAnchorImageId: null,   // Selected anchor image ID for Pairs tab
             showPairsBreakdownModal: null,  // { imageAId, imageBId } or null
-            pairsCorrCache: {},   // Cache of computed Pearson r values: 'minId-maxId' -> r
-            pairsCorrFilterKey: 'all',  // Fingerprint of active user filter for cache invalidation
+            totalShowMode: 'num',   // shortlist Total tab: 'num' (#) | 'pct' (%)
+            pairsShowMode: 'num',   // Pairs tab (both formats): 'num' (#) | 'pct' (%)
             // ── Shortlist voting format (parallel to classic 1-5 voting) ──
             votingFormat: 'classic',   // 'classic' | 'shortlist' — format of the active voting screen
             cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'classic' | 'shortlist' (per-card session override of the saved format, never persisted)
@@ -1383,6 +1385,12 @@
                 5: 'rgb(34, 197, 94)'
             };
             return colors[score] || 'rgb(156, 163, 175)';
+        }
+
+        // 'rgb(r, g, b)' -> 'rgba(r, g, b, alpha)' (appending a hex alpha to an rgb() string is invalid CSS)
+        function colorWithAlpha(rgb, alpha) {
+            const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(rgb);
+            return m ? `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})` : rgb;
         }
 
         function getCategoryLabel(min, max, isMissing) {
@@ -3104,6 +3112,16 @@
             return state.votingFormatPref || 'classic';
         }
 
+        // Results opened from a shared link use the link's format; anything else uses the saved voting format (NULL = classic)
+        async function applyLinkOrSavedResultsFormat() {
+            const linkFormat = state.linkFormat;
+            state.linkFormat = null;
+            const format = (linkFormat === 'classic' || linkFormat === 'shortlist') ? linkFormat : getSavedVotingFormat();
+            if (format === 'shortlist' && (state.view === 'results' || state.view === 'mergedResults')) {
+                await setResultsFormat('shortlist');
+            }
+        }
+
         // Mode a voting screen opens in. While voting_mode is NULL the old localStorage choice is honored
         // exactly as before; once it is set the DB value is the default and the toggle is a session-only override.
         function getDefaultVotingMode() {
@@ -3340,13 +3358,15 @@
 
             const { item, itemType } = state.contestInfoModal;
             let shareUrl;
+            // The link also carries the format being shown, so it opens in the same format
+            const formatParam = `&format=${state.contestInfoModal.format === 'shortlist' ? 'shortlist' : 'classic'}`;
 
             if (itemType === 'merger') {
-                shareUrl = `${window.location.origin}${window.location.pathname}#merger=${item.id}`;
+                shareUrl = `${window.location.origin}${window.location.pathname}#merger=${item.id}${formatParam}`;
             } else if (itemType === 'extract') {
-                shareUrl = `${window.location.origin}${window.location.pathname}#extract=${item.id}`;
+                shareUrl = `${window.location.origin}${window.location.pathname}#extract=${item.id}${formatParam}`;
             } else {
-                shareUrl = `${window.location.origin}${window.location.pathname}#contest=${item.id}`;
+                shareUrl = `${window.location.origin}${window.location.pathname}#contest=${item.id}${formatParam}`;
             }
 
             try {
@@ -3581,6 +3601,7 @@
                 if (contest.isLocked || hasVotedAll) {
                     // Show results
                     await viewResults(contest);
+                    await applyLinkOrSavedResultsFormat();
                 } else if (hasVotedSome) {
                     // Show Complete Voting modal
                     showContestVoteModal(contest.id);
@@ -3615,6 +3636,7 @@
             const contestId = params.get('contest');
             const mergerId = params.get('merger');
             const extractId = params.get('extract');
+            state.linkFormat = params.get('format');   // 'classic' | 'shortlist' when the shared link carries a format
 
             // If user is not logged in but trying to access a shared link, store it and show login
             if ((contestId || mergerId || extractId) && !state.isLoggedIn) {
@@ -3695,6 +3717,7 @@
                 if (merger.isLocked || hasVotedAll || isAdmin || isCreator) {
                     // Merger is locked, user has voted on all contests, or is admin/creator -> show results
                     await viewMergerResults(mergerId);
+                    await applyLinkOrSavedResultsFormat();
                 } else if (hasVotedSome) {
                     // User has voted on some contests -> show "Complete Voting" modal
                     showMergerVoteModal(mergerId);
@@ -3745,6 +3768,7 @@
 
                 // Extracts are view-only — always show results directly
                 await viewExtractResults(extractId);
+                await applyLinkOrSavedResultsFormat();
             } catch (error) {
                 console.error('Error loading shared extract:', error);
                 showAlert('Failed to load extract: ' + error.message, '❌');
@@ -7337,88 +7361,6 @@
 
         // ==================== PAIRS TAB HELPERS ====================
 
-        function computePearsonR(imageAId, imageBId) {
-            const [keyA, keyB] = imageAId < imageBId ? [imageAId, imageBId] : [imageBId, imageAId];
-            const cacheKey = `${keyA}-${keyB}`;
-
-            // Compute filter fingerprint for cache invalidation
-            const filterIds = getFilteredUserIds();
-            const filterKey = filterIds === null ? 'all' : [...filterIds].sort().join(',');
-
-            if (state.pairsCorrFilterKey !== filterKey) {
-                state.pairsCorrCache = {};
-                state.pairsCorrFilterKey = filterKey;
-            }
-
-            if (state.pairsCorrCache[cacheKey] !== undefined) {
-                return state.pairsCorrCache[cacheKey];
-            }
-
-            const imgA = state.results.find(r => r.id === imageAId);
-            const imgB = state.results.find(r => r.id === imageBId);
-
-            if (!imgA || !imgB) {
-                state.pairsCorrCache[cacheKey] = null;
-                return null;
-            }
-
-            // Build vote maps: exclude blocked/banned and apply user filter
-            const aVotes = {};
-            (imgA.breakdown || []).forEach(v => {
-                if (v.isBlocked || v.isBanned) return;
-                if (filterIds !== null && !filterIds.has(v.userId)) return;
-                aVotes[v.userId] = v.score;
-            });
-
-            const bVotes = {};
-            (imgB.breakdown || []).forEach(v => {
-                if (v.isBlocked || v.isBanned) return;
-                if (filterIds !== null && !filterIds.has(v.userId)) return;
-                bVotes[v.userId] = v.score;
-            });
-
-            // Shared voters only
-            const sharedIds = Object.keys(aVotes).filter(id => bVotes[id] !== undefined);
-            if (sharedIds.length < 2) {
-                state.pairsCorrCache[cacheKey] = null;
-                return null;
-            }
-
-            const n = sharedIds.length;
-            const meanA = sharedIds.reduce((s, id) => s + aVotes[id], 0) / n;
-            const meanB = sharedIds.reduce((s, id) => s + bVotes[id], 0) / n;
-
-            let num = 0, dA = 0, dB = 0;
-            sharedIds.forEach(id => {
-                const da = aVotes[id] - meanA;
-                const db = bVotes[id] - meanB;
-                num += da * db;
-                dA += da * da;
-                dB += db * db;
-            });
-
-            const denom = Math.sqrt(dA * dB);
-            const r = denom === 0 ? 0 : Math.round((num / denom) * 100) / 100;
-            state.pairsCorrCache[cacheKey] = r;
-            return r;
-        }
-
-        function getPearsonRLabel(r) {
-            if (r === null) return { text: 'N/A', color: 'rgb(156, 163, 175)' };
-            if (r >= 0.7)  return { text: 'Strong',        color: 'rgb(34, 197, 94)' };
-            if (r >= 0.3)  return { text: 'Moderate',      color: 'rgb(132, 204, 22)' };
-            if (r >= -0.3) return { text: 'Weak',          color: 'rgb(156, 163, 175)' };
-            if (r >= -0.7) return { text: 'Inverse',       color: 'rgb(249, 115, 22)' };
-            return             { text: 'Strong inverse', color: 'rgb(220, 38, 38)' };
-        }
-
-        function getImageLabelMap() {
-            // Returns { imageId: '#N' } using rank order from current state.results (score desc)
-            const map = {};
-            (state.results || []).forEach((img, i) => { map[img.id] = `#${i + 1}`; });
-            return map;
-        }
-
         function setPairsAnchor(imageId) {
             state.pairsAnchorImageId = imageId;
             state.showPairsBreakdownModal = null;
@@ -7631,8 +7573,6 @@
             state.collapsedSections = {};
             state.pairsAnchorImageId = null;
             state.showPairsBreakdownModal = null;
-            state.pairsCorrCache = {};
-            state.pairsCorrFilterKey = 'all';
 
             // Clear URL hash
             window.location.hash = '';
@@ -7676,8 +7616,6 @@
             state.collapsedSections = {};
             state.pairsAnchorImageId = null;
             state.showPairsBreakdownModal = null;
-            state.pairsCorrCache = {};
-            state.pairsCorrFilterKey = 'all';
 
             // Clear URL hash
             window.location.hash = '';
@@ -7992,6 +7930,7 @@
             const isActive = isUserFilterActive();
 
             return `
+                <div class="inline-flex flex-col items-center gap-1">
                 <div class="relative inline-flex items-center gap-1">
                     <button onclick="toggleUserFilterDropdown()" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 ${isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-xs font-medium hover:border-mauve-400 transition">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
@@ -8019,7 +7958,14 @@
                         </div>
                     ` : ''}
                 </div>
+                ${isActive ? renderFilterResetButton('selectAllFilterUsers()', 'Reset the Users filter') : ''}
+                </div>
             `;
+        }
+
+        // Small "Reset" under a filter; only drawn while that filter is applied
+        function renderFilterResetButton(handler, title) {
+            return `<button onclick="${handler}" class="px-2 py-0.5 rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 text-[11px] font-semibold transition" title="${title}">Reset</button>`;
         }
 
         // ==================== IMAGE FILTER ====================
@@ -8083,6 +8029,7 @@
             const isActive = isImageFilterActive();
 
             return `
+                <div class="inline-flex flex-col items-center gap-1">
                 <div class="relative inline-flex items-center gap-1">
                     <button onclick="toggleImageFilterDropdown()" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 ${state.imageFilterDropdownOpen ? 'border-mauve-400 bg-mauve-100 ring-2 ring-mauve-300' : isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-xs font-medium hover:border-mauve-400 transition">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -8093,6 +8040,8 @@
                         <button onclick="selectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium">Show All</button>
                         <button onclick="unselectAllFilterImages()" class="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">Hide All</button>
                     ` : ''}
+                </div>
+                ${isActive ? renderFilterResetButton('selectAllFilterImages()', 'Reset the Images filter') : ''}
                 </div>
             `;
         }
@@ -8106,8 +8055,8 @@
             const imageFilter = renderImageFilterDropdown();
             if (!userFilter && !imageFilter) return '';
             return `
-                <div class="flex items-center justify-center gap-2 flex-wrap mb-2">
-                    <span class="text-xs font-semibold text-gray-700">Filter:</span>
+                <div class="flex items-start justify-center gap-2 flex-wrap mb-2">
+                    <span class="text-xs font-semibold text-gray-700 mt-1.5">Filter:</span>
                     ${userFilter}
                     ${imageFilter}
                 </div>
@@ -13832,7 +13781,7 @@
 
             const shortlistSubtitleMap = {
                 average: 'Images ranked by how many voters shortlisted them',
-                pairs: 'Jaccard overlap between image shortlists',
+                pairs: 'How many users shortlisted both images',
                 count: 'Number of shortlisted images per user',
                 userVotes: 'Individual shortlists'
             };
@@ -13843,7 +13792,7 @@
                 count: 'Count of specific score votes',
                 userVotes: 'Individual user votes',
                 byVoter: 'Average scores per voter',
-                pairs: 'Pearson correlation between image pairs'
+                pairs: 'Users who scored both images: same side or opposite sides'
             };
 
             return `
@@ -13853,6 +13802,7 @@
                             <div class="flex items-center justify-center gap-2 mb-2">
                                 <span class="text-4xl">${icon}</span>
                                 <h2 class="text-2xl font-bold text-gray-800">${title}</h2>
+                                ${renderResultsFormatToggle()}
                             </div>
                             ${customHeaderContent}
                             <p class="text-gray-600 text-sm mb-1">${subtitle || (isShortlistFmt ? shortlistSubtitleMap : subtitleMap)[state.resultsView] || ''}</p>
@@ -13872,7 +13822,6 @@
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
                                 ${renderGlobalFilters()}
-                                ${renderResultsFormatSwitch()}
                                 <div class="flex items-center justify-center gap-1 max-w-full">
                                     <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:-120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll left" aria-label="Scroll tabs left">&#8249;</button>
                                     <div class="tabs-scroll-container flex items-center gap-1 overflow-x-auto flex-nowrap py-0.5">
@@ -14021,6 +13970,11 @@
                         </div>
                     `;
                 }
+            }
+
+            // Pairs: # / % switch (above Image Scale) once an anchor image is chosen
+            if (state.resultsView === 'pairs' && state.pairsAnchorImageId !== null) {
+                html += renderShowModeSwitch('setPairsShowMode', state.pairsShowMode);
             }
 
             return html;
@@ -14313,6 +14267,7 @@
                                         <div class="flex items-center gap-2 bg-white rounded-lg shadow border border-gray-200 cursor-pointer hover:shadow-md transition" style="padding: ${Math.round(8 * cardScale)}px ${Math.round(12 * cardScale)}px;" onclick="viewUserProfile('${u.userId}')">
                                             <img referrerpolicy="no-referrer" src="${u.avatar}" class="rounded-full" style="width: ${avatarSize}px; height: ${avatarSize}px;"  onerror="ghostAvatar(this)" />
                                             <span class="font-medium" style="font-size: ${cardFontSize}px;">${u.username}</span>
+                                            ${opts.viewButton ? `<button onclick="event.stopPropagation(); viewUserShortlistInTotal('${u.userId}')" class="ml-1 px-2 py-0.5 rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-semibold transition" title="Show this user's shortlisted images in the Total tab">View</button>` : ''}
                                         </div>
                                     `).join('')}
                                 </div>
@@ -15055,6 +15010,60 @@
             `;
         }
 
+        // Classic Pairs: for every image pair, users who scored BOTH images (non-blocked, non-banned, user filter respected).
+        // Each score falls in a bucket - Negative (1-2), Neutral (3), Positive (4-5). Same bucket = Correlated (3-3 included),
+        // Negative against Positive = Inverse, anything else (a neutral against any other bucket) = Indifferent.
+        // Pair value = Correlated count minus Inverse count.
+        function getScoreBucket(score) {
+            return score <= 2 ? 'negative' : score === 3 ? 'neutral' : 'positive';
+        }
+
+        function classifyScorePair(scoreA, scoreB) {
+            const a = getScoreBucket(scoreA), b = getScoreBucket(scoreB);
+            if (a === b) return 'correlated';
+            if ((a === 'negative' && b === 'positive') || (a === 'positive' && b === 'negative')) return 'inverse';
+            return 'indifferent';
+        }
+
+        // userId -> score for one image, after the blocked / banned / user-filter rules
+        function getClassicScoreMap(imageResult, filterIds) {
+            const map = {};
+            ((imageResult && imageResult.breakdown) || []).forEach(v => {
+                if (v.isBlocked || v.isBanned) return;
+                if (filterIds !== null && !filterIds.has(v.userId)) return;
+                map[v.userId] = v.score;
+            });
+            return map;
+        }
+
+        function computeClassicPairs(anchorId, mode) {
+            const filterIds = getFilteredUserIds();
+            const anchorMap = getClassicScoreMap(state.results.find(r => r.id === anchorId), filterIds);
+            return state.results.filter(r => r.id !== anchorId).map(img => {
+                const otherMap = getClassicScoreMap(img, filterIds);
+                let correlated = 0, inverse = 0, shared = 0;
+                Object.keys(anchorMap).forEach(userId => {
+                    if (otherMap[userId] === undefined) return;
+                    shared++;
+                    const relation = classifyScorePair(anchorMap[userId], otherMap[userId]);
+                    if (relation === 'correlated') correlated++; else if (relation === 'inverse') inverse++;
+                });
+                const diff = correlated - inverse;
+                const value = mode === 'pct' ? (shared > 0 ? Math.round((diff / shared) * 100) : 0) : diff;
+                return { img, shared, correlated, inverse, value };
+            });
+        }
+
+        // Positive = green, negative = red, zero = gray (all dark enough for white text)
+        function getPairValueColor(value) {
+            return value > 0 ? 'rgb(21, 128, 61)' : value < 0 ? 'rgb(185, 28, 28)' : 'rgb(107, 114, 128)';
+        }
+
+        function formatPairValue(value, mode) {
+            const text = `${value > 0 ? '+' : value < 0 ? '-' : ''}${Math.abs(value)}`;
+            return mode === 'pct' ? `${text}%` : text;
+        }
+
         // ==================== TAB 6: PAIRS ====================
         function renderPairsTab(imageSize, fontSize) {
             const results = state.results;
@@ -15062,13 +15071,11 @@
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">📭</div><h3 class="text-xl font-bold text-gray-800 mb-2">No Results</h3><p class="text-gray-600">No voting data available.</p></div>`;
             }
 
-            const labelMap = getImageLabelMap();
-
             // ── Anchor selection view ──────────────────────────────────────────
             if (state.pairsAnchorImageId === null) {
                 return `
                     <div class="mb-3 text-center">
-                        <p class="text-sm text-gray-600">Select an image to see how its scores correlate with every other image</p>
+                        <p class="text-sm text-gray-600">Select an image to see how its scores line up with every other image</p>
                     </div>
                     <div class="flex flex-wrap gap-1">
                         ${results.map(item => `
@@ -15081,43 +15088,31 @@
                 `;
             }
 
-            // ── Correlation list view ──────────────────────────────────────────
+            // ── Grouped list view ──────────────────────────────────────────────
             const anchorId = state.pairsAnchorImageId;
             const anchorItem = results.find(r => r.id === anchorId);
             if (!anchorItem) {
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">Anchor Not Found</h3><p class="text-gray-600">The selected anchor image is no longer available.</p><button onclick="setPairsAnchor(null)" class="mt-4 px-4 py-2 bg-gray-200 rounded-lg text-sm font-medium hover:bg-gray-300 transition">← Back</button></div>`;
             }
 
-            // Compute r for all non-anchor images
-            const others = results
-                .filter(r => r.id !== anchorId)
-                .map(item => ({ item, r: computePearsonR(anchorId, item.id) }));
-
-            // Correlation categories at ±0.25 steps (sorted highest→lowest)
-            const pairsCats = [
-                { key: 'pairs_sp',  label: 'Strong Positive',   sublabel: 'r ≥ 0.75',            min:  0.75, max:  2,    color: 'bg-emerald-100 text-emerald-800', borderColor: 'rgb(16, 185, 129)' },
-                { key: 'pairs_mp',  label: 'Moderate Positive',  sublabel: 'r 0.50–0.75',          min:  0.50, max:  0.75, color: 'bg-green-100 text-green-800',     borderColor: 'rgb(34, 197, 94)' },
-                { key: 'pairs_wp',  label: 'Weak Positive',      sublabel: 'r 0.25–0.50',          min:  0.25, max:  0.50, color: 'bg-lime-100 text-lime-800',       borderColor: 'rgb(132, 204, 22)' },
-                { key: 'pairs_neg', label: 'Negligible',          sublabel: 'r −0.25 to +0.25',    min: -0.25, max:  0.25, color: 'bg-gray-100 text-gray-700',       borderColor: 'rgb(156, 163, 175)' },
-                { key: 'pairs_wi',  label: 'Weak Inverse',        sublabel: 'r −0.50 to −0.25',    min: -0.50, max: -0.25, color: 'bg-yellow-100 text-yellow-800',   borderColor: 'rgb(234, 179, 8)' },
-                { key: 'pairs_mi',  label: 'Moderate Inverse',    sublabel: 'r −0.75 to −0.50',    min: -0.75, max: -0.50, color: 'bg-orange-100 text-orange-800',   borderColor: 'rgb(249, 115, 22)' },
-                { key: 'pairs_si',  label: 'Strong Inverse',      sublabel: 'r < −0.75',           min: -2,    max: -0.75, color: 'bg-red-100 text-red-800',         borderColor: 'rgb(220, 38, 38)' },
-                { key: 'pairs_na',  label: 'Insufficient Data',   sublabel: '< 2 shared voters',   min: null,  max: null,  color: 'bg-gray-100 text-gray-500',       borderColor: 'rgb(156, 163, 175)' },
-            ];
-
-            const categorised = pairsCats.map(cat => {
-                let items;
-                if (cat.min === null) {
-                    items = others.filter(o => o.r === null).map(o => ({ ...o.item, pairsR: null }));
-                } else {
-                    items = others
-                        .filter(o => o.r !== null && o.r >= cat.min && o.r < cat.max)
-                        .sort((a, b) => b.r - a.r)
-                        .map(o => ({ ...o.item, pairsR: o.r }));
-                }
-                return { ...cat, items };
-            }).filter(cat => cat.items.length > 0);
-
+            const mode = state.pairsShowMode;
+            const pairs = computeClassicPairs(anchorId, mode);
+            const grouped = {};
+            const noShared = [];
+            pairs.forEach(pair => {
+                if (pair.shared === 0) { noShared.push(pair.img); return; }
+                if (!grouped[pair.value]) grouped[pair.value] = [];
+                grouped[pair.value].push(pair.img);
+            });
+            const groups = Object.keys(grouped).map(Number).sort((a, b) => b - a).map(value => ({
+                key: `${mode}_${value}`,
+                label: formatPairValue(value, mode),
+                bgColor: getPairValueColor(value),
+                images: grouped[value]
+            }));
+            if (noShared.length > 0) {
+                groups.push({ key: 'none', label: 'No shared voters', bgColor: 'rgb(107, 114, 128)', images: noShared });
+            }
             const anchorThumbH = Math.max(48, Math.min(imageSize, 80));
 
             return `
@@ -15125,48 +15120,19 @@
                     <button onclick="setPairsAnchor(null)" class="px-2 py-1 rounded-lg bg-gray-200 hover:bg-gray-300 text-sm font-medium transition flex-shrink-0">← Back</button>
                     <div class="relative rounded-lg overflow-hidden shadow-lg flex-shrink-0 cursor-pointer" style="height: ${anchorThumbH}px;" onclick="setPairsAnchor(null)" title="Click to change anchor">
                         <img src="${anchorItem.url}" alt="Anchor image" class="h-full w-auto object-cover" style="height: ${anchorThumbH}px;" />
-                        <div class="absolute bottom-0 left-0 right-0 text-center py-0.5 font-bold score-text" style="font-size: ${Math.max(9, fontSize)}px; color: white;">${anchorItem.averageScore}</div>
                     </div>
                     <div class="min-w-0">
                         <div class="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Anchor</div>
                         <div class="text-xs text-gray-500 mt-0.5">Tap an image to see voter breakdown · ⚓ to re-anchor</div>
+                        <div class="text-xs text-gray-500">Value = same-side voters minus opposite-side voters</div>
                     </div>
                 </div>
-
-                ${categorised.map(cat => {
-                    const collapsed = isSectionCollapsed(cat.key);
-                    return `
-                        <div class="mb-4">
-                            <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${cat.color} w-full flex items-center cursor-pointer select-none" onclick="toggleSection('${cat.key}')">
-                                ${renderCollapseArrow(cat.key)}
-                                ${cat.label} <span class="text-xs font-normal ml-1">(${cat.sublabel})</span>
-                                <span class="text-xs font-normal ml-auto">Count: ${cat.items.length}</span>
-                            </h3>
-                            ${!collapsed ? `
-                                <div class="flex flex-wrap gap-1">
-                                    ${cat.items.map(item => {
-                                        const rVal = item.pairsR;
-                                        const rFormatted = rVal === null ? '' : (rVal >= 0 ? `+${rVal.toFixed(2)}` : `−${Math.abs(rVal).toFixed(2)}`);
-                                        return `
-                                            <div onclick="showPairsBreakdown(${anchorId}, ${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
-                                                <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                <div class="absolute bottom-0 left-0 right-0 text-white text-center py-0.5 font-bold score-text" style="font-size: ${fontSize}px;">
-                                                    ${item.averageScore}
-                                                </div>
-                                                ${rVal !== null ? `
-                                                    <div class="absolute top-0 right-0 px-1.5 py-0.5 rounded-bl-lg font-bold" style="background: rgba(0,0,0,0.7); color: ${cat.borderColor}; font-size: ${Math.max(8, fontSize - 1)}px;">
-                                                        r ${rFormatted}
-                                                    </div>
-                                                ` : ''}
-                                                <button onclick="event.stopPropagation(); setPairsAnchor(${item.id})" class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center bg-black bg-opacity-50 hover:bg-opacity-80 transition" title="Set as anchor" style="font-size: 13px; line-height: 1;">⚓</button>
-                                            </div>
-                                        `;
-                                    }).join('')}
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                }).join('')}
+                ${renderValueGroups(groups, imageSize, {
+                    sectionPrefix: 'pairs_classic',
+                    respectImageFilter: false,
+                    onTileClick: id => `showPairsBreakdown(${anchorId}, ${id})`,
+                    tileOverlay: img => `<button onclick="event.stopPropagation(); setPairsAnchor(${img.id})" class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center bg-black bg-opacity-50 hover:bg-opacity-80 transition" title="Set as anchor" style="font-size: 13px; line-height: 1;">⚓</button>`
+                })}
             `;
         }
 
@@ -15179,7 +15145,6 @@
             const imgB = state.results.find(r => r.id === imageBId);
             if (!imgA || !imgB) return '';
 
-            const labelMap = getImageLabelMap();
             const filterIds = getFilteredUserIds();
 
             // Build filtered vote maps
@@ -15189,12 +15154,7 @@
                 if (filterIds !== null && !filterIds.has(v.userId)) return;
                 aVoteMap[v.userId] = { score: v.score, username: v.username, avatar: v.avatar, isCurrentUser: v.isCurrentUser };
             });
-            const bVoteMap = {};
-            (imgB.breakdown || []).forEach(v => {
-                if (v.isBlocked || v.isBanned) return;
-                if (filterIds !== null && !filterIds.has(v.userId)) return;
-                bVoteMap[v.userId] = v.score;
-            });
+            const bVoteMap = getClassicScoreMap(imgB, filterIds);
 
             const sharedIds = Object.keys(aVoteMap).filter(id => bVoteMap[id] !== undefined);
 
@@ -15212,49 +15172,30 @@
 
             if (sharedIds.length === 0) return noSharedVotersHTML;
 
-            // Compute stats
             const n = sharedIds.length;
-            const meanA = sharedIds.reduce((s, id) => s + aVoteMap[id].score, 0) / n;
-            const meanB = sharedIds.reduce((s, id) => s + bVoteMap[id], 0) / n;
-
-            let num = 0, dA = 0, dB = 0;
-            sharedIds.forEach(id => {
-                const da = aVoteMap[id].score - meanA;
-                const db = bVoteMap[id] - meanB;
-                num += da * db;
-                dA += da * da;
-                dB += db * db;
-            });
-            const denom = Math.sqrt(dA * dB);
-            const r = denom === 0 ? 0 : Math.round((num / denom) * 100) / 100;
-            const { text: rText, color: rColor } = getPearsonRLabel(r);
-            const rFormatted = r >= 0 ? `+${r.toFixed(2)}` : `−${Math.abs(r).toFixed(2)}`;
 
             // Section colours
-            const C_COLOR = 'rgb(34, 197, 94)';   // green — correlated
-            const I_COLOR = 'rgb(156, 163, 175)'; // grey  — indifferent
-            const V_COLOR = 'rgb(220, 38, 38)';   // red   — inverse
+            const C_COLOR = 'rgb(34, 197, 94)';   // green - correlated
+            const I_COLOR = 'rgb(156, 163, 175)'; // grey  - indifferent
+            const V_COLOR = 'rgb(220, 38, 38)';   // red   - inverse
 
-            // Classify voters
-            const THRESHOLD = 0.4;
             const correlated = [], indifferent = [], inverse = [];
             sharedIds.forEach(id => {
-                const da = aVoteMap[id].score - meanA;
-                const db = bVoteMap[id] - meanB;
-                const contrib = da * db;
                 const voter = {
                     userId: id,
                     username: aVoteMap[id].username,
                     avatar: aVoteMap[id].avatar,
                     isCurrentUser: aVoteMap[id].isCurrentUser,
                     scoreA: aVoteMap[id].score,
-                    scoreB: bVoteMap[id],
-                    contrib
+                    scoreB: bVoteMap[id]
                 };
-                if (contrib > THRESHOLD) correlated.push(voter);
-                else if (contrib < -THRESHOLD) inverse.push(voter);
-                else indifferent.push(voter);
+                const relation = classifyScorePair(voter.scoreA, voter.scoreB);
+                (relation === 'correlated' ? correlated : relation === 'inverse' ? inverse : indifferent).push(voter);
             });
+
+            const value = correlated.length - inverse.length;
+            const valueColor = getPairValueColor(value);
+            const valuePct = Math.round((value / n) * 100);
 
             // Group voters by (scoreA, scoreB) pair, sorted by sum desc then scoreA desc
             function groupByPair(voters) {
@@ -15275,9 +15216,9 @@
                 const groups = groupByPair(voters);
                 return `
                     <div class="mb-4">
-                        <h4 class="text-sm font-bold mb-2 px-3 py-1.5 rounded-lg flex items-center" style="color:${sColor};background-color:${sColor}20;">
+                        <h4 class="text-sm font-bold mb-2 px-3 py-1.5 rounded-lg flex items-center" style="color:${sColor === I_COLOR ? 'rgb(75, 85, 99)' : sColor};background-color:${colorWithAlpha(sColor, 0.13)};">
                             ${title}
-                            <span class="font-normal ml-1 text-xs opacity-80">— ${sublabel}</span>
+                            <span class="font-normal ml-1 text-xs opacity-80">- ${sublabel}</span>
                             <span class="ml-auto text-xs font-semibold">${voters.length} voter${voters.length !== 1 ? 's' : ''}</span>
                         </h4>
                         <div class="space-y-2">
@@ -15333,20 +15274,21 @@
                                 </div>
                             </div>
                             <div class="text-center mt-2">
-                                <span class="text-2xl font-bold" style="color:${rColor};">${rFormatted}</span>
-                                <span class="text-sm font-semibold ml-2" style="color:${rColor};">${rText}</span>
+                                <span class="text-2xl font-bold" style="color:${valueColor};">${formatPairValue(value, 'num')}</span>
+                                <span class="text-sm font-semibold ml-2" style="color:${valueColor};">(${formatPairValue(valuePct, 'pct')})</span>
+                                <div class="text-xs text-gray-500">Correlated minus Inverse, from ${n} voter${n !== 1 ? 's' : ''} who scored both</div>
                             </div>
                             <div class="flex gap-2 mt-3 flex-wrap">
                                 <span class="px-2 py-1 bg-gray-100 rounded-full text-xs font-semibold text-gray-700">Total: ${n}</span>
-                                <span class="px-2 py-1 rounded-full text-xs font-semibold" style="background:${C_COLOR}20;color:${C_COLOR};">Correlated: ${correlated.length}</span>
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold" style="background:${colorWithAlpha(C_COLOR, 0.13)};color:${C_COLOR};">Correlated: ${correlated.length}</span>
                                 <span class="px-2 py-1 bg-gray-100 rounded-full text-xs font-semibold text-gray-500">Indifferent: ${indifferent.length}</span>
-                                <span class="px-2 py-1 rounded-full text-xs font-semibold" style="background:${V_COLOR}20;color:${V_COLOR};">Inverse: ${inverse.length}</span>
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold" style="background:${colorWithAlpha(V_COLOR, 0.13)};color:${V_COLOR};">Inverse: ${inverse.length}</span>
                             </div>
                         </div>
                         <div class="overflow-y-auto flex-1 p-4">
-                            ${renderSection(correlated,  'Correlated',  'Pulling r up',      C_COLOR)}
-                            ${renderSection(indifferent, 'Indifferent', 'Negligible effect', I_COLOR)}
-                            ${renderSection(inverse,     'Inverse',     'Pulling r down',    V_COLOR)}
+                            ${renderSection(correlated,  'Correlated',  'same side on both images',  C_COLOR)}
+                            ${renderSection(indifferent, 'Indifferent', 'one score is neutral (3)', I_COLOR)}
+                            ${renderSection(inverse,     'Inverse',     'opposite sides',            V_COLOR)}
                         </div>
                     </div>
                 </div>
@@ -17588,15 +17530,21 @@
             render();
         }
 
-        function renderResultsFormatSwitch() {
+        // Small ⭐ / 🔖 button (card-toggle look) to the right of the page title: emoji + format name on one row
+        function renderResultsFormatToggle() {
             const isShortlist = isShortlistFormat();
             return `
-                <div class="flex items-center justify-center gap-2">
-                    <label class="text-sm font-semibold text-gray-700">Voting Format:</label>
-                    <button onclick="setResultsFormat('classic')" class="px-5 py-2 rounded-lg text-base font-semibold ${!isShortlist ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Classic ⭐️</button>
-                    <button onclick="setResultsFormat('shortlist')" class="px-5 py-2 rounded-lg text-base font-semibold ${isShortlist ? 'bg-mauve-400 text-white' : 'bg-gray-200 text-gray-800'}">Shortlist 🔖</button>
-                </div>
+                <button
+                    onclick="toggleResultsFormat()"
+                    class="bg-gradient-to-r ${isShortlist ? CARD_TOGGLE_TONES.yellow : CARD_TOGGLE_TONES.blue} px-3 py-1.5 rounded-lg font-semibold transition shadow-md text-sm flex items-center gap-1 whitespace-nowrap ${isShortlist ? '' : 'text-white'}"
+                    ${isShortlist ? 'style="color: #1f2937;"' : ''}
+                    title="${isShortlist ? 'Showing shortlist results (click for classic results)' : 'Showing classic results (click for shortlist results)'}"
+                >${isShortlist ? '🔖 Shortlist' : '⭐ Classic'}</button>
             `;
+        }
+
+        function toggleResultsFormat() {
+            return setResultsFormat(isShortlistFormat() ? 'classic' : 'shortlist');
         }
 
         // Mirrors the private-results rules of the classic page: only the creator / admin see other people's data.
@@ -17675,17 +17623,6 @@
             setA.forEach(x => { if (setB.has(x)) shared++; });
             const union = setA.size + setB.size - shared;
             return union === 0 ? null : shared / union;
-        }
-
-        // Pairs tab: Jaccard overlap between the anchor image's shortlisters and every other image's shortlisters.
-        function computeShortlistPairs(view, anchorId) {
-            const anchorUsers = new Set((view.byImage.get(anchorId) || []).map(v => v.userId));
-            return view.images
-                .filter(img => img.id !== anchorId)
-                .map(img => {
-                    const users = new Set((view.byImage.get(img.id) || []).map(v => v.userId));
-                    return { img, jaccard: shortlistJaccard(anchorUsers, users) };
-                });
         }
 
         // Crowd agreement for one user, INCLUDING themself: over the images on their shortlist, the average of
@@ -17824,6 +17761,32 @@
             render();
         }
 
+        // Count tab "View": jump to the Total tab with the Images filter set to this user's shortlisted images (real or
+        // converted). The filter shows the usual "n/m" indicator and is cleared with its Reset button.
+        function viewUserShortlistInTotal(userId) {
+            const view = getShortlistView();
+            const voter = view ? view.voterMap.get(userId) : null;
+            if (!view || !voter) return;
+            state.imageFilterSelectedImages = new Set(view.images.filter(img => voter.images.has(img.id)).map(img => img.id));
+            state.imageFilterDropdownOpen = false;
+            state.userFilterDropdownOpen = false;
+            state.resultsView = 'average';
+            state.showBreakdownModal = null;
+            state.pairsAnchorImageId = null;
+            render();
+            window.scrollTo(0, 0);
+        }
+
+        function setTotalShowMode(mode) {
+            state.totalShowMode = mode;
+            render();
+        }
+
+        function setPairsShowMode(mode) {
+            state.pairsShowMode = mode;
+            render();
+        }
+
         function setComparisonShowMode(mode) {
             state.comparisonShowMode = mode;
             render();
@@ -17853,7 +17816,9 @@
                         : 'Shortlist Count: how many images this user shortlisted (or the share of the images in the contests they took part in).'}</p>
                 `;
             }
-            // Total / Pairs have no extra controls
+            // Total: # / % switch (above Image Scale). Pairs: same switch once an anchor image is chosen.
+            if (state.resultsView === 'average') return renderShowModeSwitch('setTotalShowMode', state.totalShowMode);
+            if (state.resultsView === 'pairs') return state.pairsAnchorImageId !== null ? renderShowModeSwitch('setPairsShowMode', state.pairsShowMode) : '';
             if (state.resultsView !== 'userVotes') return '';
             const view = getShortlistView();
             if (!view || view.voters.length === 0) return '';
@@ -17887,62 +17852,39 @@
             }
         }
 
-        // Total: a compact group per shortlist count (highest first); images carry no score overlay.
-        function renderShortlistTotalTab(view, imageSize) {
-            const imageFilterIds = getFilteredImageIds();
-            const isFilterEditing = state.imageFilterDropdownOpen;
-            if (!isFilterEditing && imageFilterIds !== null && imageFilterIds.size === 0) {
-                return renderShortlistImagesHiddenState();
-            }
-            if (view.images.length === 0) {
-                return renderShortlistEmptyState('📭', 'No Results', 'No images available.');
-            }
-
-            const grouped = {};
-            view.images.forEach(img => {
-                const count = (view.byImage.get(img.id) || []).length;
-                if (!grouped[count]) grouped[count] = [];
-                grouped[count].push(img);
-            });
-            const counts = Object.keys(grouped).map(Number).sort((a, b) => b - a);
-            const maxCount = counts[0] || 0;
-            const isDark = document.body.classList.contains('dark-theme');
-
-            // One compact group per count (chevron + count on its own row, solid colored image bar beneath). The groups sit in a
-            // wrapping flex container, so CSS packs several onto one line when there is room and wraps when there is not.
+        // Shared grouped layout (the shortlist Total tab's look): one compact chip per group value with the images beneath it,
+        // wrapping in a flex container so several groups share a line when there is room.
+        // groups: [{ key, label, bgColor, images }] already ordered; opts: sectionPrefix, onTileClick(id), filterEditing, respectImageFilter, tileOverlay(img)
+        function renderValueGroups(groups, imageSize, opts = {}) {
+            const { sectionPrefix = 'grp', onTileClick = id => `showBreakdown(${id})`, filterEditing = false, respectImageFilter = true, tileOverlay = () => '' } = opts;
             return `<div class="flex flex-wrap gap-x-3 gap-y-2 items-start">
-                ${counts.map(count => {
-                    const images = grouped[count].filter(img => isFilterEditing || isImageVisibleInFilter(img.id));
+                ${groups.map(group => {
+                    const images = group.images.filter(img => filterEditing || !respectImageFilter || isImageVisibleInFilter(img.id));
                     if (images.length === 0) return '';
-                    const ratio = maxCount > 0 ? count / maxCount : 0;
-                    const hue = (270 + ratio * 330) % 360;
-                    const bgColor = count === 0
-                        ? 'rgb(156, 163, 175)'
-                        : (isDark ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`);
-                    const sectionKey = `shortlist_total_${count}`;
+                    const sectionKey = `${sectionPrefix}_${group.key}`;
                     const collapsed = isSectionCollapsed(sectionKey);
-
                     return `
                         <div class="flex flex-col gap-1 max-w-full">
-                            <div class="flex items-center gap-1 self-start rounded-lg text-white font-bold text-sm shadow px-2 py-1 cursor-pointer select-none" style="background-color: ${bgColor};" onclick="toggleSection('${sectionKey}')">
+                            <div class="flex items-center gap-1 self-start rounded-lg text-white font-bold text-sm shadow px-2 py-1 cursor-pointer select-none" style="background-color: ${group.bgColor};" onclick="toggleSection('${sectionKey}')">
                                 ${renderCollapseArrow(sectionKey)}
-                                <span class="text-base">${count}</span>
+                                <span class="text-base">${group.label}</span>
                                 ${collapsed ? `<span class="text-xs font-normal opacity-90">(${images.length} image${images.length !== 1 ? 's' : ''})</span>` : ''}
                             </div>
                             ${!collapsed ? `
-                                <div class="flex flex-wrap gap-1 items-start rounded-lg p-1 max-w-full" style="background-color: ${bgColor};">
+                                <div class="flex flex-wrap gap-1 items-start rounded-lg p-1 max-w-full" style="background-color: ${group.bgColor};">
                                     ${images.map(img => {
-                                        const isVisible = isImageVisibleInFilter(img.id);
+                                        const isVisible = !respectImageFilter || isImageVisibleInFilter(img.id);
                                         return `
-                                        <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : `showBreakdown(${img.id})`}">
+                                        <div class="relative cursor-pointer ${filterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${filterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : onTileClick(img.id)}">
                                             <div class="relative rounded-md overflow-hidden bg-gray-100 h-full" style="height: ${imageSize}px;">
                                                 <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
                                             </div>
-                                            ${isFilterEditing ? `
+                                            ${filterEditing ? `
                                                 <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
                                                     ${isVisible ? '✓' : '✕'}
                                                 </div>
                                             ` : ''}
+                                            ${tileOverlay(img)}
                                         </div>`;
                                     }).join('')}
                                 </div>
@@ -17953,7 +17895,65 @@
             </div>`;
         }
 
-        // Pairs: same anchor-image UX as the classic tab, ranked by Jaccard overlap (no average-score labels).
+        // Spectrum used by the shortlist groups: purple (low) through to red (high); gray for zero
+        function getSpectrumColor(value, max) {
+            if (value === 0) return 'rgb(107, 114, 128)';
+            const hue = (270 + (max > 0 ? value / max : 0) * 330) % 360;
+            return document.body.classList.contains('dark-theme') ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`;
+        }
+
+        // Shortlist Total value of an image: # = users who shortlisted it; % = that count / the image's eligible users (whole number)
+        function getShortlistImageValue(view, imageId, mode) {
+            const count = (view.byImage.get(imageId) || []).length;
+            if (mode !== 'pct') return count;
+            const eligible = view.eligibleFor(imageId).length;
+            return eligible > 0 ? Math.round((count / eligible) * 100) : 0;
+        }
+
+        // Total: a compact group per value (highest first); # groups by count, % groups by whole-number percentage.
+        function renderShortlistTotalTab(view, imageSize) {
+            const imageFilterIds = getFilteredImageIds();
+            const isFilterEditing = state.imageFilterDropdownOpen;
+            if (!isFilterEditing && imageFilterIds !== null && imageFilterIds.size === 0) {
+                return renderShortlistImagesHiddenState();
+            }
+            if (view.images.length === 0) {
+                return renderShortlistEmptyState('📭', 'No Results', 'No images available.');
+            }
+
+            const mode = state.totalShowMode;
+            const grouped = {};
+            view.images.forEach(img => {
+                const value = getShortlistImageValue(view, img.id, mode);
+                if (!grouped[value]) grouped[value] = [];
+                grouped[value].push(img);
+            });
+            const values = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+            const maxValue = values[0] || 0;
+            const groups = values.map(value => ({
+                key: `${mode}_${value}`,
+                label: mode === 'pct' ? `${value}%` : `${value}`,
+                bgColor: getSpectrumColor(value, maxValue),
+                images: grouped[value]
+            }));
+            return renderValueGroups(groups, imageSize, { sectionPrefix: 'shortlist_total', filterEditing: isFilterEditing });
+        }
+
+        // Pair statistics for the shortlist Pairs tab: Both = users who shortlisted both images; the denominator is
+        // the users eligible for BOTH images' home contests (participation rule).
+        function computeShortlistPairs(view, anchorId, mode) {
+            const anchorUsers = new Set((view.byImage.get(anchorId) || []).map(v => v.userId));
+            return view.images
+                .filter(img => img.id !== anchorId)
+                .map(img => {
+                    const both = (view.byImage.get(img.id) || []).filter(v => anchorUsers.has(v.userId)).length;
+                    const eligible = view.eligibleForBoth(anchorId, img.id).length;
+                    const value = mode === 'pct' ? (eligible > 0 ? Math.round((both / eligible) * 100) : 0) : both;
+                    return { img, both, eligible, value };
+                });
+        }
+
+        // Pairs: pick an anchor (images ordered like the Total tab), then the Total tab's grouped layout ranked by the pair value.
         function renderShortlistPairsTab(view, imageSize, fontSize) {
             const images = view.images;
             if (images.length === 0) {
@@ -17961,12 +17961,16 @@
             }
 
             if (state.pairsAnchorImageId === null) {
+                const totalMode = state.totalShowMode;
+                const ordered = images.map((img, index) => ({ img, index, value: getShortlistImageValue(view, img.id, totalMode) }))
+                    .sort((a, b) => (b.value - a.value) || (a.index - b.index))
+                    .map(entry => entry.img);
                 return `
                     <div class="mb-3 text-center">
                         <p class="text-sm text-gray-600">Select an image to see which other images the same people shortlisted</p>
                     </div>
                     <div class="flex flex-wrap gap-1">
-                        ${images.map(item => `
+                        ${ordered.map(item => `
                             <div onclick="setPairsAnchor(${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
                                 <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
                             </div>
@@ -17981,23 +17985,20 @@
                 return `<div class="text-center py-12"><div class="text-6xl mb-4">🔍</div><h3 class="text-xl font-bold text-gray-800 mb-2">Anchor Not Found</h3><p class="text-gray-600">The selected anchor image is no longer available.</p><button onclick="setPairsAnchor(null)" class="mt-4 px-4 py-2 bg-gray-200 rounded-lg text-sm font-medium hover:bg-gray-300 transition">← Back</button></div>`;
             }
 
-            const others = computeShortlistPairs(view, anchorId);
-            const pairsCats = [
-                { key: 'pairsj_vh', label: 'Very High Overlap', sublabel: '75%+',        test: j => j !== null && j >= 0.75,             color: 'bg-emerald-100 text-emerald-800', borderColor: 'rgb(16, 185, 129)' },
-                { key: 'pairsj_h',  label: 'High Overlap',      sublabel: '50–75%',      test: j => j !== null && j >= 0.5 && j < 0.75,  color: 'bg-green-100 text-green-800',     borderColor: 'rgb(34, 197, 94)' },
-                { key: 'pairsj_m',  label: 'Moderate Overlap',  sublabel: '25–50%',      test: j => j !== null && j >= 0.25 && j < 0.5,  color: 'bg-lime-100 text-lime-800',       borderColor: 'rgb(132, 204, 22)' },
-                { key: 'pairsj_l',  label: 'Low Overlap',       sublabel: 'under 25%',   test: j => j !== null && j > 0 && j < 0.25,     color: 'bg-yellow-100 text-yellow-800',   borderColor: 'rgb(234, 179, 8)' },
-                { key: 'pairsj_0',  label: 'No Overlap',        sublabel: 'never shortlisted together', test: j => j === 0,          color: 'bg-gray-100 text-gray-700',       borderColor: 'rgb(156, 163, 175)' },
-                { key: 'pairsj_na', label: 'No Data',           sublabel: 'neither image shortlisted', test: j => j === null,        color: 'bg-gray-100 text-gray-500',       borderColor: 'rgb(156, 163, 175)' }
-            ];
-            const categorised = pairsCats.map(cat => ({
-                ...cat,
-                items: others
-                    .filter(o => cat.test(o.jaccard))
-                    .sort((a, b) => (b.jaccard || 0) - (a.jaccard || 0))
-                    .map(o => ({ ...o.img, jaccard: o.jaccard }))
-            })).filter(cat => cat.items.length > 0);
-
+            const mode = state.pairsShowMode;
+            const grouped = {};
+            computeShortlistPairs(view, anchorId, mode).forEach(pair => {
+                if (!grouped[pair.value]) grouped[pair.value] = [];
+                grouped[pair.value].push(pair.img);
+            });
+            const values = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+            const maxValue = values[0] || 0;
+            const groups = values.map(value => ({
+                key: `${mode}_${value}`,
+                label: mode === 'pct' ? `${value}%` : `${value}`,
+                bgColor: getSpectrumColor(value, maxValue),
+                images: grouped[value]
+            }));
             const anchorThumbH = Math.max(48, Math.min(imageSize, 80));
 
             return `
@@ -18011,34 +18012,12 @@
                         <div class="text-xs text-gray-500 mt-0.5">Tap an image to see who shortlisted it · ⚓ to re-anchor</div>
                     </div>
                 </div>
-
-                ${categorised.map(cat => {
-                    const collapsed = isSectionCollapsed(cat.key);
-                    return `
-                        <div class="mb-4">
-                            <h3 class="text-sm font-bold mb-1 px-3 py-1 rounded-lg ${cat.color} w-full flex items-center cursor-pointer select-none" onclick="toggleSection('${cat.key}')">
-                                ${renderCollapseArrow(cat.key)}
-                                ${cat.label} <span class="text-xs font-normal ml-1">(${cat.sublabel})</span>
-                                <span class="text-xs font-normal ml-auto">Count: ${cat.items.length}</span>
-                            </h3>
-                            ${!collapsed ? `
-                                <div class="flex flex-wrap gap-1">
-                                    ${cat.items.map(item => `
-                                        <div onclick="showPairsBreakdown(${anchorId}, ${item.id})" class="cursor-pointer hover:scale-105 transition-transform rounded-lg overflow-hidden shadow-lg relative" style="height: ${imageSize}px;">
-                                            <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                            ${item.jaccard !== null ? `
-                                                <div class="absolute top-0 right-0 px-1.5 py-0.5 rounded-bl-lg font-bold" style="background: rgba(0,0,0,0.7); color: ${cat.borderColor}; font-size: ${Math.max(8, fontSize - 1)}px;">
-                                                    ${Math.round(item.jaccard * 100)}%
-                                                </div>
-                                            ` : ''}
-                                            <button onclick="event.stopPropagation(); setPairsAnchor(${item.id})" class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center bg-black bg-opacity-50 hover:bg-opacity-80 transition" title="Set as anchor" style="font-size: 13px; line-height: 1;">⚓</button>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                }).join('')}
+                ${renderValueGroups(groups, imageSize, {
+                    sectionPrefix: 'shortlist_pairs',
+                    respectImageFilter: false,
+                    onTileClick: id => `showPairsBreakdown(${anchorId}, ${id})`,
+                    tileOverlay: img => `<button onclick="event.stopPropagation(); setPairsAnchor(${img.id})" class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center bg-black bg-opacity-50 hover:bg-opacity-80 transition" title="Set as anchor" style="font-size: 13px; line-height: 1;">⚓</button>`
+                })}
             `;
         }
 
@@ -18053,7 +18032,7 @@
             return `
                 ${renderShowModeSwitch('setCountShowMode', mode)}
                 <p class="text-xs text-gray-500 text-center mb-3">${totalImages} image${totalImages !== 1 ? 's' : ''} total</p>
-                ${renderCountUsersMode(imageSize, data, mode === 'pct' ? { suffix: '%' } : (state.countShortlistValue === 'crowd' ? { wide: true } : {}))}
+                ${renderCountUsersMode(imageSize, data, { viewButton: true, ...(mode === 'pct' ? { suffix: '%' } : (state.countShortlistValue === 'crowd' ? { wide: true } : {})) })}
             `;
         }
 
@@ -18244,7 +18223,23 @@
             `;
         }
 
-        // Pairs breakdown for the shortlist format: who shortlisted both images, just one of them, or neither.
+        // Marker for one user on one image in the shortlist breakdown modals: a classic-converted user shows their actual
+        // score in a colored circle (with the image's score); a real shortlister shows a green check when the image is
+        // in their set and a red cross when it is not. Nothing is drawn for a converted user who never scored the image.
+        function renderShortlistMarker(voter, imageId, imageContestId, circleClass = 'w-6 h-6 text-xs') {
+            const score = voter.scoreByImage.get(imageId);
+            if (score !== undefined) {
+                return `<span class="${circleClass} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(score)};" title="Converted from their score of ${score}">${score}</span>`;
+            }
+            if (voter.realContests.has(imageContestId)) {
+                return voter.images.has(imageId)
+                    ? `<span class="font-bold flex-shrink-0" style="color: ${getScoreColor(5)};" title="Shortlisted">✓</span>`
+                    : `<span class="font-bold flex-shrink-0" style="color: ${getScoreColor(1)};" title="Not shortlisted">✗</span>`;
+            }
+            return '';
+        }
+
+        // Pairs breakdown for the shortlist format: users eligible for BOTH images, split into Both / First Only / Second Only / Neither.
         function renderShortlistPairsBreakdownModal() {
             const view = getShortlistView();
             if (!view || !state.showPairsBreakdownModal) return '';
@@ -18252,37 +18247,35 @@
             const imgA = view.images.find(i => i.id === imageAId);
             const imgB = view.images.find(i => i.id === imageBId);
             if (!imgA || !imgB) return '';
+            const contestA = view.imageContest.get(imageAId), contestB = view.imageContest.get(imageBId);
 
-            // Only users who took part in BOTH images' home contests
-            const pool = new Map(view.eligibleForBoth(imageAId, imageBId).map(v => [v.userId, v]));
+            const pool = view.eligibleForBoth(imageAId, imageBId);
             const columns = { both: [], onlyA: [], onlyB: [], neither: [] };
-            [...pool.values()].sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase())).forEach(v => {
+            [...pool].sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase())).forEach(v => {
                 const hasA = v.images.has(imageAId), hasB = v.images.has(imageBId);
                 (hasA && hasB ? columns.both : hasA ? columns.onlyA : hasB ? columns.onlyB : columns.neither).push(v);
             });
 
             const renderVoter = (voter) => {
-                const scoreA = voter.scoreByImage.get(imageAId), scoreB = voter.scoreByImage.get(imageBId);
-                const circle = (score) => score === undefined ? '' : `<span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(score)};">${score}</span>`;
                 const isCurrentUser = state.user && voter.userId === state.user.id;
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-7 h-7 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
-                        <span class="text-sm flex-1 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
-                        ${circle(scoreA)}${circle(scoreB)}
+                        <span class="text-sm flex-1 min-w-0 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
+                        ${renderShortlistMarker(voter, imageAId, contestA, 'w-5 h-5 text-[10px]')}${renderShortlistMarker(voter, imageBId, contestB, 'w-5 h-5 text-[10px]')}
                     </div>
                 `;
             };
-            const renderColumn = (title, color, voters) => `
-                <div class="min-w-[13rem] flex-1">
-                    <h4 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block" style="color: ${color}; background-color: ${color}20;">${title} (${voters.length})</h4>
+            const renderSection = (title, color, voters) => `
+                <div class="min-w-0">
+                    <h4 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block" style="color: ${color}; background-color: ${colorWithAlpha(color, 0.13)};">${title} (${voters.length})</h4>
                     ${voters.length > 0 ? `<div class="grid grid-cols-1 gap-2 mt-2">${voters.map(renderVoter).join('')}</div>` : `<div class="text-gray-400 italic text-sm mt-2 ml-3">Nobody</div>`}
                 </div>
             `;
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto" onclick="event.target === this && closePairsBreakdown()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] sm:max-h-[85vh] flex flex-col modal-content my-4 sm:my-0" onclick="event.stopPropagation()">
                         <div class="p-4 flex-shrink-0 bg-white border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-start mb-3">
                                 <h3 class="text-lg font-bold text-gray-800">Pairs Breakdown</h3>
@@ -18290,21 +18283,27 @@
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
                             </div>
-                            <div class="flex gap-1 rounded-xl overflow-hidden" style="max-height:130px;">
-                                <div class="flex-1 overflow-hidden"><img src="${imgA.url}" alt="First image" class="w-full h-full object-cover" style="max-height:130px;" /></div>
-                                <div class="flex-1 overflow-hidden"><img src="${imgB.url}" alt="Second image" class="w-full h-full object-cover" style="max-height:130px;" /></div>
+                            <div class="flex gap-2">
+                                ${[['First', imgA], ['Second', imgB]].map(([label, img]) => `
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-[10px] font-semibold uppercase tracking-widest text-gray-500 text-center mb-1">${label}</div>
+                                        <div class="rounded-xl overflow-hidden flex items-center justify-center bg-gray-100" style="max-height:130px;"><img src="${img.url}" alt="${label} image" class="max-w-full object-contain" style="max-height:130px;" /></div>
+                                    </div>
+                                `).join('')}
                             </div>
                             <div class="text-center mt-2">
                                 <div class="text-2xl font-bold text-gray-400">Both shortlisted by ${columns.both.length}</div>
-                                <div class="text-xs text-gray-500">of ${pool.size} voter${pool.size !== 1 ? 's' : ''}</div>
+                                <div class="text-xs text-gray-500">of ${pool.length} user${pool.length !== 1 ? 's' : ''} eligible for both</div>
                             </div>
                         </div>
-                        <div class="overflow-y-auto flex-1 p-4">
-                            <div class="flex gap-4 overflow-x-auto pb-2">
-                                ${renderColumn('Both Shortlisted', getScoreColor(5), columns.both)}
-                                ${renderColumn('Shortlisted Just the First', getScoreColor(3), columns.onlyA)}
-                                ${renderColumn('Shortlisted Just the Second', getScoreColor(2), columns.onlyB)}
-                                ${renderColumn("Didn't Shortlist Either", getScoreColor(1), columns.neither)}
+                        <div class="overflow-y-auto overflow-x-hidden flex-1 p-4">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="flex flex-col gap-4 min-w-0">
+                                    ${renderSection('Both', getScoreColor(5), columns.both)}
+                                    ${renderSection('First Only', getScoreColor(3), columns.onlyA)}
+                                    ${renderSection('Second Only', getScoreColor(2), columns.onlyB)}
+                                </div>
+                                ${renderSection('Neither', getScoreColor(1), columns.neither)}
                             </div>
                         </div>
                     </div>
@@ -18330,11 +18329,8 @@
             const noColor = getScoreColor(1);
 
             const renderVoter = (voter, isShortlisted) => {
-                const autoScore = voter.scoreByImage.get(imageId);
                 const isCurrentUser = state.user && voter.userId === state.user.id;
-                const marker = autoScore !== undefined
-                    ? `<span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(autoScore)};" title="Converted from their score of ${autoScore}">${autoScore}</span>`
-                    : (isShortlisted ? `<span class="text-green-600 font-bold flex-shrink-0">✓</span>` : `<span class="text-red-600 font-bold flex-shrink-0">✗</span>`);
+                const marker = renderShortlistMarker(voter, imageId, view.imageContest.get(imageId));
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
@@ -18346,7 +18342,7 @@
 
             const renderColumn = (title, color, voters, isShortlisted) => `
                 <div>
-                    <h4 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block" style="color: ${color}; background-color: ${color}20;">
+                    <h4 class="text-sm font-bold mb-2 px-3 py-1 rounded-lg inline-block" style="color: ${color}; background-color: ${colorWithAlpha(color, 0.13)};">
                         ${title} (${voters.length})
                     </h4>
                     ${voters.length > 0 ? `
@@ -18728,11 +18724,15 @@
         window.setShortlistFilter = setShortlistFilter;
         window.finishShortlistVoting = finishShortlistVoting;
         window.setResultsFormat = setResultsFormat;
+        window.toggleResultsFormat = toggleResultsFormat;
         window.setContestInfoFormat = setContestInfoFormat;
         window.setByUserOrder = setByUserOrder;
         window.setCountShortlistValue = setCountShortlistValue;
         window.setCountShowMode = setCountShowMode;
         window.setComparisonShowMode = setComparisonShowMode;
+        window.setTotalShowMode = setTotalShowMode;
+        window.viewUserShortlistInTotal = viewUserShortlistInTotal;
+        window.setPairsShowMode = setPairsShowMode;
         window.dismissSpotlight = dismissSpotlight;
         window.openResultsFromCard = openResultsFromCard;
         window.dismissModeCallout = dismissModeCallout;
