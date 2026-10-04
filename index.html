@@ -7252,8 +7252,7 @@
             // Assign the selected score to this image
             state.votes[imageId] = state.selectedScore;
             debouncedAutoSave();
-            if (!state.prank && rollPrank()) startPrank('multi', imageId);
-            render();
+            renderAfterMultiInteraction(imageId);
         }
 
         function updateMultiVotingImageScale(value) {
@@ -13483,7 +13482,7 @@
                                             ? `prankTileClick(${isShortlist ? 'false' : 'true'})`
                                             : (isShortlist ? `toggleShortlistImage(${image.id})` : `voteImageMulti('${image.id}')`);
                                         return `
-                                        <div class="relative" style="height: ${imageHeight}px;">
+                                        <div class="relative" style="height: ${imageHeight}px;" ${isFake ? '' : `data-tile-id="${image.id}"`}>
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
                                                 onclick="${click}"
@@ -13708,8 +13707,10 @@
 
             const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
             const currentImage = state.shuffledImages[state.currentImageIndex];
-            const currentVote = isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
-            const shortlistStatus = isShortlist ? getShortlistStatus(currentImage.id) : null;
+            // The mirrored prank copy must look unvoted: no score / shortlist tag and neutral controls (real state is never touched)
+            const onPrankCopy = hasSinglePrank();
+            const currentVote = onPrankCopy ? undefined : isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
+            const shortlistStatus = isShortlist ? (onPrankCopy ? 'undecided' : getShortlistStatus(currentImage.id)) : null;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
 
             // Determine voting context (contest or merger)
@@ -16877,8 +16878,7 @@
             const wasSelected = !!state.shortlistSession.selected[imageId];
             setShortlistSkipped(imageId, wasSelected);
             applyShortlistChange(imageId, !wasSelected, true);
-            if (!state.prank && rollPrank()) startPrank('multi', imageId);
-            render();
+            renderAfterMultiInteraction(imageId);
         }
 
         function applyShortlistChange(imageId, shouldShortlist, skipRender = false) {
@@ -17015,6 +17015,22 @@
             return Math.random() < PRANK_CHANCE;
         }
 
+        // Multi mode, on every real-image interaction: first remove an existing fake (wherever it is), then roll for a new one
+        // after the tile just interacted with. Re-renders with the tile kept at the same place on screen, so inserting or
+        // removing a fake above the viewport does not make the grid jump.
+        function renderAfterMultiInteraction(imageId, roll = true) {
+            state.prank = null;
+            if (roll && rollPrank()) startPrank('multi', imageId);
+            const tileSelector = `[data-tile-id="${String(imageId).replace(/"/g, '')}"]`;
+            const before = document.querySelector(tileSelector);
+            const topBefore = before ? before.getBoundingClientRect().top : null;
+            const x = window.scrollX, y = window.scrollY;
+            render();
+            const after = document.querySelector(tileSelector);
+            const top = (after && topBefore !== null) ? y + (after.getBoundingClientRect().top - topBefore) : y;
+            window.scrollTo({ left: x, top, behavior: 'instant' });
+        }
+
         function startPrank(kind, imageId) {
             prankSerial++;
             state.prank = { kind, imageId, fakeId: `prank_${prankSerial}` };
@@ -17034,6 +17050,7 @@
         // Multi mode: clicking (checking / scoring) the mirrored tile only removes it
         function prankTileClick(needsScore) {
             if (needsScore && state.selectedScore === null) return;
+            if (state.prank && state.prank.kind === 'multi') { renderAfterMultiInteraction(state.prank.imageId, false); return; }
             state.prank = null;
             render();
         }
