@@ -7930,13 +7930,15 @@
             const isActive = isUserFilterActive();
 
             return `
-                <div class="inline-flex flex-col items-center gap-1">
-                <div class="relative inline-flex items-center gap-1">
+                <div class="relative inline-flex flex-col items-center gap-1">
+                <div class="inline-flex items-center gap-1">
                     <button onclick="toggleUserFilterDropdown()" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 ${isActive ? 'border-mauve-400 bg-mauve-50' : 'border-gray-300 bg-white'} text-xs font-medium hover:border-mauve-400 transition">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
                         Users
                     </button>
                     ${isActive ? `<span class="text-xs font-medium text-mauve-600">${selectedCount}/${totalCount}</span>` : ''}
+                </div>
+                ${isActive ? renderFilterResetButton('selectAllFilterUsers()', 'Reset the Users filter') : ''}
                     ${state.userFilterDropdownOpen ? `
                         <div class="absolute z-40 mt-1 top-full w-64 bg-white rounded-lg shadow-xl border border-gray-200 max-h-64 overflow-y-auto user-filter-dropdown" style="left: 0;">
                             <div class="sticky top-0 bg-white border-b border-gray-200 p-2 flex gap-2">
@@ -7957,8 +7959,6 @@
                             </div>
                         </div>
                     ` : ''}
-                </div>
-                ${isActive ? renderFilterResetButton('selectAllFilterUsers()', 'Reset the Users filter') : ''}
                 </div>
             `;
         }
@@ -13448,7 +13448,7 @@
                                     return filteredImages.map((image, idx) => {
                                         const tile = renderTile(image, idx, false);
                                         // Prank: a mirrored copy right after the tile that was just interacted with
-                                        return state.prank && state.prank.kind === 'multi' && state.prank.imageId === image.id
+                                        return state.prank && state.prank.kind === 'multi' && String(state.prank.imageId) === String(image.id)
                                             ? tile + renderTile(image, idx, true)
                                             : tile;
                                     }).join('');
