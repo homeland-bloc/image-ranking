@@ -77,12 +77,13 @@
             --blue-400: 96 165 250; --blue-500: 59 130 246; --blue-600: 37 99 235; --blue-700: 29 78 216;
         }
         /* Cold theme: gingerbread replaces mauve, a snowy-to-deep glacier blue replaces blue.
-           Mauve gradient runs 4.1:1 -> 8.0:1 and blue gradient 3.1:1 -> 4.6:1 against white text */
+           Mauve gradient runs 4.1:1 -> 8.0:1 and blue gradient 3.1:1 -> 4.6:1 against white text.
+           App bar stops (white text): #8a5532 6.1:1, #256a41 6.5:1, #21699a 5.9:1 */
         body.cold-theme {
             --mauve-300: 190 138 98; --mauve-400: 168 113 74; --mauve-500: 150 99 65; --mauve-600: 130 84 54; --mauve-700: 112 71 46;
             --blue-400: 72 153 208; --blue-500: 72 153 208; --blue-600: 42 122 181; --blue-700: 30 88 132;
             /* Gingerbread -> Christmas-tree evergreen -> glacier blue (shared by the app bar and the logo circles) */
-            --cold-bar-gradient: linear-gradient(to right, #a8714a 0%, #a8714a 6%, #2e7d4f 32%, #2e7d4f 56%, #2a7ab5 100%);
+            --cold-bar-gradient: linear-gradient(to right, #8a5532 0%, #8a5532 6%, #256a41 32%, #256a41 56%, #21699a 100%);
         }
         
         @keyframes tickAppear {
@@ -912,7 +913,7 @@
             background-attachment: fixed !important;
         }
 
-        /* App bar: gingerbread -> evergreen -> glacier blue (white text >= 4.1:1 on every stop) */
+        /* App bar: gingerbread -> evergreen -> glacier blue (white text >= 5.9:1 on every stop) */
         body.cold-theme .app-bar-bg {
             background-image: var(--cold-bar-gradient) !important;
         }
@@ -923,12 +924,37 @@
             box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.55);
         }
 
-        /* Merger cards: deeper, more saturated ice blue with a stronger border so they stand out */
+        /* Merger cards: ice blue that stands out from the page without dominating (title 8.1:1, byline 5.9:1, caption 5.9:1) */
         body.cold-theme .merger-card {
-            background-color: #b0d5f0 !important;
-            border-color: #2f78ad !important;
+            background-color: #d0e6f8 !important;
+            border-color: #5f9bc9 !important;
         }
         body.cold-theme .merger-card .text-gray-500 { color: #4b5563 !important; }
+
+        /* Home folders: "Pinned" is Christmas red and "All Votings" Christmas-tree green, each with a slight left-to-right gradient.
+           White on the headers: red 5.9:1 -> 8.1:1, green 5.3:1 -> 7.3:1 */
+        body.cold-theme .cold-pinned-header {
+            background-image: linear-gradient(to right, #c0262d, #9c1c26) !important;
+            box-shadow: 0 4px 10px rgba(156, 28, 38, 0.28) !important;
+        }
+        body.cold-theme .cold-all-header {
+            background-image: linear-gradient(to right, #1f7a4d, #176338) !important;
+            box-shadow: 0 4px 10px rgba(23, 99, 56, 0.28) !important;
+        }
+        /* White header buttons (search, create) keep a green label that matches the header */
+        body.cold-theme .cold-all-btn { color: #176338 !important; }
+        body.cold-theme .cold-all-btn:hover { background-color: #e3f3ea !important; }
+        /* "Load more votings": tinted gradient pill, label >= 5.8:1 (green) and >= 6.2:1 (red) at rest, >= 5.1:1 on the hover stops */
+        body.cold-theme .cold-pinned-more {
+            background-image: linear-gradient(to right, #fdeeee, #f8dcde) !important;
+            color: #9c1c26 !important;
+        }
+        body.cold-theme .cold-pinned-more:hover { background-image: linear-gradient(to right, #f8dcde, #f1c6c9) !important; }
+        body.cold-theme .cold-all-more {
+            background-image: linear-gradient(to right, #e9f6ef, #d3ebde) !important;
+            color: #176338 !important;
+        }
+        body.cold-theme .cold-all-more:hover { background-image: linear-gradient(to right, #d3ebde, #bfe0cf) !important; }
 
         /* Ice-tinted cards, panels and borders */
         body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
@@ -1228,7 +1254,7 @@
             cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'classic' | 'shortlist' (per-card session override of the saved format, never persisted)
             userShortlists: {},        // contestId -> { imageId: true } — current user's real rows in `shortlists`
             shortlistSelected: {},     // imageId -> true — working set on the shortlist voting screen
-            shortlistSession: null,    // { itemType, itemId, title, contestByImage, persisted } while shortlist voting
+            shortlistSession: null,    // { itemType, itemId, title, contestByImage, selected (= desiredShortlist), savedShortlist } while shortlist voting
             countShortlistValue: 'count',  // Count tab (shortlist): 'count' | 'crowd'
             countShowMode: 'num',      // Count tab (shortlist): 'num' | 'pct'
             byUserOrder: 'popular',    // By User dropdown order: 'popular' | 'random'
@@ -4734,7 +4760,9 @@
         }
 
         // Brief non-intrusive "Auto-saved ✓" toast at bottom-center
-        function showAutoSaveToast() {
+        // `text` / `opts` let the shortlist saver reuse it for "Saving…" and failures (opts.hold keeps it visible,
+        // opts.background overrides the green); plain calls behave exactly as before.
+        function showAutoSaveToast(text = 'Auto-saved \u2713', opts = {}) {
             const existing = document.getElementById('autosave-toast');
             if (existing) { existing.remove(); }
             const toast = document.createElement('div');
@@ -4744,7 +4772,7 @@
                 'bottom:24px',
                 'left:50%',
                 'transform:translateX(-50%)',
-                'background:#22c55e',
+                `background:${opts.background || '#22c55e'}`,
                 'color:#fff',
                 'padding:5px 14px',
                 'border-radius:999px',
@@ -4756,10 +4784,11 @@
                 'pointer-events:none',
                 'white-space:nowrap'
             ].join(';');
-            toast.textContent = 'Auto-saved \u2713';
+            toast.textContent = text;
             document.body.appendChild(toast);
             requestAnimationFrame(() => {
                 toast.style.opacity = '1';
+                if (opts.hold) return;
                 setTimeout(() => {
                     toast.style.opacity = '0';
                     setTimeout(() => { if (toast.parentNode) toast.remove(); }, 200);
@@ -7252,8 +7281,7 @@
             // Assign the selected score to this image
             state.votes[imageId] = state.selectedScore;
             debouncedAutoSave();
-            if (!state.prank && rollPrank()) startPrank('multi', imageId);
-            render();
+            renderAfterMultiInteraction(imageId);
         }
 
         function updateMultiVotingImageScale(value) {
@@ -7539,8 +7567,9 @@
         async function backToHome() {
             console.log('🏠 [NAVIGATION] Returning to home from view:', state.view);
 
-            // Shortlist voting has no draft/autosave — every toggle is already saved, so just leave.
+            // Shortlist voting has no draft/autosave: pending ticks are flushed first, then we leave.
             if (state.votingFormat === 'shortlist') {
+                if (!(await flushShortlistBeforeLeaving())) return;   // alert shown, stay on the voting screen
                 exitShortlistVoting();
             }
             state.resultsFormat = 'classic';
@@ -7642,7 +7671,11 @@
             render();
         }
 
-        function toggleVotingMode() {
+        async function toggleVotingMode() {
+            // Switching between single and multi mode flushes pending shortlist ticks first
+            if (state.votingFormat === 'shortlist' && state.shortlistSession) {
+                if (!(await flushShortlistBeforeLeaving())) return;
+            }
             cancelVoteHold();
             state.prank = null;
             state.progressPanelIndex = null;
@@ -9378,6 +9411,9 @@
 
             // Clear cached data if switching to a different user
             if (state.viewingUserId !== userId) {
+                state.userProfileVotedContests = [];
+                state.userProfileShortlistContests = [];
+                state.userProfileTotalVotes = 0;
                 state.userProfileVoteDistribution = null;
                 state.showVoteSpread = false;
                 state.showGlobalSimilarity = false;
@@ -9419,6 +9455,15 @@
                 state.userProfileTotalVotes = 0;
             }
 
+            // Real shortlist rows only (auto-converted shortlists have no rows, and the classic star already covers them)
+            try {
+                const shortlistRows = await fetchAllShortlistsPaginated(`user_id=eq.${userId}`, 'contest_id');
+                state.userProfileShortlistContests = [...new Set(shortlistRows.map(r => r.contest_id))];
+            } catch (error) {
+                console.error('Error loading user shortlists:', error);
+                state.userProfileShortlistContests = [];
+            }
+
             render();
         }
 
@@ -9453,6 +9498,7 @@
             state.showUserProfileModal = false;
             state.viewingUserId = null;
             state.userProfileVotedContests = [];
+            state.userProfileShortlistContests = [];
             // Note: userProfileVoteDistribution and globalSimilarityResults are NOT cleared — they persist for reopen
             state.showVoteSpread = false;
             state.showGlobalSimilarity = false;
@@ -11601,7 +11647,7 @@
 
                             return `
                                 <div class="mb-4">
-                                    <div class="bg-gradient-to-r from-red-500 to-red-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
+                                    <div class="cold-pinned-header bg-gradient-to-r from-red-500 to-red-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-3">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-3 flex-1">
                                                 <button
@@ -11629,7 +11675,7 @@
                                     ${hasMore ? `
                                         <button
                                             onclick="${isExpanded ? 'showMorePinnedItems()' : 'togglePinnedSection()'}"
-                                            class="w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
+                                            class="cold-pinned-more w-full text-center text-sm text-red-600 hover:text-red-700 font-medium py-2 bg-red-50 hover:bg-red-100 rounded-lg transition"
                                         >
                                             Load more votings
                                         </button>
@@ -11640,7 +11686,7 @@
                         return '';
                     })()}
 
-                    <div class="bg-gradient-to-r from-green-500 to-green-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-2">
+                    <div class="cold-all-header bg-gradient-to-r from-green-500 to-green-600 p-2.5 md:p-3 rounded-lg shadow-lg mb-2">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-3 flex-1">
                                 <button
@@ -11657,10 +11703,10 @@
                             </div>
                             ${!isBanned ? `
                                 <div class="flex items-center gap-2">
-                                    <button onclick="toggleFilters()" class="bg-white text-green-700 p-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg" title="Search & Filter">
+                                    <button onclick="toggleFilters()" class="cold-all-btn bg-white text-green-700 p-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg" title="Search & Filter">
                                         🔍
                                     </button>
-                                    <button onclick="openUnifiedCreateModal()" class="bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
+                                    <button onclick="openUnifiedCreateModal()" class="cold-all-btn bg-white text-green-700 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 transition shadow-lg text-sm whitespace-nowrap">
                                         + Create
                                     </button>
                                 </div>
@@ -11928,7 +11974,7 @@
                                     ` : `
                                         <button
                                             onclick="loadMoreContests()"
-                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                            class="cold-all-more w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
                                             Load more votings
                                         </button>
@@ -11957,7 +12003,7 @@
                                 ${hasMoreClientItems ? `
                                     <button
                                         onclick="${state.isAllContestsSectionExpanded ? 'showMoreAllItems()' : 'toggleAllContestsSection()'}"
-                                        class="w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
+                                        class="cold-all-more w-full text-center text-sm text-green-600 hover:text-green-700 font-medium py-2 bg-green-50 hover:bg-green-100 rounded-lg transition"
                                     >
                                         Load more votings
                                     </button>
@@ -11970,7 +12016,7 @@
                                     ` : `
                                         <button
                                             onclick="loadMoreContests()"
-                                            class="w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
+                                            class="cold-all-more w-full text-center text-sm text-mauve-600 hover:text-mauve-700 font-medium py-2 bg-pink-50 hover:bg-pink-100 rounded-lg transition mt-2"
                                         >
                                             Load more votings
                                         </button>
@@ -12423,8 +12469,9 @@
             const userVotedContestIds = state.userProfileVotedContests || [];
 
             // Get contests this user has voted on (INCLUDING ones they created)
+            const userShortlistContestIds = state.userProfileShortlistContests || [];
             const votedContests = state.contests.filter(contest =>
-                userVotedContestIds.includes(contest.id)
+                userVotedContestIds.includes(contest.id) || userShortlistContestIds.includes(contest.id)
             );
 
             // Get mergers where user voted on source contests (INCLUDING ones they created)
@@ -12453,7 +12500,13 @@
             ];
 
             // Only show contests in the voted section (mergers/extracts are derivative)
-            const allVotedItems = votedContests.map(c => ({ ...c, itemType: 'contest' }));
+            // Union of classic-voted and really-shortlisted contests, one entry each, with a star / bookmark marker
+            const allVotedItems = votedContests.map(c => ({
+                ...c,
+                itemType: 'contest',
+                hasClassic: userVotedContestIds.includes(c.id),
+                hasShortlist: userShortlistContestIds.includes(c.id)
+            }));
 
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isBanned = state.bannedUsers.includes(userId);
@@ -12737,9 +12790,11 @@
                                         const hoverClass = item.itemType === 'merger' ? 'hover:text-blue-900 hover:bg-blue-50' :
                                                           item.itemType === 'extract' ? 'hover:text-yellow-900 hover:bg-yellow-50' :
                                                           'hover:text-mauve-600 hover:bg-gray-50';
+                                        const markers = (item.hasClassic ? '<span role="img" aria-label="Classic votes">⭐</span>' : '') +
+                                                        (item.hasShortlist ? '<span role="img" aria-label="Shortlist">🔖</span>' : '');
                                         return `
                                             <div class="text-sm ${colorClass} ${hoverClass} transition p-2 rounded font-medium">
-                                                • ${title}
+                                                • ${title}${markers ? ` <span class="ml-1">${markers}</span>` : ''}
                                             </div>
                                         `;
                                     }).join('')}
@@ -13346,7 +13401,7 @@
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
                     ${renderAutosaveStatusBar()}
-                    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in">
+                    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
                         <!-- Header with progress -->
                         <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
                             <div class="flex justify-between items-center mb-2">
@@ -13483,7 +13538,7 @@
                                             ? `prankTileClick(${isShortlist ? 'false' : 'true'})`
                                             : (isShortlist ? `toggleShortlistImage(${image.id})` : `voteImageMulti('${image.id}')`);
                                         return `
-                                        <div class="relative" style="height: ${imageHeight}px;">
+                                        <div class="relative" style="height: ${imageHeight}px;" ${isFake ? '' : `data-tile-id="${image.id}"`}>
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
                                                 onclick="${click}"
@@ -13517,7 +13572,7 @@
                 </div>
 
                 <!-- Fixed bottom voting panel -->
-                <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t-2 border-gray-300 dark:border-gray-700 shadow-2xl z-50">
+                <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t-2 border-gray-300 dark:border-gray-700 shadow-2xl z-50" data-vote-card="1">
                     <div class="max-w-4xl mx-auto px-4 py-4">
                         ${isShortlist ? renderShortlistMultiBottomPanel(votedCount, totalCount) : `
                         <!-- Mobile layout: stacked -->
@@ -13708,8 +13763,10 @@
 
             const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
             const currentImage = state.shuffledImages[state.currentImageIndex];
-            const currentVote = isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
-            const shortlistStatus = isShortlist ? getShortlistStatus(currentImage.id) : null;
+            // The mirrored prank copy must look unvoted: no score / shortlist tag and neutral controls (real state is never touched)
+            const onPrankCopy = hasSinglePrank();
+            const currentVote = onPrankCopy ? undefined : isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
+            const shortlistStatus = isShortlist ? (onPrankCopy ? 'undecided' : getShortlistStatus(currentImage.id)) : null;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
 
             // Determine voting context (contest or merger)
@@ -13728,7 +13785,7 @@
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     ${renderAutosaveStatusBar()}
-                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
                         ${renderSingleProgressBar(isShortlist, segmentCount, imagesPerSegment)}
 
                         <div class="p-3">
@@ -13902,13 +13959,13 @@
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
                                 <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
-                                <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
-                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
-                                </button>
                                     <div class="flex items-center gap-1.5">
                                         <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
                                         ${renderResultsFormatToggle()}
                                     </div>
+                                <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
+                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
+                                </button>
                                 </div>
                                 ${renderGlobalFilters()}
                                 ${isUserFilterActive() || isImageFilterActive() ? `
@@ -16735,7 +16792,7 @@
                 // the real shortlist wins over 'empty' / 'auto' so nothing is silently overwritten.
                 const realRows = await fetchAllShortlistsPaginated(userContestFilter, 'image_id,contest_id');
                 const selected = {};
-                const persisted = {};
+                const savedShortlist = {};
 
                 ctx.contestIds.forEach(contestId => { delete state.userShortlists[contestId]; });
                 realRows.forEach(row => {
@@ -16743,7 +16800,7 @@
                     state.userShortlists[row.contest_id][row.image_id] = true;
                     if (imageIdSet.has(row.image_id)) {
                         selected[row.image_id] = true;
-                        persisted[row.image_id] = true;
+                        savedShortlist[row.image_id] = true;
                     }
                 });
 
@@ -16762,8 +16819,9 @@
                     contestIds: ctx.contestIds,
                     contestByImage: ctx.contestByImage,
                     selected,
-                    persisted
+                    savedShortlist
                 };
+                resetShortlistSaver(session);
 
                 // Auto-generate: save the whole auto-converted set right now, so every checked box on screen is
                 // already a real row. If this fails nothing is shown, so the screen never claims unsaved picks.
@@ -16866,10 +16924,57 @@
             startShortlistVoting(pending.itemType, pending.itemId, 'auto');
         }
 
-        // ---------- Toggling (immediate write per toggle) ----------
+        // ---------- Toggling: adaptive saver (isolated ticks save at once, rapid bursts are batched) ----------
+        //
+        // desiredShortlist = session.selected (what the screen shows), savedShortlist = session.savedShortlist (image ids
+        // known to be in the database for this user and item). The pending diff is always desired minus saved (inserts)
+        // and saved minus desired (deletes), so an image toggled back to its saved state sends nothing.
 
-        // Writes are chained so rapid toggles reach the database in order.
-        let shortlistWriteChain = Promise.resolve();
+        const BURST_COUNT = 4;          // this many toggles inside BURST_WINDOW_MS switch the saver to burst mode
+        const BURST_WINDOW_MS = 3000;   // sliding window used to count toggles
+        const IDLE_MS = 2000;           // burst mode: flush after this long without any toggle ...
+        const MAX_WAIT_MS = 10000;      // ... or this long after the first held change, whichever comes first
+        const SAVE_RETRY_BASE_MS = 2000;     // failed flush: retry after 2s, 4s, 8s ... capped below
+        const SAVE_RETRY_MAX_MS = 30000;
+        const SAVE_FAILURES_BEFORE_TOAST = 3;
+        const SAVE_CHUNK_SIZE = 300;    // ids per request: short delete URL and keepalive bodies stay well under 64 KB; normally everything fits in one
+
+        // One saver per shortlist session. `inFlight` is the single writer slot: there is never more than one request.
+        const shortlistSaver = {
+            session: null,
+            toggleTimes: [],      // timestamps of recent toggles (sliding window)
+            lastToggleAt: 0,
+            pendingSince: null,   // time of the first toggle since the last flush started (MAX_WAIT_MS anchor)
+            burst: false,
+            timer: null,          // burst-mode flush timer
+            retryTimer: null,
+            inFlight: null,
+            failures: 0,
+            failedShown: false,
+            toastShown: false
+        };
+
+        function resetShortlistSaver(session) {
+            clearTimeout(shortlistSaver.timer);
+            clearTimeout(shortlistSaver.retryTimer);
+            Object.assign(shortlistSaver, {
+                session, toggleTimes: [], lastToggleAt: 0, pendingSince: null, burst: false, timer: null, retryTimer: null,
+                inFlight: null, failures: 0, failedShown: false, toastShown: false
+            });
+        }
+
+        function getShortlistDiff(session) {
+            const inserts = [];
+            const deletes = [];
+            Object.keys(session.selected).forEach(id => { if (!session.savedShortlist[id]) inserts.push(Number(id)); });
+            Object.keys(session.savedShortlist).forEach(id => { if (!session.selected[id]) deletes.push(Number(id)); });
+            return { inserts, deletes };
+        }
+
+        function hasShortlistDiff(session) {
+            const { inserts, deletes } = getShortlistDiff(session);
+            return inserts.length > 0 || deletes.length > 0;
+        }
 
         // Multi mode tile click: an undecided or skipped image becomes shortlisted; unticking a shortlisted one marks it skipped (red)
         function toggleShortlistImage(imageId) {
@@ -16877,10 +16982,10 @@
             const wasSelected = !!state.shortlistSession.selected[imageId];
             setShortlistSkipped(imageId, wasSelected);
             applyShortlistChange(imageId, !wasSelected, true);
-            if (!state.prank && rollPrank()) startPrank('multi', imageId);
-            render();
+            renderAfterMultiInteraction(imageId);
         }
 
+        // Local state changes at once (checkbox, red / skip marks, progress bar); the database follows via the saver
         function applyShortlistChange(imageId, shouldShortlist, skipRender = false) {
             const session = state.shortlistSession;
             if (!session) return;
@@ -16891,10 +16996,199 @@
             }
             state.lastClickedImageId = imageId;
             if (!skipRender) render();
-            shortlistWriteChain = shortlistWriteChain
-                .then(() => syncShortlistImage(session, imageId))
-                .catch(() => {});
+            onShortlistToggled(session);
         }
+
+        // 5c: record the toggle in the sliding window, then decide between an immediate save and holding for a burst
+        function onShortlistToggled(session) {
+            const saver = shortlistSaver;
+            if (saver.session !== session) return;
+            const now = Date.now();
+            saver.lastToggleAt = now;
+            saver.toggleTimes.push(now);
+            saver.toggleTimes = saver.toggleTimes.filter(t => now - t < BURST_WINDOW_MS);
+            if (saver.pendingSince === null) saver.pendingSince = now;
+            decideShortlistSave(session);
+        }
+
+        // Runs after every toggle and again whenever a request finishes, for whatever is pending then
+        function decideShortlistSave(session) {
+            const saver = shortlistSaver;
+            if (saver.session !== session) return;
+            if (!hasShortlistDiff(session)) {
+                clearTimeout(saver.timer);
+                saver.timer = null;
+                saver.pendingSince = null;
+                return;
+            }
+            if (saver.inFlight) return;      // the finishing request re-runs this decision
+            if (saver.retryTimer) return;    // a failed save is waiting for its backoff retry
+            const now = Date.now();
+            const recent = saver.toggleTimes.filter(t => now - t < BURST_WINDOW_MS).length;
+            if (!saver.burst && recent < BURST_COUNT) {
+                flushShortlist(session, { batched: false });   // normal mode: save this tick right away
+                return;
+            }
+            saver.burst = true;
+            const since = saver.pendingSince === null ? now : saver.pendingSince;
+            saver.pendingSince = since;
+            const wait = Math.max(0, Math.min(saver.lastToggleAt + IDLE_MS, since + MAX_WAIT_MS) - now);
+            clearTimeout(saver.timer);
+            saver.timer = setTimeout(() => {
+                saver.timer = null;
+                flushShortlist(session, { batched: true });
+            }, wait);
+        }
+
+        // 5b: the single writer. Returns a promise for "this flush succeeded" (true when nothing was pending).
+        function flushShortlist(session, { batched = false } = {}) {
+            const saver = shortlistSaver;
+            if (saver.session !== session) return Promise.resolve(true);
+            if (saver.inFlight) return saver.inFlight.then(() => flushShortlist(session, { batched }));
+            clearTimeout(saver.timer);
+            saver.timer = null;
+            clearTimeout(saver.retryTimer);
+            saver.retryTimer = null;
+
+            // 5d: snapshot the diff when the request starts
+            const { inserts, deletes } = getShortlistDiff(session);
+            if (inserts.length === 0 && deletes.length === 0) {
+                saver.pendingSince = null;
+                return Promise.resolve(true);
+            }
+            saver.pendingSince = null;
+            if (batched) showShortlistSaveStatus('saving');
+
+            const run = (async () => {
+                let ok = false;
+                try {
+                    await sendShortlistChanges(session, inserts, deletes);
+                    ok = true;
+                } catch (error) {
+                    console.error('Shortlist save failed:', error);
+                }
+                saver.inFlight = null;
+                if (saver.session !== session) return ok;
+                if (ok) {
+                    invalidateShortlistCaches(session);
+                    const recovered = saver.failedShown;
+                    saver.failures = 0;
+                    saver.failedShown = false;
+                    saver.toastShown = false;
+                    if (batched) saver.burst = false;   // back to normal mode, re-evaluated on the next toggle
+                    if (batched || recovered) showShortlistSaveStatus('saved');
+                } else {
+                    saver.failures++;
+                    saver.failedShown = true;
+                    showShortlistSaveStatus('failed');
+                    if (saver.failures >= SAVE_FAILURES_BEFORE_TOAST && !saver.toastShown) {
+                        saver.toastShown = true;
+                        showToast('Your shortlist changes could not be saved yet. They are kept on this screen and we keep retrying.', '❌');
+                    }
+                    const delay = Math.min(SAVE_RETRY_BASE_MS * Math.pow(2, saver.failures - 1), SAVE_RETRY_MAX_MS);
+                    saver.retryTimer = setTimeout(() => {
+                        saver.retryTimer = null;
+                        flushShortlist(session, { batched: true });
+                    }, delay);
+                }
+                if (ok) decideShortlistSave(session);   // whatever was toggled while the request was in flight
+                return ok;
+            })();
+            saver.inFlight = run;
+            return run;
+        }
+
+        // Every write uses fetch keepalive (bodies are small), so a request already in flight when the tab is hidden or
+        // closed is still finished by the browser. Inserts then deletes, in chunks. Saved state is updated per finished request, so a failure part-way keeps the
+        // exact remainder pending.
+        async function sendShortlistChanges(session, inserts, deletes) {
+            for (let i = 0; i < inserts.length; i += SAVE_CHUNK_SIZE) {
+                const chunk = inserts.slice(i, i + SAVE_CHUNK_SIZE);
+                const rows = chunk
+                    .map(imageId => ({ user_id: state.user.id, image_id: imageId, contest_id: session.contestByImage[imageId] }))
+                    .filter(row => row.contest_id !== undefined);
+                if (rows.length > 0) {
+                    const response = await fetchFromSupabase('/rest/v1/shortlists', {
+                        method: 'POST',
+                        headers: { 'Prefer': 'resolution=ignore-duplicates,return=minimal' },
+                        body: JSON.stringify(rows),
+                        keepalive: true
+                    });
+                    if (!response.ok) throw new Error('Shortlist insert failed: ' + await response.text());
+                }
+                chunk.forEach(imageId => markShortlistSaved(session, imageId, true));
+            }
+            for (let i = 0; i < deletes.length; i += SAVE_CHUNK_SIZE) {
+                const chunk = deletes.slice(i, i + SAVE_CHUNK_SIZE);
+                const response = await fetchFromSupabase(
+                    `/rest/v1/shortlists?user_id=eq.${state.user.id}&image_id=in.(${chunk.join(',')})`,
+                    { method: 'DELETE', headers: { 'Prefer': 'return=minimal' }, keepalive: true }
+                );
+                if (!response.ok) throw new Error('Shortlist delete failed: ' + await response.text());
+                chunk.forEach(imageId => markShortlistSaved(session, imageId, false));
+            }
+        }
+
+        function markShortlistSaved(session, imageId, saved) {
+            const contestId = session.contestByImage[imageId];
+            if (saved) {
+                session.savedShortlist[imageId] = true;
+                if (contestId !== undefined) {
+                    if (!state.userShortlists[contestId]) state.userShortlists[contestId] = {};
+                    state.userShortlists[contestId][imageId] = true;
+                }
+            } else {
+                delete session.savedShortlist[imageId];
+                if (state.userShortlists[contestId]) {
+                    delete state.userShortlists[contestId][imageId];
+                    if (Object.keys(state.userShortlists[contestId]).length === 0) delete state.userShortlists[contestId];
+                }
+            }
+        }
+
+        // 5i: everything that reads the shortlists table is dropped or flagged for refresh after each successful flush.
+        // Card counts (maintained by a DB trigger) are re-read by exitShortlistVoting, so no render happens mid-voting.
+        function invalidateShortlistCaches(session) {
+            state.shortlistData = null;              // results pages, info modal
+            state.leaderboardShortlistStats = null;  // leaderboard
+            state.userLeaderboardData = null;
+        }
+
+        // 5g: reuses the classic "Auto-saved" toast. Immediate single-toggle saves in normal mode show nothing.
+        function showShortlistSaveStatus(kind) {
+            if (kind === 'saving') showAutoSaveToast('Saving…', { hold: true });
+            else if (kind === 'saved') showAutoSaveToast('Auto-saved ✓');
+            else showAutoSaveToast('Not saved yet - retrying…', { hold: true, background: '#ef4444' });
+        }
+
+        // 5e: leaving the screen. Resolves true once nothing is pending; otherwise shows an alert and resolves false.
+        async function flushShortlistBeforeLeaving() {
+            const session = state.shortlistSession;
+            if (!session || shortlistSaver.session !== session) return true;
+            if (!shortlistSaver.inFlight && !hasShortlistDiff(session)) return true;
+            let ok = true;
+            for (let guard = 0; guard < 50; guard++) {
+                ok = await flushShortlist(session, { batched: false });
+                if (!ok || !hasShortlistDiff(session)) break;
+            }
+            if (!ok || hasShortlistDiff(session)) {
+                showAlert('Your latest shortlist changes could not be saved. Check your connection and try again.', '❌');
+                return false;
+            }
+            return true;
+        }
+
+        // 5e: tab hidden or page closing - fire whatever is pending (keepalive, so the browser finishes it).
+        // Skipped while a request is already in flight: that request is keepalive too, and a second one could let an
+        // older snapshot overwrite a newer one. The finishing request re-decides the remainder.
+        function flushShortlistOnPageHide() {
+            const session = state.shortlistSession;
+            if (!session || state.view !== 'vote' || shortlistSaver.session !== session) return;
+            if (shortlistSaver.inFlight || !hasShortlistDiff(session)) return;
+            flushShortlist(session, { batched: false });
+        }
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushShortlistOnPageHide(); });
+        window.addEventListener('pagehide', flushShortlistOnPageHide);
 
         async function insertShortlistRows(session, imageIds) {
             const rows = imageIds
@@ -16909,56 +17203,8 @@
             if (!response.ok) {
                 throw new Error('Shortlist insert failed: ' + await response.text());
             }
-            rows.forEach(row => {
-                session.persisted[row.image_id] = true;
-                if (!state.userShortlists[row.contest_id]) state.userShortlists[row.contest_id] = {};
-                state.userShortlists[row.contest_id][row.image_id] = true;
-            });
+            rows.forEach(row => markShortlistSaved(session, row.image_id, true));
             state.shortlistData = null;
-        }
-
-        async function deleteShortlistRow(session, imageId) {
-            const contestId = session.contestByImage[imageId];
-            const response = await fetchFromSupabase(
-                `/rest/v1/shortlists?user_id=eq.${state.user.id}&contest_id=eq.${contestId}&image_id=eq.${imageId}`,
-                { method: 'DELETE', headers: { 'Prefer': 'return=minimal' } }
-            );
-            if (!response.ok) {
-                throw new Error('Shortlist delete failed: ' + await response.text());
-            }
-            delete session.persisted[imageId];
-            if (state.userShortlists[contestId]) {
-                delete state.userShortlists[contestId][imageId];
-                if (Object.keys(state.userShortlists[contestId]).length === 0) delete state.userShortlists[contestId];
-            }
-            state.shortlistData = null;
-        }
-
-        // Reconcile one image with the database: insert when newly checked, delete when unchecked.
-        async function syncShortlistImage(session, imageId) {
-            const want = !!session.selected[imageId];
-            try {
-                if (want && !session.persisted[imageId]) {
-                    await insertShortlistRows(session, [imageId]);
-                }
-                if (!want && session.persisted[imageId]) {
-                    await deleteShortlistRow(session, imageId);
-                }
-            } catch (error) {
-                console.error('Shortlist save failed:', error);
-                // Roll the local toggle back to what is actually stored
-                if (session.persisted[imageId]) {
-                    session.selected[imageId] = true;
-                    delete state.shortlistSkipped[imageId];
-                    saveSkippedImages();
-                } else {
-                    delete session.selected[imageId];
-                }
-                if (state.shortlistSession === session) {
-                    render();
-                    showToast('Could not save that shortlist change. Please try again.', '❌');
-                }
-            }
         }
 
         // ---------- Explicit "no" state (shortlist format only; session storage, NEVER written to the database) ----------
@@ -17015,9 +17261,58 @@
             return Math.random() < PRANK_CHANCE;
         }
 
+        // Multi mode, on every real-image interaction: first remove an existing fake (wherever it is), then roll for a new one
+        // after the tile just interacted with. Re-renders with the tile kept at the same place on screen, so inserting or
+        // removing a fake above the viewport does not make the grid jump.
+        function renderAfterMultiInteraction(imageId, roll = true) {
+            state.prank = null;
+            if (roll && rollPrank()) startPrank('multi', imageId);
+            const tileSelector = `[data-tile-id="${String(imageId).replace(/"/g, '')}"]`;
+            const before = document.querySelector(tileSelector);
+            const topBefore = before ? before.getBoundingClientRect().top : null;
+            const x = window.scrollX, y = window.scrollY;
+            render();
+            const after = document.querySelector(tileSelector);
+            const top = (after && topBefore !== null) ? y + (after.getBoundingClientRect().top - topBefore) : y;
+            window.scrollTo({ left: x, top, behavior: 'instant' });
+        }
+
         function startPrank(kind, imageId) {
             prankSerial++;
-            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}` };
+            // spawnedAt lets the dismiss listener ignore the very event that created the fake (event.timeStamp <= spawnedAt)
+            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
+        }
+
+        // Any click or tap inside the voting card (image area, vote / Skip / Shortlist buttons, progress bar and panel,
+        // Prev / Next / View Results, caption, and in multi mode the tiles and the filter / scale / sort controls)
+        // dismisses the fake for good. A document-level BUBBLE listener runs after the click's own action, so removing
+        // the fake can never shift the click target. App bar, user menu and modals are outside [data-vote-card].
+        function prankDismissClick(e) {
+            const prank = state.prank;
+            if (!prank || state.view !== 'vote' || state.voteHold) return;
+            if (e.timeStamp <= prank.spawnedAt) return;   // the click that spawned the fake never dismisses it
+            if (!e.target.closest || !e.target.closest('[data-vote-card]')) return;
+            if (prank.kind === 'multi') {
+                renderAfterMultiInteraction(prank.imageId, false);   // keeps the tile under the pointer in place
+            } else if (hasSinglePrank()) {
+                // A click that performed its own action (progress segment ...) already moved on; only a click on a
+                // non-action area (image, empty space, caption) advances, as if the fake had been voted on.
+                const isAction = !!e.target.closest('[onclick], button, a, input, select, textarea, label');
+                if (isAction) { state.prank = null; render(); } else resolveSinglePrank();
+            }
+        }
+
+        // Called from render(): the listener exists only while a fake is on the voting screen
+        let prankListenerAttached = false;
+        function syncPrankListener() {
+            const want = !!state.prank && state.view === 'vote';
+            if (want && !prankListenerAttached) {
+                document.addEventListener('click', prankDismissClick);
+                prankListenerAttached = true;
+            } else if (!want && prankListenerAttached) {
+                document.removeEventListener('click', prankDismissClick);
+                prankListenerAttached = false;
+            }
         }
 
         function hasSinglePrank() {
@@ -17034,6 +17329,7 @@
         // Multi mode: clicking (checking / scoring) the mirrored tile only removes it
         function prankTileClick(needsScore) {
             if (needsScore && state.selectedScore === null) return;
+            if (state.prank && state.prank.kind === 'multi') { renderAfterMultiInteraction(state.prank.imageId, false); return; }
             state.prank = null;
             render();
         }
@@ -17362,7 +17658,6 @@
         // Refreshes the shortlist_count shown on cards (maintained by a DB trigger) once pending writes have landed.
         async function refreshShortlistCounts(session) {
             try {
-                await shortlistWriteChain;
                 const jobs = [];
                 if (session.contestIds.length > 0) {
                     jobs.push(
@@ -17392,9 +17687,12 @@
             }
         }
 
-        // Clears the shortlist session. Nothing is pending (every toggle saved immediately), so no draft prompt.
+        // Clears the shortlist session. Callers flush the saver first (flushShortlistBeforeLeaving), so nothing is pending and no draft prompt is needed.
         function exitShortlistVoting() {
             const session = state.shortlistSession;
+            resetShortlistSaver(null);
+            const saveToast = document.getElementById('autosave-toast');
+            if (saveToast) saveToast.remove();
             resetShortlistState();
             state.shortlistSelected = {};
             state.shortlistFilter = [];
@@ -17408,7 +17706,11 @@
             const session = state.shortlistSession;
             if (!session) return;
             setLoading('Saving your shortlist...');
-            try { await shortlistWriteChain; } catch (_) { /* individual failures already rolled back */ }
+            // Results must not load before the flush has finished; on failure stay on this screen
+            if (!(await flushShortlistBeforeLeaving())) {
+                clearLoading();
+                return;
+            }
             exitShortlistVoting();
 
             try {
@@ -18565,6 +18867,7 @@
         function render() {
             const app = document.getElementById('app');
             if (state.view !== 'vote') { cancelVoteHold(); state.prank = null; }   // neither the hold nor the prank outlives the voting screen
+            syncPrankListener();
 
             // Save scroll positions of elements that should be preserved across re-renders
             const savedScrolls = [];
