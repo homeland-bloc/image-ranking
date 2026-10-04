@@ -1227,6 +1227,7 @@
             comparisonShowMode: 'num', // shortlist comparison views: overlap as 'num' (#) or 'pct' (%)
             shortlistSkipped: {},      // imageId -> true: explicitly skipped / unticked this session (shortlist format; sessionStorage only, never saved to the database)
             shortlistFilter: [],       // multi-mode filter buckets: 'undecided' | 'shortlisted' | 'skipped'
+            voteHold: null,            // { kind, prank, imageId, opacity, timer } while the single-mode tint is held before advancing
             prank: null,               // { kind: 'single' | 'multi', imageId, fakeId } - purely visual mirrored copy (ItsADifferentConcept)
             progressPanelIndex: null,  // single mode, 20+ images: index of the grouped progress segment whose per-image panel is open
             resultsFormat: 'classic',  // 'classic' | 'shortlist' — results page voting-format switch
@@ -7192,6 +7193,7 @@
         }
 
         function navigateImage(direction) {
+            cancelVoteHold();
             if (hasSinglePrank()) state.prank = null;   // any navigation removes the mirrored copy for good
             if (direction === 'next') {
                 if (state.currentImageIndex < state.shuffledImages.length - 1) {
@@ -7205,6 +7207,7 @@
 
         function jumpToImage(index) {
             if (state.isAnimating) return;
+            cancelVoteHold();
             if (hasSinglePrank()) state.prank = null;
             state.currentImageIndex = index;
             state.progressPanelIndex = null;
@@ -7630,6 +7633,7 @@
         }
 
         function toggleVotingMode() {
+            cancelVoteHold();
             state.prank = null;
             state.progressPanelIndex = null;
             const newMode = state.votingMode === 'single' ? 'multi' : 'single';
@@ -13688,7 +13692,7 @@
                                     draggable="false"
                                     onload="this.parentElement.classList.remove('image-loading')"
                                 />
-                                ${isShortlist ? `<div id="swipe-tint" class="absolute inset-0 pointer-events-none flex items-center justify-center text-white font-extrabold text-7xl" style="opacity: 0;"><span></span></div>` : ''}
+                                ${isShortlist ? `<div id="swipe-tint" class="absolute inset-0 pointer-events-none flex items-center justify-center text-white font-extrabold text-7xl" style="${state.voteHold ? `opacity: ${state.voteHold.opacity}; background-color: ${getScoreColor(state.voteHold.kind === 'yes' ? 5 : 1)};` : 'opacity: 0;'}"><span>${state.voteHold ? (state.voteHold.kind === 'yes' ? '✓' : '✕') : ''}</span></div>` : ''}
                                 ${isShortlist ? (shortlistStatus === 'yes' ? `
                                     <div class="absolute top-2 right-2 bg-white dark:bg-gray-800 rounded-full px-3 py-1 shadow-lg flex items-center gap-1 text-sm">
                                         <span>🔖</span>
@@ -16998,7 +17002,7 @@
         // Live drag tint on the single in-page overlay (green right, red left), proportional to the drag distance
         function setSwipeTint(dx) {
             const tint = document.getElementById('swipe-tint');
-            if (!tint) return;
+            if (!tint || state.voteHold) return;   // the held vote tint must stay visible
             const max = prefersReducedMotion() ? 0.25 : 0.6;
             const strength = Math.min(1, Math.abs(dx) / 140);
             tint.style.transition = 'none';
@@ -17017,45 +17021,51 @@
         // Swipe right / Shortlist = shortlist and advance; swipe left / Skip = skip and advance.
         // Skip only removes the image when it was already shortlisted (an edit); otherwise nothing is written.
 
-        function commitShortlistSingle(kind, startOpacity) {
-            if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                state.currentImageIndex++;
+        // The vote (skip state, shortlist change, DB write, progress bar) is applied at once and the tint is held on the
+        // voted image for SHORTLIST_HOLD_MS; only then does the screen advance (or show the prank copy, decided at vote time).
+        // Votes during the hold are ignored; Prev / Next / jumping / leaving cancel it (see cancelVoteHold).
+        const SHORTLIST_HOLD_MS = 150;
+
+        function cancelVoteHold() {
+            if (state.voteHold) {
+                clearTimeout(state.voteHold.timer);
+                state.voteHold = null;
             }
-            render();
-            showVoteFade(kind, startOpacity);
         }
 
-        function handleShortlistYes(startOpacity) {
-            if (!state.shortlistSession) return;
+        function commitShortlistSingle(kind, startOpacity, prank) {
+            clearVoteFade();
+            const hold = { kind, prank, opacity: Math.max(startOpacity || 0, prefersReducedMotion() ? 0.25 : 0.5), timer: null };
+            state.voteHold = hold;
+            render();   // progress bar, tags and the held tint on the voted image
+            hold.timer = setTimeout(() => {
+                if (state.voteHold !== hold) return;
+                state.voteHold = null;
+                if (hold.prank) {
+                    startPrank('single', hold.imageId);
+                } else if (state.currentImageIndex < state.shuffledImages.length - 1) {
+                    state.currentImageIndex++;
+                }
+                render();
+                showVoteFade(kind, 0.2);   // only a subtle remainder over the new image
+            }, SHORTLIST_HOLD_MS);
+            return hold;
+        }
+
+        function handleShortlistVote(kind, startOpacity) {
+            if (!state.shortlistSession || state.voteHold) return;
             if (hasSinglePrank()) { resolveSinglePrank(); return; }
             const image = state.shuffledImages[state.currentImageIndex];
             if (!image) return;
-            setShortlistSkipped(image.id, false);
-            if (!state.shortlistSession.selected[image.id]) applyShortlistChange(image.id, true, true);
-            if (rollPrank()) {
-                startPrank('single', image.id);
-                render();
-                showVoteFade('yes', startOpacity);
-                return;
-            }
-            commitShortlistSingle('yes', startOpacity);
+            const yes = kind === 'yes';
+            setShortlistSkipped(image.id, !yes);
+            if (!!state.shortlistSession.selected[image.id] !== yes) applyShortlistChange(image.id, yes, true);
+            const hold = commitShortlistSingle(kind, startOpacity, rollPrank());
+            hold.imageId = image.id;
         }
 
-        function handleShortlistNo(startOpacity) {
-            if (!state.shortlistSession) return;
-            if (hasSinglePrank()) { resolveSinglePrank(); return; }
-            const image = state.shuffledImages[state.currentImageIndex];
-            if (!image) return;
-            setShortlistSkipped(image.id, true);
-            if (state.shortlistSession.selected[image.id]) applyShortlistChange(image.id, false, true);
-            if (rollPrank()) {
-                startPrank('single', image.id);
-                render();
-                showVoteFade('no', startOpacity);
-                return;
-            }
-            commitShortlistSingle('no', startOpacity);
-        }
+        function handleShortlistYes(startOpacity) { handleShortlistVote('yes', startOpacity); }
+        function handleShortlistNo(startOpacity) { handleShortlistVote('no', startOpacity); }
 
         // Multi mode filter buckets: gray = undecided, green = shortlisted, red = skipped
         function setShortlistFilter(bucket) {
@@ -18447,7 +18457,7 @@
 
         function render() {
             const app = document.getElementById('app');
-            if (state.view !== 'vote' && state.prank) state.prank = null;   // the prank never outlives the voting screen
+            if (state.view !== 'vote') { cancelVoteHold(); state.prank = null; }   // neither the hold nor the prank outlives the voting screen
 
             // Save scroll positions of elements that should be preserved across re-renders
             const savedScrolls = [];
