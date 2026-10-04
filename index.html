@@ -1142,7 +1142,8 @@
             userLeaderboardData: null, // null | 'loading' | Array of user stat objects
             leaderboardSortKey: 'totalVotes',
             leaderboardSortDir: 'desc',
-            leaderboardStatType: 'totalVotes', // 'totalVotes'|'totalContests'|'totalCreated'|'scoreFrequency'|'totalAvg'
+            leaderboardStatType: '', // '' (Select...) | 'totalVotes'|'totalContests'|'totalCreated'|'totalShortlisted'|'totalShortlists'|'scoreFrequency'|'totalAvg'
+            leaderboardShortlistStats: null, // Cached per-user shortlist rows for the leaderboard
             leaderboardSelectedScore: 1, // 1-5 for scoreFrequency
             hideLowConfidenceGlobal: false, // Hide low-confidence rows in global similarity
             voteSpreadShowCount: true, // true = show counts, false = show % in vote spread
@@ -2300,6 +2301,7 @@
                 state.globalSimilarityAllVotes = null;
                 state.globalSimilarityResults = {};
                 state.userLeaderboardData = null;
+                state.leaderboardShortlistStats = null;
 
                 // Reload user votes to reflect new submissions
                 await loadUserVotes();
@@ -9689,18 +9691,65 @@
             render();
         }
 
-        async function openUserLeaderboard() {
+        // The leaderboard fetches nothing when it opens: each stat loads only the data it needs once it is chosen.
+        const LEADERBOARD_VOTE_STATS = ['totalVotes', 'totalContests', 'scoreFrequency', 'totalAvg'];
+        const LEADERBOARD_SHORTLIST_STATS = ['totalShortlisted', 'totalShortlists'];
+        let leaderboardLoadId = 0;
+        let leaderboardVoteStatsCache = null;   // { votes, statsMap } - rebuilt only when globalVotesCache is replaced
+
+        function openUserLeaderboard() {
             state.showUserDropdown = false;
             state.showUserLeaderboard = true;
-            if (state.userLeaderboardData && state.userLeaderboardData !== 'loading') {
-                render();
-                return;
-            }
-            state.userLeaderboardData = 'loading';
+            state.leaderboardStatType = '';   // always starts on "Select..."
             render();
+        }
+
+        // Per-user vote statistics built from the global votes (cached together with the votes they came from)
+        function getLeaderboardVoteStats(allVotes) {
+            if (leaderboardVoteStatsCache && leaderboardVoteStatsCache.votes === allVotes) return leaderboardVoteStatsCache.statsMap;
+            const statsMap = {};
+            allVotes.forEach(v => {
+                if (!statsMap[v.user_id]) {
+                    statsMap[v.user_id] = {
+                        totalVotes: 0,
+                        contestIds: new Set(),
+                        scores: {1:0,2:0,3:0,4:0,5:0},
+                        scoreSum: 0,
+                        contestVotes: {} // contestId -> {sum, count}
+                    };
+                }
+                const s = statsMap[v.user_id];
+                s.totalVotes++;
+                if (v.contest_id) {
+                    s.contestIds.add(v.contest_id);
+                    if (!s.contestVotes[v.contest_id]) s.contestVotes[v.contest_id] = { sum: 0, count: 0 };
+                    s.contestVotes[v.contest_id].sum += v.score;
+                    s.contestVotes[v.contest_id].count++;
+                }
+                if (v.score >= 1 && v.score <= 5) {
+                    s.scores[v.score]++;
+                    s.scoreSum += v.score;
+                }
+            });
+            leaderboardVoteStatsCache = { votes: allVotes, statsMap };
+            return statsMap;
+        }
+
+        // Loads (only what is missing) and builds the rows for the chosen stat
+        async function loadLeaderboardStat(statType) {
+            if (!statType) return;
+            const loadId = ++leaderboardLoadId;
+            const needsVotes = LEADERBOARD_VOTE_STATS.includes(statType);
+            const needsShortlists = LEADERBOARD_SHORTLIST_STATS.includes(statType);
+            const needsUsers = !state.allUsers || state.allUsers.length === 0;
+            const fetchNeeded = needsUsers || (needsVotes && !state.globalVotesCache) || (needsShortlists && !state.leaderboardShortlistStats);
+            if (fetchNeeded) {
+                state.userLeaderboardData = 'loading';
+                render();
+            }
             try {
                 // Ensure allUsers is loaded so rows can be matched to display names
-                if (!state.allUsers || state.allUsers.length === 0) {
+                if (needsUsers) {
                     const usersResp = await fetchFromSupabase(`/rest/v1/users?select=id,username,avatar,is_banned`);
                     if (usersResp.ok) {
                         const users = await usersResp.json();
@@ -9708,80 +9757,55 @@
                     }
                 }
 
-                let allVotes;
-                if (state.globalVotesCache) {
-                    allVotes = state.globalVotesCache;
-                } else {
-                    allVotes = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
-                    state.globalVotesCache = allVotes;
+                let statsMap = {};
+                if (needsVotes) {
+                    if (!state.globalVotesCache) {
+                        state.globalVotesCache = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
+                    }
+                    statsMap = getLeaderboardVoteStats(state.globalVotesCache);
                 }
-
-                // Build per-user stats
-                const statsMap = {};
-                allVotes.forEach(v => {
-                    if (!statsMap[v.user_id]) {
-                        statsMap[v.user_id] = {
-                            totalVotes: 0,
-                            contestIds: new Set(),
-                            scores: {1:0,2:0,3:0,4:0,5:0},
-                            scoreSum: 0,
-                            contestVotes: {} // contestId -> {sum, count}
-                        };
-                    }
-                    const s = statsMap[v.user_id];
-                    s.totalVotes++;
-                    if (v.contest_id) {
-                        s.contestIds.add(v.contest_id);
-                        if (!s.contestVotes[v.contest_id]) s.contestVotes[v.contest_id] = { sum: 0, count: 0 };
-                        s.contestVotes[v.contest_id].sum += v.score;
-                        s.contestVotes[v.contest_id].count++;
-                    }
-                    if (v.score >= 1 && v.score <= 5) {
-                        s.scores[v.score]++;
-                        s.scoreSum += v.score;
-                    }
-                });
 
                 // Real shortlists rows only (classic votes are never converted here): rows per user and distinct contests per user
-                const shortlistStats = {};
-                try {
-                    const shortlistRows = await fetchAllShortlistsPaginated('user_id=not.is.null', 'user_id,contest_id');
-                    shortlistRows.forEach(row => {
-                        if (!shortlistStats[row.user_id]) shortlistStats[row.user_id] = { rows: 0, contestIds: new Set() };
-                        shortlistStats[row.user_id].rows++;
-                        if (row.contest_id) shortlistStats[row.user_id].contestIds.add(row.contest_id);
-                    });
-                } catch (shortlistError) {
-                    console.error('Leaderboard shortlists error:', shortlistError);
+                let shortlistStats = {};
+                if (needsShortlists) {
+                    if (!state.leaderboardShortlistStats) {
+                        const stats = {};
+                        const shortlistRows = await fetchAllShortlistsPaginated('user_id=not.is.null', 'user_id,contest_id');
+                        shortlistRows.forEach(row => {
+                            if (!stats[row.user_id]) stats[row.user_id] = { rows: 0, contestIds: new Set() };
+                            stats[row.user_id].rows++;
+                            if (row.contest_id) stats[row.user_id].contestIds.add(row.contest_id);
+                        });
+                        state.leaderboardShortlistStats = stats;
+                    }
+                    shortlistStats = state.leaderboardShortlistStats;
                 }
 
-                // Build items-created map from already-loaded state data
+                // Items-created map comes from already-loaded state data
                 const createdMap = {};
-                [...(state.contests || []), ...(state.mergers || []), ...(state.extracts || [])].forEach(item => {
-                    if (item.createdBy) createdMap[item.createdBy] = (createdMap[item.createdBy] || 0) + 1;
-                });
+                if (statType === 'totalCreated') {
+                    [...(state.contests || []), ...(state.mergers || []), ...(state.extracts || [])].forEach(item => {
+                        if (item.createdBy) createdMap[item.createdBy] = (createdMap[item.createdBy] || 0) + 1;
+                    });
+                }
 
-                // Merge with allUsers for display info
+                // A newer choice superseded this load
+                if (loadId !== leaderboardLoadId) return;
+
+                // Merge with allUsers for display info: one row per user that has data for the chosen stat
+                const userIds = new Set([...Object.keys(statsMap), ...Object.keys(shortlistStats), ...Object.keys(createdMap)]);
                 const rows = [];
-                const emptyStats = () => ({ totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0}, scoreSum: 0, contestVotes: {} });
-                // Users with only shortlists (no classic votes) still get a row
-                Object.keys(shortlistStats).forEach(userId => { if (!statsMap[userId]) statsMap[userId] = emptyStats(); });
-                for (const [userId, s] of Object.entries(statsMap)) {
+                userIds.forEach(userId => {
                     const userInfo = state.allUsers.find(u => u.id === userId);
-                    if (!userInfo) continue;
-                    const totalContests = s.contestIds.size;
-
-                    // Per-contest averages for highest/lowest avg stats
-                    const contestAvgs = Object.values(s.contestVotes)
-                        .filter(c => c.count > 0)
-                        .map(c => c.sum / c.count);
+                    if (!userInfo) return;
+                    const s = statsMap[userId] || { totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0}, scoreSum: 0, contestVotes: {} };
 
                     rows.push({
                         userId,
                         username: userInfo.username,
                         avatar: userInfo.avatar,
                         totalVotes: s.totalVotes,
-                        totalContests,
+                        totalContests: s.contestIds.size,
                         totalCreated: createdMap[userId] || 0,
                         totalShortlisted: shortlistStats[userId] ? shortlistStats[userId].rows : 0,
                         totalShortlists: shortlistStats[userId] ? shortlistStats[userId].contestIds.size : 0,
@@ -9790,13 +9814,12 @@
                         score3: s.scores[3],
                         score4: s.scores[4],
                         score5: s.scores[5],
-                        totalAvg: s.totalVotes > 0 ? s.scoreSum / s.totalVotes : 0,
-                        highestAvg: contestAvgs.length > 0 ? Math.max(...contestAvgs) : 0,
-                        lowestAvg: contestAvgs.length > 0 ? Math.min(...contestAvgs) : 0,
+                        totalAvg: s.totalVotes > 0 ? s.scoreSum / s.totalVotes : 0
                     });
-                }
+                });
                 state.userLeaderboardData = rows;
             } catch (err) {
+                if (loadId !== leaderboardLoadId) return;
                 console.error('Leaderboard error:', err);
                 state.userLeaderboardData = null;
                 showToast('❌ Failed to load leaderboard');
@@ -9811,7 +9834,13 @@
 
         function setLeaderboardStatType(value) {
             state.leaderboardStatType = value;
-            render();
+            if (!value) {
+                leaderboardLoadId++;   // abandon any load still in flight
+                state.userLeaderboardData = null;
+                render();
+                return;
+            }
+            loadLeaderboardStat(value);
         }
 
         function setLeaderboardScore(value) {
@@ -9842,7 +9871,7 @@
         function renderUserLeaderboard() {
             if (!state.showUserLeaderboard) return '';
             const data = state.userLeaderboardData;
-            const statType = state.leaderboardStatType || 'totalVotes';
+            const statType = state.leaderboardStatType || '';
             const selectedScore = state.leaderboardSelectedScore || 1;
             const sortDir = state.leaderboardSortDir || 'desc';
             const showCount = state.leaderboardShowCount;
@@ -9850,7 +9879,7 @@
             const thClass = 'px-2 py-2 text-left text-xs font-semibold text-gray-600 whitespace-nowrap';
 
             const statOptions = [
-                { value: 'totalVotes',       label: 'Total Votes' },
+                { value: 'totalVotes',       label: 'Total Classic Votes' },
                 { value: 'totalContests',    label: 'Contests Voted In' },
                 { value: 'totalCreated',     label: 'Items Created' },
                 { value: 'totalShortlisted', label: 'Total Shortlisted' },
@@ -9932,10 +9961,12 @@
             let bodyHtml = '';
             let appTotalHtml = '';
 
-            if (data === 'loading') {
+            if (!statType) {
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-500">Select a stat to load the leaderboard</td></tr>';
+            } else if (data === 'loading') {
                 bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-500 animate-pulse">Loading leaderboard data…</td></tr>';
             } else if (!data) {
-                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;state.globalVotesCache=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.globalVotesCache=null;state.leaderboardShortlistStats=null;loadLeaderboardStat(state.leaderboardStatType)" class="underline">Retry</button></td></tr>';
             } else {
                 let rows = [...data];
                 if (showLowConfidenceToggle && state.hideLowConfidenceLeaderboard) {
@@ -9966,7 +9997,7 @@
                 // App totals
                 if (statType === 'totalVotes') {
                     const total = data.reduce((s, r) => s + r.totalVotes, 0);
-                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} votes</span>`;
+                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} classic votes</span>`;
                 } else if (statType === 'totalShortlisted') {
                     appTotalHtml = `<span class="font-medium text-gray-700">App total: ${data.reduce((sum, r) => sum + r.totalShortlisted, 0).toLocaleString()} images shortlisted</span>`;
                 } else if (statType === 'totalShortlists') {
@@ -10008,6 +10039,7 @@
                             <div class="flex items-center gap-1.5">
                                 <label class="text-sm text-gray-600 shrink-0">View by:</label>
                                 <select onchange="setLeaderboardStatType(this.value)" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                                    <option value="" ${statType === '' ? 'selected' : ''}>Select...</option>
                                     ${statOptions.map(o => `<option value="${o.value}" ${statType === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
                                 </select>
                             </div>
@@ -18773,6 +18805,7 @@
         window.cancelRenameModal = cancelRenameModal;
         window.state = state;
         window.openUserLeaderboard = openUserLeaderboard;
+        window.loadLeaderboardStat = loadLeaderboardStat;
         window.closeUserLeaderboard = closeUserLeaderboard;
         window.render = render;
         window.setLeaderboardSort = setLeaderboardSort;
