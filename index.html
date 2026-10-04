@@ -49,12 +49,19 @@
             theme: {
                 extend: {
                     colors: {
+                        // Backed by CSS variables (see :root / body.cold-theme) so the Cold theme can re-tint them
                         'mauve': {
-                            300: '#D88FB8',
-                            400: '#C77BA6',
-                            500: '#B76E9E',
-                            600: '#A86590',
-                            700: '#995C82'
+                            300: 'rgb(var(--mauve-300) / <alpha-value>)',
+                            400: 'rgb(var(--mauve-400) / <alpha-value>)',
+                            500: 'rgb(var(--mauve-500) / <alpha-value>)',
+                            600: 'rgb(var(--mauve-600) / <alpha-value>)',
+                            700: 'rgb(var(--mauve-700) / <alpha-value>)'
+                        },
+                        'blue': {
+                            400: 'rgb(var(--blue-400) / <alpha-value>)',
+                            500: 'rgb(var(--blue-500) / <alpha-value>)',
+                            600: 'rgb(var(--blue-600) / <alpha-value>)',
+                            700: 'rgb(var(--blue-700) / <alpha-value>)'
                         }
                     }
                 }
@@ -63,6 +70,17 @@
     </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Lilita+One&display=swap');
+
+        /* Accent palettes (space-separated RGB so Tailwind opacity modifiers keep working) */
+        :root {
+            --mauve-300: 216 143 184; --mauve-400: 199 123 166; --mauve-500: 183 110 158; --mauve-600: 168 101 144; --mauve-700: 153 92 130;
+            --blue-400: 96 165 250; --blue-500: 59 130 246; --blue-600: 37 99 235; --blue-700: 29 78 216;
+        }
+        /* Cold theme: gingerbread replaces mauve, glacier blue replaces blue (white text stays >= 4.5:1) */
+        body.cold-theme {
+            --mauve-300: 184 131 95; --mauve-400: 154 100 68; --mauve-500: 139 90 60; --mauve-600: 122 78 51; --mauve-700: 106 67 44;
+            --blue-400: 47 120 168; --blue-500: 47 120 168; --blue-600: 43 111 158; --blue-700: 35 93 134;
+        }
         
         @keyframes tickAppear {
             0% { transform: scale(0) rotate(-45deg); opacity: 0; }
@@ -169,12 +187,12 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
         .upload-area {
-            border: 3px dashed #C77BA6;
+            border: 3px dashed rgb(var(--mauve-400));
             transition: all 0.3s ease;
         }
         .upload-area:hover {
-            border-color: #B76E9E;
-            background: rgba(199, 123, 166, 0.05);
+            border-color: rgb(var(--mauve-500));
+            background: rgb(var(--mauve-400) / 0.05);
         }
         .upload-area.dragover {
             border-color: #22C55E;
@@ -205,7 +223,7 @@
             display: inline-block;
         }
         .toggle-switch.active {
-            background-color: #C77BA6;
+            background-color: rgb(var(--mauve-400));
         }
         .toggle-slider {
             position: absolute;
@@ -285,7 +303,7 @@
             width: 20px;
             height: 20px;
             border-radius: 50%;
-            background: #C77BA6;
+            background: rgb(var(--mauve-400));
             cursor: pointer;
             border: 2px solid white;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
@@ -294,7 +312,7 @@
             width: 20px;
             height: 20px;
             border-radius: 50%;
-            background: #C77BA6;
+            background: rgb(var(--mauve-400));
             cursor: pointer;
             border: 2px solid white;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
@@ -878,47 +896,95 @@
             border-top-color: #3a3a4a !important;
         }
 
-        /* ===== Hell Theme (dark-theme + hell-theme classes applied together) ===== */
+        /* ===== App bar gradient shared by the header and the Multi voting-mode button ===== */
+        .app-bar-bg {
+            background-image: linear-gradient(to right, rgb(var(--mauve-600)), rgb(var(--mauve-300)), rgb(21, 128, 61));
+        }
+
+        /* ===== Cold Theme (light-based; body.cold-theme only, no dark-theme class) ===== */
+
+        /* Snowy page background */
+        body.cold-theme {
+            background: linear-gradient(to bottom, #eef5fa, #e1edf5) !important;
+        }
+
+        /* App bar: deep glacier blue (white text >= 4.8:1 on every stop) */
+        body.cold-theme .app-bar-bg {
+            background-image: linear-gradient(to right, #26668f, #2b6f9e 50%, #2f78a8) !important;
+        }
+
+        /* Ice-tinted cards, panels and borders */
+        body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
+            background-color: #f8fbfe !important;
+        }
+        body.cold-theme .bg-gray-50 { background-color: #eaf2f8 !important; }
+        body.cold-theme .bg-gray-100 { background-color: #e1ecf4 !important; }
+        body.cold-theme .hover\:bg-gray-100:hover { background-color: #d6e5f0 !important; }
+        body.cold-theme .border-gray-200,
+        body.cold-theme .border-gray-300 { border-color: #c5d9e8 !important; }
+        body.cold-theme .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #c5d9e8 !important; }
+
+        /* ===== Light themes (Light, Cold): white text on the score-3 yellow is only 1.9:1, so use dark text ===== */
+        body:not(.dark-theme) .bg-gradient-to-r.from-yellow-500.to-yellow-600,
+        body:not(.dark-theme) [style*="background-color: rgb(234, 179, 8)"],
+        body:not(.dark-theme) [style*="background:rgb(234, 179, 8)"],
+        body:not(.dark-theme) [style*="background: rgb(234, 179, 8)"] {
+            color: #1f2937 !important;
+        }
+
+        /* ===== Hot Theme (dark-theme + hot-theme classes applied together) ===== */
 
         /* Body background: dark gray → dark red */
-        body.hell-theme {
+        body.hot-theme {
             background: linear-gradient(to bottom, #1f1f1f, #3a0808) !important;
         }
 
-        /* App bar: dark red → dark amber */
-        body.hell-theme header.safe-header {
+        /* App bar (header and anything sharing .app-bar-bg): dark red → dark amber */
+        body.hot-theme .app-bar-bg {
             background: linear-gradient(to right, #7f0000, #a05000) !important;
         }
 
         /* "Start Voting" and primary action buttons (mauve gradient) → muted wine/burgundy */
-        body.hell-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600 {
+        body.hot-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600 {
             background: linear-gradient(to right, #7a103a, #541028) !important;
         }
-        body.hell-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600:hover,
-        body.hell-theme .bg-gradient-to-r.from-mauve-500.to-mauve-700 {
+        body.hot-theme .bg-gradient-to-r.from-mauve-400.to-mauve-600:hover,
+        body.hot-theme .bg-gradient-to-r.from-mauve-500.to-mauve-700 {
             background: linear-gradient(to right, #650d30, #420921) !important;
         }
 
         /* "View Results" buttons and card action buttons (blue gradient → gray in dark)
-           → very dark with black-red undertone in hell */
-        body.hell-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
-        body.hell-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
+           → very dark with black-red undertone in hot */
+        body.hot-theme .bg-gradient-to-r.from-blue-500.to-blue-600,
+        body.hot-theme .bg-gradient-to-r.from-blue-400.to-blue-600 {
             background: linear-gradient(to right, #4a0505, #3d0000) !important;
         }
 
         /* Contest info (ℹ) buttons also use bg-blue-500 in dark → same undertone */
-        body.hell-theme button[onclick*="showContestInfoModal"].bg-blue-500,
-        body.hell-theme button[onclick*="showContestInfoModal"].hover\:bg-blue-600 {
+        body.hot-theme button[onclick*="showContestInfoModal"].bg-blue-500,
+        body.hot-theme button[onclick*="showContestInfoModal"].hover\:bg-blue-600 {
             background: linear-gradient(to right, #4a0505, #3d0000) !important;
         }
 
         /* Final Ranking / results page white card → near-black with dark red undertone */
-        body.hell-theme .bg-white:not(.rounded-full) {
+        body.hot-theme .bg-white:not(.rounded-full) {
             background-color: #1a0000 !important;
         }
     </style>
 </head>
 <body class="min-h-screen">
+    <script>
+        // Apply the cached theme before first paint so neither the old nor the default theme flashes
+        (function () {
+            try {
+                var t = localStorage.getItem('peony_app_theme_v2');
+                var cl = document.body.classList;
+                if (t === 'dark') cl.add('dark-theme');
+                else if (t === 'hot') cl.add('dark-theme', 'hot-theme');
+                else if (t === 'cold') cl.add('cold-theme');
+            } catch (e) { /* no cache available */ }
+        })();
+    </script>
     <div id="app"></div>
 
     <script>
@@ -1109,8 +1175,13 @@
             multiModeLoadedImages: 0,  // Number of images loaded in multi mode
             multiModeTotalImages: 0,  // Total images to load in multi mode
             showLogoutConfirmModal: false,  // Show logout confirmation modal
-            appTheme: 'light',  // Theme: 'light', 'dark', or 'hell'
-            themeToggling: false,  // Prevent theme toggle spam
+            appTheme: 'cold',  // Theme: 'light', 'dark', 'hot' or 'cold' (see normalizeTheme)
+            showThemeMenu: false,  // Preferences: theme list open in the user dropdown
+            votingFormatPref: null,  // users.voting_format: 'classic' | 'shortlist' | null (never chosen)
+            votingModePref: null,    // users.voting_mode: 'single' | 'multi' | null (never chosen)
+            votingModeSession: null, // session-only mode override from the voting-screen toggle (only used once votingModePref is set)
+            modeCalloutActive: false,    // the one-time voting-mode callout was started on this page load
+            modeCalloutDismissed: false, // ...and has been dismissed
             pendingRoute: null,  // Store route to redirect after login (e.g., '#contest=uuid')
             // Results tab enhancements
             collapsedSections: {},  // { sectionKey: true } for collapsed sections (persists across tab switches)
@@ -1143,7 +1214,7 @@
             pairsCorrFilterKey: 'all',  // Fingerprint of active user filter for cache invalidation
             // ── Shortlist voting format (parallel to classic 1-5 voting) ──
             votingFormat: 'classic',   // 'classic' | 'shortlist' — format of the active voting screen
-            cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'shortlist' (per-card display toggle, never persisted)
+            cardFormats: {},           // 'contest_<id>' | 'merger_<id>' | 'extract_<id>' -> 'classic' | 'shortlist' (per-card session override of the saved format, never persisted)
             userShortlists: {},        // contestId -> { imageId: true } — current user's real rows in `shortlists`
             shortlistSelected: {},     // imageId -> true — working set on the shortlist voting screen
             shortlistSession: null,    // { itemType, itemId, title, contestByImage, persisted } while shortlist voting
@@ -2931,47 +3002,112 @@
         }
         function toggleUserDropdown() {
             state.showUserDropdown = !state.showUserDropdown;
+            state.showThemeMenu = false;
             render();
+        }
+
+        // ---------- Themes ----------
+        const THEME_CACHE_KEY = 'peony_app_theme_v2';
+        const APP_THEMES = {
+            light: { label: 'Light', emoji: '☀️', badge: 'bg-gray-200 text-gray-600' },
+            dark: { label: 'Dark', emoji: '🌙', badge: 'bg-purple-600 text-white' },
+            hot: { label: 'Hot', emoji: '🔥', badge: 'bg-red-800 text-white' },
+            cold: { label: 'Cold', emoji: '❄️', badge: 'bg-sky-700 text-white' }
+        };
+
+        // NULL, unknown values and the legacy 'hell' key never reach the UI as-is
+        function normalizeTheme(theme) {
+            if (theme === 'hell') return 'hot';
+            return Object.prototype.hasOwnProperty.call(APP_THEMES, theme) ? theme : 'cold';
         }
 
         function applyTheme(theme) {
-            document.body.classList.remove('dark-theme', 'hell-theme');
+            theme = normalizeTheme(theme);
+            document.body.classList.remove('dark-theme', 'hot-theme', 'cold-theme');
             if (theme === 'dark') {
                 document.body.classList.add('dark-theme');
-            } else if (theme === 'hell') {
-                document.body.classList.add('dark-theme', 'hell-theme');
+            } else if (theme === 'hot') {
+                document.body.classList.add('dark-theme', 'hot-theme');
+            } else if (theme === 'cold') {
+                document.body.classList.add('cold-theme');
+            }
+            try { localStorage.setItem(THEME_CACHE_KEY, theme); } catch (e) { /* cache is best-effort */ }
+        }
+
+        // ---------- Saved preferences (users.app_theme / voting_format / voting_mode) ----------
+
+        async function saveUserPreference(field, value) {
+            if (!state.user || !state.user.id) return false;
+            try {
+                const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Prefer': 'return=minimal' },
+                    body: JSON.stringify({ [field]: value })
+                });
+                if (!response.ok) throw new Error('');
+                return true;
+            } catch {
+                showToast('Failed to save preference. Please try again.', 'error');
+                return false;
             }
         }
 
-        async function cycleTheme() {
-            if (state.themeToggling) return;
-
-            state.themeToggling = true;
-            setLoading('Switching theme...');
-
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            const themes = ['light', 'dark', 'hell'];
-            const next = themes[(themes.indexOf(state.appTheme) + 1) % themes.length];
-            state.appTheme = next;
-            applyTheme(next);
-
-            if (state.user && state.user.id) {
-                try {
-                    const response = await fetchFromSupabase(`/rest/v1/users?id=eq.${state.user.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Prefer': 'return=minimal' },
-                        body: JSON.stringify({ app_theme: state.appTheme })
-                    });
-                    if (!response.ok) throw new Error('');
-                } catch {
-                    showToast('Failed to save theme preference. Please try again.', 'error');
-                }
-            }
-
-            clearLoading();
-            state.themeToggling = false;
+        function toggleThemeMenu() {
+            state.showThemeMenu = !state.showThemeMenu;
             render();
+        }
+
+        async function setAppTheme(theme) {
+            theme = normalizeTheme(theme);
+            state.showThemeMenu = false;
+            if (theme === state.appTheme) { render(); return; }
+            const previous = state.appTheme;
+            state.appTheme = theme;
+            applyTheme(theme);
+            render();
+            if (!(await saveUserPreference('app_theme', theme))) {
+                state.appTheme = previous;
+                applyTheme(previous);
+                render();
+            }
+        }
+
+        // First click on a "Select" button saves the app default; every later click alternates.
+        async function toggleVotingFormatPref() {
+            const previous = state.votingFormatPref;
+            const next = previous === null ? 'classic' : (previous === 'classic' ? 'shortlist' : 'classic');
+            state.votingFormatPref = next;
+            state.cardFormats = {};   // every card follows the saved format again
+            render();
+            if (!(await saveUserPreference('voting_format', next))) {
+                state.votingFormatPref = previous;
+                render();
+            }
+        }
+
+        async function toggleVotingModePref() {
+            const previous = state.votingModePref;
+            const next = previous === null ? 'single' : (previous === 'single' ? 'multi' : 'single');
+            state.votingModePref = next;
+            state.votingModeSession = null;
+            render();
+            if (!(await saveUserPreference('voting_mode', next))) {
+                state.votingModePref = previous;
+                render();
+            }
+        }
+
+        // Format used for behavior while the DB value is NULL (the dropdown still shows "Select")
+        function getSavedVotingFormat() {
+            return state.votingFormatPref || 'classic';
+        }
+
+        // Mode a voting screen opens in. While voting_mode is NULL the old localStorage choice is honored
+        // exactly as before; once it is set the DB value is the default and the toggle is a session-only override.
+        function getDefaultVotingMode() {
+            if (state.votingModePref) return state.votingModeSession || state.votingModePref;
+            const saved = localStorage.getItem('peony_voting_mode');
+            return saved || 'single';
         }
 
         function toggleMergedContestsDropdown() {
@@ -3898,6 +4034,11 @@
 
         function confirmLogout() {
             localStorage.removeItem('peony_user');
+            try { localStorage.removeItem(THEME_CACHE_KEY); } catch (e) { /* ignore */ }
+            state.votingFormatPref = null;
+            state.votingModePref = null;
+            state.votingModeSession = null;
+            state.cardFormats = {};
             state.isLoggedIn = false;
             state.user = null;
             state.view = 'home';
@@ -5251,9 +5392,8 @@
                 state.autosaveContext = { type: null, id: null };
             }
 
-            // Load voting mode preference from localStorage, default to 'multi'
-            const savedVotingMode = localStorage.getItem('peony_voting_mode');
-            state.votingMode = savedVotingMode || 'single';
+            // Saved voting mode preference (DB value, else the old localStorage choice), default 'single'
+            state.votingMode = getDefaultVotingMode();
 
             // Clear merger context (we're voting on a single contest)
             state.currentMergerId = null;
@@ -5642,9 +5782,8 @@
                 state.currentImageIndex = 0;
                 state.view = 'vote';
 
-                // Load voting mode preference from localStorage, default to 'multi'
-                const savedVotingMode = localStorage.getItem('peony_voting_mode');
-                state.votingMode = savedVotingMode || 'single';
+                // Saved voting mode preference (DB value, else the old localStorage choice), default 'single'
+                state.votingMode = getDefaultVotingMode();
 
                 // Set currentContest to null to indicate merger voting mode
                 state.currentContest = null;
@@ -6242,9 +6381,8 @@
                 });
             }
 
-            // Load voting mode preference from localStorage, default to 'multi'
-            const savedVotingMode = localStorage.getItem('peony_voting_mode');
-            state.votingMode = savedVotingMode || 'single';
+            // Saved voting mode preference (DB value, else the old localStorage choice), default 'single'
+            state.votingMode = getDefaultVotingMode();
 
             // Set currentContest to null to indicate merger voting mode
             state.currentContest = null;
@@ -7541,8 +7679,12 @@
         function toggleVotingMode() {
             const newMode = state.votingMode === 'single' ? 'multi' : 'single';
 
-            // Save voting mode preference to localStorage
-            localStorage.setItem('peony_voting_mode', newMode);
+            // Once voting_mode is saved the toggle is a session-only override; until then keep the old localStorage behavior
+            if (state.votingModePref) {
+                state.votingModeSession = newMode;
+            } else {
+                localStorage.setItem('peony_voting_mode', newMode);
+            }
 
             // Show loading modal when switching to multi mode
             if (newMode === 'multi') {
@@ -8530,7 +8672,32 @@
                     countTableRows('/rest/v1/shortlists').catch(() => 0)
                 ]);
 
-                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists };
+                // Distinct user+contest pairs with at least one shortlists row
+                let totalShortlistSets = 0;
+                try {
+                    const pairRows = await fetchAllShortlistsPaginated('user_id=not.is.null', 'user_id,contest_id');
+                    totalShortlistSets = new Set(pairRows.map(r => `${r.user_id}|${r.contest_id}`)).size;
+                } catch (e) {
+                    console.error('Failed to count shortlists:', e);
+                }
+
+                // Users per saved preference; NULL / unrecognised = "Not selected"
+                const tally = (field, keys, normalize = v => v) => {
+                    const counts = { none: 0 };
+                    keys.forEach(k => { counts[k] = 0; });
+                    users.forEach(u => {
+                        const v = normalize(u[field]);
+                        if (keys.includes(v)) counts[v]++; else counts.none++;
+                    });
+                    return counts;
+                };
+                const prefStats = {
+                    theme: tally('app_theme', ['light', 'dark', 'hot', 'cold'], v => v === 'hell' ? 'hot' : v),
+                    mode: tally('voting_mode', ['single', 'multi']),
+                    format: tally('voting_format', ['classic', 'shortlist'])
+                };
+
+                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists, totalShortlistSets, prefStats };
 
                 state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
@@ -10858,13 +11025,63 @@
             </div>`;
         }
 
+        // ---------- Preferences section of the user dropdown ----------
+
+        function renderPreferencesSection() {
+            const theme = APP_THEMES[normalizeTheme(state.appTheme)];
+            const themeKey = normalizeTheme(state.appTheme);
+            const fmt = state.votingFormatPref;
+            const mode = state.votingModePref;
+            const pill = 'flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-sm';
+            const formatBtn = fmt === 'classic'
+                ? `<button onclick="toggleVotingFormatPref()" class="${pill} bg-gradient-to-r from-blue-500 to-blue-600 text-white" title="Voting format: Classic (click to switch)">⭐ Classic</button>`
+                : fmt === 'shortlist'
+                ? `<button onclick="toggleVotingFormatPref()" class="${pill} bg-gradient-to-r from-yellow-500 to-yellow-600 text-white" title="Voting format: Shortlist (click to switch)">🔖 Shortlist</button>`
+                : `<button onclick="toggleVotingFormatPref()" class="${pill} bg-gray-200 text-gray-700" title="Click to choose a voting format">⭐ Select</button>`;
+            const modeBtn = mode === 'single'
+                ? `<button onclick="toggleVotingModePref()" class="${pill} bg-gradient-to-r from-mauve-400 to-mauve-600 text-white" title="Voting mode: Single (click to switch)">📖 Single</button>`
+                : mode === 'multi'
+                ? `<button onclick="toggleVotingModePref()" class="${pill} app-bar-bg bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white" style="text-shadow: 0 1px 2px rgba(0,0,0,0.55);" title="Voting mode: Multi (click to switch)">📚 Multi</button>`
+                : `<button onclick="toggleVotingModePref()" class="${pill} bg-gray-200 text-gray-700" title="Click to choose a voting mode">📖 Select</button>`;
+            return `
+                <div class="border-t border-gray-200 mt-1 pt-1">
+                    <div class="px-4 py-1 text-xs font-semibold text-gray-500">Preferences:</div>
+                    <div class="flex items-center justify-between gap-2 px-4 py-1.5 text-sm text-gray-700">
+                        <span class="whitespace-nowrap">🎨 App Theme</span>
+                        <button onclick="toggleThemeMenu()" class="${pill} ${theme.badge}" title="App theme" aria-haspopup="true" aria-expanded="${state.showThemeMenu ? 'true' : 'false'}">
+                            ${theme.label}
+                            <svg class="w-3 h-3 transition-transform ${state.showThemeMenu ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                    </div>
+                    ${state.showThemeMenu ? `
+                        <div class="mx-4 mb-1 rounded-lg border border-gray-200 py-1 flex flex-col gap-1 px-1">
+                            ${Object.keys(APP_THEMES).map(key => `
+                                <button onclick="setAppTheme('${key}')" class="w-full flex items-center justify-between gap-2 px-2 py-1 rounded hover:bg-gray-100 text-sm text-gray-700 ${key === themeKey ? 'font-bold' : ''}">
+                                    <span>${APP_THEMES[key].emoji} ${APP_THEMES[key].label}</span>
+                                    <span class="text-xs font-bold px-2 py-0.5 rounded ${APP_THEMES[key].badge}">${key === themeKey ? '✓' : APP_THEMES[key].label}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                    <div class="flex items-center justify-between gap-2 px-4 py-1.5 text-sm text-gray-700">
+                        <span class="whitespace-nowrap">🗳️ Voting Format</span>
+                        ${formatBtn}
+                    </div>
+                    <div class="flex items-center justify-between gap-2 px-4 py-1.5 text-sm text-gray-700">
+                        <span class="whitespace-nowrap">🖼️ Voting Mode</span>
+                        ${modeBtn}
+                    </div>
+                </div>
+            `;
+        }
+
         function renderHeader() {
             const showBackButton = state.view === 'results' || state.view === 'vote' || state.view === 'mergedResults' || state.view === 'createExtract' || state.view === 'editExtract';
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
             const isVoting = state.view === 'vote';
 
             return `
-                <header class="safe-header bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white shadow-lg">
+                <header class="safe-header app-bar-bg bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-2 sm:py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
                             <div onclick="backToHome()" class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500 cursor-pointer hover:opacity-80 transition">
@@ -10883,7 +11100,7 @@
 
                         ${isVoting ? `
                             <!-- Voting Mode Toggle Switch (centered on desktop, right-aligned on mobile) -->
-                            <div class="sm:absolute sm:left-1/2 sm:transform sm:-translate-x-1/2 ml-auto flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5">
+                            <div class="relative sm:absolute sm:left-1/2 sm:transform sm:-translate-x-1/2 ml-auto flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5">
                                 <button
                                     onclick="toggleVotingMode()"
                                     class="flex items-center gap-2 focus:outline-none"
@@ -10899,6 +11116,13 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
                                     </svg>
                                 </button>
+                                ${shouldShowModeCallout() ? `
+                                    <div class="absolute top-full right-0 mt-2 w-60 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-30">
+                                        Tip: use this toggle to switch between single and multi image voting.
+                                        <button onclick="dismissModeCallout()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
+                                        <div class="absolute bottom-full right-6 w-2 h-2 bg-mauve-600 rotate-45 -mb-1"></div>
+                                    </div>
+                                ` : ''}
                             </div>
                         ` : ''}
 
@@ -10922,7 +11146,7 @@
                                     </button>
                                     </div>
                                     ${state.showUserDropdown ? `
-                                        <div class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
+                                        <div class="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg py-1 z-50 text-gray-700">
                                             ${isAdmin ? `
                                                 <button onclick="showAdminDashboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                                                     ⚙️ Admin Dashboard
@@ -10934,10 +11158,7 @@
                                             <button onclick="openUserLeaderboard()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 ${isAdmin ? 'border-t border-gray-200' : ''}">
                                                 🏆 Leaderboard
                                             </button>
-                                            <button onclick="cycleTheme()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200 flex items-center justify-between">
-                                                <span>${state.appTheme === 'light' ? '☀️ Light Theme' : state.appTheme === 'dark' ? '🌙 Dark Theme' : '🔥 Hell Theme'}</span>
-                                                <span class="text-xs font-bold px-2 py-0.5 rounded ${state.appTheme === 'light' ? 'bg-gray-200 text-gray-600' : state.appTheme === 'dark' ? 'bg-purple-600 text-white' : 'bg-red-800 text-white'}">${state.appTheme === 'light' ? 'Light' : state.appTheme === 'dark' ? 'Dark' : 'Hell'}</span>
-                                            </button>
+                                            ${renderPreferencesSection()}
                                             <button onclick="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-t border-gray-200">
                                                 Logout
                                             </button>
@@ -12558,7 +12779,7 @@
                                         ` : (isShortlistCard('contest', contest.id) && !contest.isLocked) ? `
                                             ${renderShortlistCardButton('contest', contest)}
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
+                                                onclick='openResultsFromCard("contest", ${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -12578,7 +12799,7 @@
                                                 Revote
                                             </button>
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
+                                                onclick='openResultsFromCard("contest", ${safeStringify(contest)})'
                                                 class="flex-[1.2] bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -12591,7 +12812,7 @@
                                                 Continue Draft
                                             </button>
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
+                                                onclick='openResultsFromCard("contest", ${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -12604,7 +12825,7 @@
                                                 Complete Voting
                                             </button>
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
+                                                onclick='openResultsFromCard("contest", ${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -12617,7 +12838,7 @@
                                                 Start Voting
                                             </button>
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
+                                                onclick='openResultsFromCard("contest", ${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -12630,7 +12851,7 @@
                                                 Start Voting
                                             </button>
                                             <button
-                                                onclick='viewResults(${safeStringify(contest)})'
+                                                onclick='openResultsFromCard("contest", ${safeStringify(contest)})'
                                                 class="flex-1 bg-gradient-to-r ${contest.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${contest.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                                             >
                                                 View Results
@@ -12737,14 +12958,14 @@
                         ` : (isShortlistCard('merger', merger.id) && !merger.isLocked) ? `
                             ${renderShortlistCardButton('merger', merger)}
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
                         ` : merger.isLocked ? `
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
@@ -12757,7 +12978,7 @@
                                 Revote
                             </button>
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-[1.2] bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
@@ -12770,7 +12991,7 @@
                                 Continue Draft
                             </button>
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
@@ -12783,7 +13004,7 @@
                                 Complete Voting
                             </button>
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
@@ -12796,14 +13017,14 @@
                                 Start Voting
                             </button>
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
                             </button>
                         ` : `
                             <button
-                                onclick='viewMergerResults("${merger.id}")'
+                                onclick='openResultsFromCard("merger", "${merger.id}")'
                                 class="flex-1 bg-gradient-to-r ${merger.resultsPublic === false ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${merger.resultsPublic === false ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
@@ -12902,7 +13123,7 @@
                         ` : `
                             ${isShortlistCard('extract', extract.id) && !extract.isLocked ? renderShortlistCardButton('extract', extract) : ''}
                             <button
-                                onclick='viewExtractResults("${extract.id}")'
+                                onclick='openResultsFromCard("extract", "${extract.id}")'
                                 class="flex-1 bg-gradient-to-r ${hasPrivateResults ? 'from-gray-800 to-black' : 'from-blue-500 to-blue-600'} text-white py-2 rounded-lg font-semibold hover:${hasPrivateResults ? 'from-gray-900 to-gray-800' : 'from-blue-600 to-blue-700'} transition shadow-md text-sm"
                             >
                                 View Results
@@ -13074,12 +13295,6 @@
 
             return `
                 <div class="max-w-7xl mx-auto px-3 py-4 pb-32">
-                    <!-- Voting Mode Info Label -->
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center">
-                        <p class="text-xs text-blue-800 dark:text-blue-200">
-                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
-                        </p>
-                    </div>
                     ${renderAutosaveStatusBar()}
                     <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl overflow-hidden fade-in">
                         <!-- Header with progress -->
@@ -13366,12 +13581,6 @@
 
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
-                    <!-- Voting Mode Info Label -->
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center">
-                        <p class="text-xs text-blue-800 dark:text-blue-200">
-                            💡 <strong>Tip:</strong> Use the toggle switch above to switch between single image and multi image voting views.
-                        </p>
-                    </div>
                     ${renderAutosaveStatusBar()}
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in">
                         <div class="bg-gray-200 h-3 flex gap-1 p-1">
@@ -15247,6 +15456,14 @@
             const totalVotes = state.adminStats.totalVotes;
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalShortlists = state.adminStats.totalShortlists ?? 0;
+            const totalShortlistSets = state.adminStats.totalShortlistSets ?? 0;
+            const prefStats = state.adminStats.prefStats;
+            const prefGroup = (title, counts, rows) => `
+                <div class="bg-white rounded-lg p-3">
+                    <div class="text-xs font-bold text-gray-700 mb-1">${title}</div>
+                    ${rows.map(([key, label]) => `<div class="flex justify-between text-xs text-gray-600"><span>${label}</span><span class="font-semibold">${counts[key] ?? 0}</span></div>`).join('')}
+                    <div class="flex justify-between text-xs text-gray-500 border-t border-gray-200 mt-1 pt-1"><span>Not selected</span><span class="font-semibold">${counts.none ?? 0}</span></div>
+                </div>`;
             const totalBannedUsers = state.bannedUsers.length;
             const totalImages = state.adminStats.totalImages ?? state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
@@ -15278,7 +15495,7 @@
                                             📊 Recent Activity
                                         </button>
                                     </div>
-                                    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                    <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
                                         <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-purple-600">${totalContests}</div>
                                             <div class="text-xs text-gray-600">Total Contests</div>
@@ -15292,6 +15509,10 @@
                                             <div class="text-xs text-gray-600">Shortlisted</div>
                                         </div>
                                         <div class="bg-white rounded-lg p-3 text-center">
+                                            <div class="text-2xl font-bold text-yellow-600">${totalShortlistSets}</div>
+                                            <div class="text-xs text-gray-600">Shortlists</div>
+                                        </div>
+                                        <div class="bg-white rounded-lg p-3 text-center">
                                             <div class="text-2xl font-bold text-green-600">${totalUniqueVoters}</div>
                                             <div class="text-xs text-gray-600">Unique Voters</div>
                                         </div>
@@ -15300,6 +15521,13 @@
                                             <div class="text-xs text-gray-600">Total Images</div>
                                         </div>
                                     </div>
+                                    ${prefStats ? `
+                                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                                            ${prefGroup('🎨 App Theme', prefStats.theme, [['light', 'Light'], ['dark', 'Dark'], ['hot', 'Hot'], ['cold', 'Cold']])}
+                                            ${prefGroup('🖼️ Voting Mode', prefStats.mode, [['single', 'Single'], ['multi', 'Multi']])}
+                                            ${prefGroup('🗳️ Voting Format', prefStats.format, [['classic', 'Classic'], ['shortlist', 'Shortlist']])}
+                                        </div>
+                                    ` : ''}
                                 </div>
 
                                 <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
@@ -16047,18 +16275,18 @@
 
         // ---------- Card buttons ----------
 
-        function isShortlistCard(itemType, itemId) {
-            return state.cardFormats[`${itemType}_${itemId}`] === 'shortlist';
+        // A card shows its session override if it has one, otherwise the saved voting format (NULL = classic)
+        function getCardFormat(itemType, itemId) {
+            return state.cardFormats[`${itemType}_${itemId}`] || getSavedVotingFormat();
         }
 
-        // Per-card, local-only toggle between the classic and shortlist button sets.
+        function isShortlistCard(itemType, itemId) {
+            return getCardFormat(itemType, itemId) === 'shortlist';
+        }
+
+        // Per-card, session-only toggle between the classic and shortlist button sets. Never written to the database.
         function toggleCardFormat(itemType, itemId) {
-            const key = `${itemType}_${itemId}`;
-            if (state.cardFormats[key] === 'shortlist') {
-                delete state.cardFormats[key];
-            } else {
-                state.cardFormats[key] = 'shortlist';
-            }
+            state.cardFormats[`${itemType}_${itemId}`] = isShortlistCard(itemType, itemId) ? 'classic' : 'shortlist';
             render();
         }
 
@@ -16102,6 +16330,18 @@
             `;
         }
 
+        // "View Results" on a card opens the results page in that card's current format.
+        async function openResultsFromCard(itemType, ref) {
+            const itemId = itemType === 'contest' ? ref.id : ref;
+            const format = getCardFormat(itemType, itemId);
+            if (itemType === 'contest') await viewResults(ref);
+            else if (itemType === 'merger') await viewMergerResults(ref);
+            else await viewExtractResults(ref);
+            if (format === 'shortlist' && (state.view === 'results' || state.view === 'mergedResults')) {
+                await setResultsFormat('shortlist');
+            }
+        }
+
         // ---------- One-time spotlight on the card format toggle ----------
 
         // First pinned contest or merger (extracts are skipped), in the same most-recent-first order the Pinned section uses.
@@ -16117,7 +16357,7 @@
         // True while the callout should be drawn on this card. The "seen" flag is stored the moment it is first drawn,
         // so it shows once per user ever; the X only hides it for the rest of this page view.
         function shouldShowSpotlight(itemType, itemId, isPinned) {
-            if (!isPinned || !state.user || state.spotlightDismissed) return false;
+            if (!isPinned || !state.user || state.spotlightDismissed || state.votingFormatPref !== null) return false;
             const target = getSpotlightTarget();
             if (!target || target.type !== itemType || target.id !== itemId) return false;
             if (state.spotlightActive) return true;
@@ -16134,6 +16374,28 @@
 
         function dismissSpotlight() {
             state.spotlightDismissed = true;
+            render();
+        }
+
+        // ---------- One-time callout on the voting-screen mode toggle ----------
+
+        // Same "seen on first render" rule as the format callout; only while voting_mode has never been chosen.
+        function shouldShowModeCallout() {
+            if (!state.user || state.view !== 'vote' || state.modeCalloutDismissed || state.votingModePref !== null) return false;
+            if (state.modeCalloutActive) return true;
+            const storageKey = `peony_mode_callout_seen_${state.user.id}`;
+            try {
+                if (localStorage.getItem(storageKey)) return false;
+                localStorage.setItem(storageKey, '1');
+            } catch (e) {
+                return false;
+            }
+            state.modeCalloutActive = true;
+            return true;
+        }
+
+        function dismissModeCallout() {
+            state.modeCalloutDismissed = true;
             render();
         }
 
@@ -16420,7 +16682,7 @@
                         : { id: itemId, title: ctx.title, images: ctx.images, isExtract: true, createdBy: ctx.item.createdBy };
                 }
 
-                state.votingMode = localStorage.getItem('peony_voting_mode') || 'single';
+                state.votingMode = getDefaultVotingMode();
                 state.view = 'vote';
                 state.isLoading = false;
                 state.loadingMessage = '';
@@ -18119,7 +18381,10 @@
         window.handleDeleteMergerConfirmation = handleDeleteMergerConfirmation;
         window.confirmDeleteExtract = confirmDeleteExtract;
         window.executeDeleteExtract = executeDeleteExtract;
-        window.cycleTheme = cycleTheme;
+        window.toggleThemeMenu = toggleThemeMenu;
+        window.setAppTheme = setAppTheme;
+        window.toggleVotingFormatPref = toggleVotingFormatPref;
+        window.toggleVotingModePref = toggleVotingModePref;
         window.applyTheme = applyTheme;
         window.loadActivityLogs = loadActivityLogs;
         window.loadAllUserAutosaves = loadAllUserAutosaves;
@@ -18173,6 +18438,8 @@
         window.setCountShowMode = setCountShowMode;
         window.setComparisonShowMode = setComparisonShowMode;
         window.dismissSpotlight = dismissSpotlight;
+        window.openResultsFromCard = openResultsFromCard;
+        window.dismissModeCallout = dismissModeCallout;
         window.showNoticeModal = showNoticeModal;
         window.closeNoticeModal = closeNoticeModal;
         window.markAvatarBroken = markAvatarBroken;
@@ -18295,9 +18562,12 @@
                     }
 
                     if (userData) {
-                        const savedTheme = userData.app_theme || 'hell';
+                        const savedTheme = normalizeTheme(userData.app_theme);
                         state.appTheme = savedTheme;
                         applyTheme(savedTheme);
+                        state.votingFormatPref = (userData.voting_format === 'classic' || userData.voting_format === 'shortlist') ? userData.voting_format : null;
+                        state.votingModePref = (userData.voting_mode === 'single' || userData.voting_mode === 'multi') ? userData.voting_mode : null;
+                        state.votingMode = getDefaultVotingMode();
                         if (state.user) {
                             state.user.is_contest_creator = userData.is_contest_creator === true;
                         }
