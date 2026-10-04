@@ -7989,9 +7989,9 @@
             `;
         }
 
-        // Small "Reset" under a filter; only drawn while that filter is applied
+        // "Reset" under a filter (same size and style as the Users / Images buttons); only drawn while that filter is applied
         function renderFilterResetButton(handler, title) {
-            return `<button onclick="${handler}" class="px-2 py-0.5 rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 text-[11px] font-semibold transition" title="${title}">Reset</button>`;
+            return `<button onclick="${handler}" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 border-gray-300 bg-white text-xs font-medium hover:border-mauve-400 transition" title="${title}">Reset</button>`;
         }
 
         // ==================== IMAGE FILTER ====================
@@ -8495,7 +8495,7 @@
                 const close = comparisons.filter(c => c.absDiff > 0.50 && c.absDiff <= 1.00).length;
                 const unifiedPct = total > 0 ? (((exact + close * 0.5) / total) * 100).toFixed(0) : '0';
                 return [
-                    { key: 'cmp_unified', label: `All Images — Unified ${unifiedPct}%`, range: 'Sorted by closeness to average', color: '#c4b5fd', darkColor: '#2d1a5e', items: sorted, subcategories: buildUserScoreSubs(sorted, 'cmp_unified') }
+                    { key: 'cmp_unified', label: `All Images — Unified ${unifiedPct}%`, range: 'Sorted by closeness to average', similarityPct: Number(unifiedPct), color: '#c4b5fd', darkColor: '#2d1a5e', items: sorted, subcategories: buildUserScoreSubs(sorted, 'cmp_unified') }
                 ];
             }
 
@@ -8593,7 +8593,7 @@
             const total = comparisons.length;
             const unifiedPct = total > 0 ? (((exactItems.length + closeItems.length * 0.5) / total) * 100).toFixed(0) : '0';
             const unified = [
-                { key: 'uvu_unified', label: `All Images — Unified ${unifiedPct}%`, color: '#c4b5fd', darkColor: '#2d1a5e', items: unifiedSorted, subcategories: buildScorePairSubs(unifiedSorted, 'uvu_unified') }
+                { key: 'uvu_unified', label: `All Images — Unified ${unifiedPct}%`, similarityPct: Number(unifiedPct), color: '#c4b5fd', darkColor: '#2d1a5e', items: unifiedSorted, subcategories: buildScorePairSubs(unifiedSorted, 'uvu_unified') }
             ];
 
             return { matchBased, relativeBased, unified };
@@ -13854,7 +13854,6 @@
                             <div class="flex items-center justify-center gap-2 mb-2">
                                 <span class="text-4xl">${icon}</span>
                                 <h2 class="text-2xl font-bold text-gray-800">${title}</h2>
-                                ${renderResultsFormatToggle()}
                             </div>
                             ${customHeaderContent}
                             <p class="text-gray-600 text-sm mb-1">${subtitle || (isShortlistFmt ? shortlistSubtitleMap : subtitleMap)[state.resultsView] || ''}</p>
@@ -13870,10 +13869,21 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
                                 <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
+                                        ${renderResultsFormatToggle()}
+                                    </div>
+                                </div>
                                 ${renderGlobalFilters()}
+                                ${isUserFilterActive() || isImageFilterActive() ? `
+                                    <div class="w-full max-w-2xl bg-amber-50 border border-amber-300 dark:bg-amber-900/20 dark:border-amber-600 rounded-lg px-3 py-2">
+                                        <p class="text-sm font-medium text-amber-800 dark:text-amber-300 text-center">⛲ Filter active, only partial results are being shown. If you want to see the complete results, click the "Reset" button above.</p>
+                                    </div>
+                                ` : ''}
                                 <div class="flex items-center justify-center gap-1 max-w-full">
                                     <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:-120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll left" aria-label="Scroll tabs left">&#8249;</button>
                                     <div class="tabs-scroll-container flex items-center gap-1 overflow-x-auto flex-nowrap py-0.5">
@@ -14762,7 +14772,7 @@
                                             </div>
                                         </td>
                                         ${columns.map(col => `
-                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${contestAvgPcts[col.key] || 0}%</span></td>
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="${isUnified ? getSimilarityStyle(contestAvgPcts[col.key] || 0) : `background: ${col.bg}; color: #1f2937;`}">${contestAvgPcts[col.key] || 0}%</span></td>
                                         `).join('')}
                                     </tr>
                                     ${comparisonData.map(voter => `
@@ -14774,7 +14784,7 @@
                                                 </div>
                                             </td>
                                             ${columns.map(col => `
-                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${voter[col.key]}%</span></td>
+                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="${isUnified ? getSimilarityStyle(voter[col.key]) : `background: ${col.bg}; color: #1f2937;`}">${voter[col.key]}%</span></td>
                                             `).join('')}
                                         </tr>
                                     `).join('')}
@@ -14868,10 +14878,12 @@
                 if (visibleItems.length === 0 && hiddenCount === 0) return '';
                 const collapsed = !!state.comparisonDetailCollapsed[cat.key];
                 const catBgColor = cat.color;
+                // Unified headers are coloured by their similarity percentage; every other category keeps its own colour
+                const catStyle = cat.similarityPct !== undefined ? getSimilarityStyle(cat.similarityPct) : `background-color: ${catBgColor};`;
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${catBgColor};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="${catStyle}" onclick="toggleComparisonDetailSection('${cat.key}')">
                             <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}${showRange && cat.range ? ` <span class="text-xs font-normal">(${cat.range})</span>` : ''}
                             <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
@@ -14888,7 +14900,7 @@
                                     const subOpacity = isDark ? (0.85 + shadeStep) : (0.85 - shadeStep);
                                     return `
                                         <div class="flex items-stretch gap-2">
-                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="background-color: ${catBgColor}; opacity: ${subOpacity};" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="${catStyle} opacity: ${subOpacity};" onclick="toggleComparisonDetailSection('${sc.key}')">
                                                 <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3 mr-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                                                 <div class="text-center leading-tight">${sc.label}<br><span class="font-normal text-[10px]">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span></div>
                                             </div>
@@ -17604,7 +17616,7 @@
             render();
         }
 
-        // Small ⭐ / 🔖 button (card-toggle look) to the right of the page title: emoji + format name on one row
+        // Small ⭐ / 🔖 button (card-toggle look) next to the "Voting Format:" label: emoji + format name on one row
         function renderResultsFormatToggle() {
             const isShortlist = isShortlistFormat();
             return `
@@ -17976,6 +17988,31 @@
             return document.body.classList.contains('dark-theme') ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`;
         }
 
+        // Similarity colouring for the compare-with-others screens: the Total tab's spectrum driven by the percentage (0-100),
+        // with white or black text, whichever reads better on that colour (always >= 4.5:1 in every theme)
+        function getSimilarityStyle(pct) {
+            const value = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+            const bg = getSpectrumColor(value, 100);
+            let rgb = [107, 114, 128];
+            if (value !== 0) {
+                const dark = document.body.classList.contains('dark-theme');
+                const h = ((270 + (value / 100) * 330) % 360) / 360, s = dark ? 0.85 : 0.7, l = dark ? 0.6 : 0.45;
+                const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+                const channel = t => {
+                    t = (t + 1) % 1;
+                    const v = t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p;
+                    const lin = v;
+                    return lin <= 0.03928 ? lin / 12.92 : Math.pow((lin + 0.055) / 1.055, 2.4);
+                };
+                rgb = [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)];
+            } else {
+                rgb = rgb.map(c => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+            }
+            const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            const fg = 1.05 / (lum + 0.05) >= (lum + 0.05) / 0.05 ? '#ffffff' : '#000000';
+            return `background-color: ${bg}; color: ${fg} !important;`;
+        }
+
         // Shortlist Total value of an image: # = users who shortlisted it; % = that count / the image's eligible users (whole number)
         function getShortlistImageValue(view, imageId, mode) {
             const count = (view.byImage.get(imageId) || []).length;
@@ -18211,7 +18248,7 @@
                                                     <span class="font-medium truncate max-w-[120px]">${row.username}</span>
                                                 </div>
                                             </td>
-                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: #c4b5fd; color: #1f2937;">${state.comparisonShowMode === 'pct' ? row.overlapPct + '%' : row.overlapCount}</span></td>
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="${getSimilarityStyle(row.overlapPct)}">${state.comparisonShowMode === 'pct' ? row.overlapPct + '%' : row.overlapCount}</span></td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -18251,7 +18288,7 @@
                                 <span>←</span> Back to comparison
                             </button>
                             <h2 class="text-lg font-bold text-gray-800">${x.username} vs ${y.username}</h2>
-                            <span class="text-sm font-semibold text-gray-600">Overlap: ${state.comparisonShowMode === 'pct' ? (comparison.jaccard === null ? '—' : Math.round(comparison.jaccard * 100) + '%') : comparison.overlap.length}</span>
+                            <span class="inline-block px-2 py-0.5 rounded text-sm font-bold comparison-pct-badge" style="${getSimilarityStyle(comparison.jaccard === null ? 0 : Math.round(comparison.jaccard * 100))}">Overlap: ${state.comparisonShowMode === 'pct' ? (comparison.jaccard === null ? '—' : Math.round(comparison.jaccard * 100) + '%') : comparison.overlap.length}</span>
                         </div>
                         ${renderShowModeSwitch('setComparisonShowMode', state.comparisonShowMode)}
                         <div class="flex items-center gap-2 mb-4">
