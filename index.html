@@ -7849,6 +7849,17 @@
             return Object.values(voterMap).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
         }
 
+        // Users the Users filter offers. Classic format: classic voters only. Shortlist format: every user ELIGIBLE for this
+        // item (the participation rule), read from the cached combined shortlist data - 🔖 = has real shortlist rows in this
+        // item (also when mixed across a merger's contests), ⭐ = shortlist auto-converted from classic votes only.
+        function getFilterVotersList() {
+            const data = isShortlistFormat() ? state.shortlistData : null;
+            if (!data) return getContestVotersList();
+            return Object.values(data.voters)
+                .map(v => ({ userId: v.userId, username: v.username, avatar: v.avatar, marker: v.hasReal ? '🔖' : '⭐' }))
+                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+        }
+
         function toggleUserFilterDropdown() {
             state.userFilterDropdownOpen = !state.userFilterDropdownOpen;
             if (state.userFilterDropdownOpen) state.imageFilterDropdownOpen = false;
@@ -7859,7 +7870,7 @@
             const scrollY = window.scrollY;
             const dropdown = document.querySelector('.user-filter-dropdown');
             const dropdownScrollTop = dropdown ? dropdown.scrollTop : 0;
-            const allVoters = getContestVotersList();
+            const allVoters = getFilterVotersList();
             if (state.userFilterSelectedUsers === null) {
                 // Was "all selected" - now deselect this one
                 state.userFilterSelectedUsers = new Set(allVoters.map(v => v.userId));
@@ -7927,7 +7938,8 @@
         }
 
         function renderUserFilterDropdown(tabPrefix) {
-            const allVoters = getContestVotersList();
+            const allVoters = getFilterVotersList();
+            const showMarkers = allVoters.some(v => v.marker);
             if (allVoters.length === 0) return '';
             const selectedCount = state.userFilterSelectedUsers === null ? allVoters.length : state.userFilterSelectedUsers.size;
             const totalCount = allVoters.length;
@@ -7956,11 +7968,13 @@
                                         <label class="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer">
                                             <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleUserFilterUser('${voter.userId}')" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
                                             <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-5 h-5 rounded-full"  onerror="ghostAvatar(this)" />
-                                            <span class="text-sm truncate">${voter.username}</span>
+                                            <span class="text-sm truncate flex-1 text-left">${voter.username}</span>
+                                            ${voter.marker ? `<span class="text-sm flex-shrink-0" title="${voter.marker === '🔖' ? 'Made a shortlist' : 'Auto-converted from classic votes'}">${voter.marker}</span>` : ''}
                                         </label>
                                     `;
                                 }).join('')}
                             </div>
+                            ${showMarkers ? `<div class="border-t border-gray-200 px-2 py-1.5 text-[11px] text-gray-500">Bookmark: made a shortlist - Star: auto-converted from classic votes</div>` : ''}
                         </div>
                     ` : ''}
                 </div>
@@ -17540,6 +17554,7 @@
             state.comparisonDetailUserId = null;
             state.comparisonDetailCollapsed = {};
             state.userFilterDropdownOpen = false;
+            state.userFilterSelectedUsers = null;   // the Users list differs between formats
             state.averageTabCompareAll = false;
             state.averageTabCompareUserId = null;
 
