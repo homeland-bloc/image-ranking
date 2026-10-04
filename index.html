@@ -76,10 +76,13 @@
             --mauve-300: 216 143 184; --mauve-400: 199 123 166; --mauve-500: 183 110 158; --mauve-600: 168 101 144; --mauve-700: 153 92 130;
             --blue-400: 96 165 250; --blue-500: 59 130 246; --blue-600: 37 99 235; --blue-700: 29 78 216;
         }
-        /* Cold theme: gingerbread replaces mauve, glacier blue replaces blue (white text stays >= 4.5:1) */
+        /* Cold theme: gingerbread replaces mauve, a snowy-to-deep glacier blue replaces blue.
+           Mauve gradient runs 4.1:1 -> 8.0:1 and blue gradient 3.1:1 -> 4.6:1 against white text */
         body.cold-theme {
-            --mauve-300: 184 131 95; --mauve-400: 154 100 68; --mauve-500: 139 90 60; --mauve-600: 122 78 51; --mauve-700: 106 67 44;
-            --blue-400: 47 120 168; --blue-500: 47 120 168; --blue-600: 43 111 158; --blue-700: 35 93 134;
+            --mauve-300: 190 138 98; --mauve-400: 168 113 74; --mauve-500: 150 99 65; --mauve-600: 130 84 54; --mauve-700: 112 71 46;
+            --blue-400: 72 153 208; --blue-500: 72 153 208; --blue-600: 42 122 181; --blue-700: 30 88 132;
+            /* Gingerbread -> Christmas-tree evergreen -> glacier blue (shared by the app bar and the logo circles) */
+            --cold-bar-gradient: linear-gradient(to right, #a8714a 0%, #a8714a 6%, #2e7d4f 32%, #2e7d4f 56%, #2a7ab5 100%);
         }
         
         @keyframes tickAppear {
@@ -903,15 +906,29 @@
 
         /* ===== Cold Theme (light-based; body.cold-theme only, no dark-theme class) ===== */
 
-        /* Snowy page background */
+        /* Icy page background: clearly blue at the top, fading to white */
         body.cold-theme {
-            background: linear-gradient(to bottom, #eef5fa, #e1edf5) !important;
+            background: linear-gradient(to bottom, #b9d9ef, #ffffff) !important;
+            background-attachment: fixed !important;
         }
 
-        /* App bar: deep glacier blue (white text >= 4.8:1 on every stop) */
+        /* App bar: gingerbread -> evergreen -> glacier blue (white text >= 4.1:1 on every stop) */
         body.cold-theme .app-bar-bg {
-            background-image: linear-gradient(to right, #26668f, #2b6f9e 50%, #2f78a8) !important;
+            background-image: var(--cold-bar-gradient) !important;
         }
+
+        /* Peony logo circles (app bar and login screen) share the app bar gradient */
+        body.cold-theme .peony-logo {
+            background-image: var(--cold-bar-gradient) !important;
+            box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.55);
+        }
+
+        /* Merger cards: deeper, more saturated ice blue with a stronger border so they stand out */
+        body.cold-theme .merger-card {
+            background-color: #b0d5f0 !important;
+            border-color: #2f78ad !important;
+        }
+        body.cold-theme .merger-card .text-gray-500 { color: #4b5563 !important; }
 
         /* Ice-tinted cards, panels and borders */
         body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
@@ -923,15 +940,6 @@
         body.cold-theme .border-gray-200,
         body.cold-theme .border-gray-300 { border-color: #c5d9e8 !important; }
         body.cold-theme .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #c5d9e8 !important; }
-
-        /* ===== Light themes (Light, Cold): white text on the score-3 yellow is only 1.9:1, so use dark text ===== */
-        body:not(.dark-theme) .bg-gradient-to-r.from-yellow-500.to-yellow-600,
-        body:not(.dark-theme) [style*="background-color: rgb(234, 179, 8);"],
-        body:not(.dark-theme) [style$="background-color: rgb(234, 179, 8)"],
-        body:not(.dark-theme) [style*="background:rgb(234, 179, 8);"],
-        body:not(.dark-theme) [style*="background: rgb(234, 179, 8);"] {
-            color: #1f2937 !important;
-        }
 
         /* ===== Hot Theme (dark-theme + hot-theme classes applied together) ===== */
 
@@ -1134,7 +1142,8 @@
             userLeaderboardData: null, // null | 'loading' | Array of user stat objects
             leaderboardSortKey: 'totalVotes',
             leaderboardSortDir: 'desc',
-            leaderboardStatType: 'totalVotes', // 'totalVotes'|'totalContests'|'totalCreated'|'scoreFrequency'|'totalAvg'
+            leaderboardStatType: '', // '' (Select...) | 'totalVotes'|'totalContests'|'totalCreated'|'totalShortlisted'|'totalShortlists'|'scoreFrequency'|'totalAvg'
+            leaderboardShortlistStats: null, // Cached per-user shortlist rows for the leaderboard
             leaderboardSelectedScore: 1, // 1-5 for scoreFrequency
             hideLowConfidenceGlobal: false, // Hide low-confidence rows in global similarity
             voteSpreadShowCount: true, // true = show counts, false = show % in vote spread
@@ -2292,6 +2301,7 @@
                 state.globalSimilarityAllVotes = null;
                 state.globalSimilarityResults = {};
                 state.userLeaderboardData = null;
+                state.leaderboardShortlistStats = null;
 
                 // Reload user votes to reflect new submissions
                 await loadUserVotes();
@@ -7981,9 +7991,9 @@
             `;
         }
 
-        // Small "Reset" under a filter; only drawn while that filter is applied
+        // "Reset" under a filter (same size and style as the Users / Images buttons); only drawn while that filter is applied
         function renderFilterResetButton(handler, title) {
-            return `<button onclick="${handler}" class="px-2 py-0.5 rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 text-[11px] font-semibold transition" title="${title}">Reset</button>`;
+            return `<button onclick="${handler}" class="flex items-center gap-1 px-2 py-1 rounded-lg border-2 border-gray-300 bg-white text-xs font-medium hover:border-mauve-400 transition" title="${title}">Reset</button>`;
         }
 
         // ==================== IMAGE FILTER ====================
@@ -8487,7 +8497,7 @@
                 const close = comparisons.filter(c => c.absDiff > 0.50 && c.absDiff <= 1.00).length;
                 const unifiedPct = total > 0 ? (((exact + close * 0.5) / total) * 100).toFixed(0) : '0';
                 return [
-                    { key: 'cmp_unified', label: `All Images — Unified ${unifiedPct}%`, range: 'Sorted by closeness to average', color: '#c4b5fd', darkColor: '#2d1a5e', items: sorted, subcategories: buildUserScoreSubs(sorted, 'cmp_unified') }
+                    { key: 'cmp_unified', label: `All Images — Unified ${unifiedPct}%`, range: 'Sorted by closeness to average', similarityPct: Number(unifiedPct), color: '#c4b5fd', darkColor: '#2d1a5e', items: sorted, subcategories: buildUserScoreSubs(sorted, 'cmp_unified') }
                 ];
             }
 
@@ -8585,7 +8595,7 @@
             const total = comparisons.length;
             const unifiedPct = total > 0 ? (((exactItems.length + closeItems.length * 0.5) / total) * 100).toFixed(0) : '0';
             const unified = [
-                { key: 'uvu_unified', label: `All Images — Unified ${unifiedPct}%`, color: '#c4b5fd', darkColor: '#2d1a5e', items: unifiedSorted, subcategories: buildScorePairSubs(unifiedSorted, 'uvu_unified') }
+                { key: 'uvu_unified', label: `All Images — Unified ${unifiedPct}%`, similarityPct: Number(unifiedPct), color: '#c4b5fd', darkColor: '#2d1a5e', items: unifiedSorted, subcategories: buildScorePairSubs(unifiedSorted, 'uvu_unified') }
             ];
 
             return { matchBased, relativeBased, unified };
@@ -9681,18 +9691,65 @@
             render();
         }
 
-        async function openUserLeaderboard() {
+        // The leaderboard fetches nothing when it opens: each stat loads only the data it needs once it is chosen.
+        const LEADERBOARD_VOTE_STATS = ['totalVotes', 'totalContests', 'scoreFrequency', 'totalAvg'];
+        const LEADERBOARD_SHORTLIST_STATS = ['totalShortlisted', 'totalShortlists'];
+        let leaderboardLoadId = 0;
+        let leaderboardVoteStatsCache = null;   // { votes, statsMap } - rebuilt only when globalVotesCache is replaced
+
+        function openUserLeaderboard() {
             state.showUserDropdown = false;
             state.showUserLeaderboard = true;
-            if (state.userLeaderboardData && state.userLeaderboardData !== 'loading') {
-                render();
-                return;
-            }
-            state.userLeaderboardData = 'loading';
+            state.leaderboardStatType = '';   // always starts on "Select..."
             render();
+        }
+
+        // Per-user vote statistics built from the global votes (cached together with the votes they came from)
+        function getLeaderboardVoteStats(allVotes) {
+            if (leaderboardVoteStatsCache && leaderboardVoteStatsCache.votes === allVotes) return leaderboardVoteStatsCache.statsMap;
+            const statsMap = {};
+            allVotes.forEach(v => {
+                if (!statsMap[v.user_id]) {
+                    statsMap[v.user_id] = {
+                        totalVotes: 0,
+                        contestIds: new Set(),
+                        scores: {1:0,2:0,3:0,4:0,5:0},
+                        scoreSum: 0,
+                        contestVotes: {} // contestId -> {sum, count}
+                    };
+                }
+                const s = statsMap[v.user_id];
+                s.totalVotes++;
+                if (v.contest_id) {
+                    s.contestIds.add(v.contest_id);
+                    if (!s.contestVotes[v.contest_id]) s.contestVotes[v.contest_id] = { sum: 0, count: 0 };
+                    s.contestVotes[v.contest_id].sum += v.score;
+                    s.contestVotes[v.contest_id].count++;
+                }
+                if (v.score >= 1 && v.score <= 5) {
+                    s.scores[v.score]++;
+                    s.scoreSum += v.score;
+                }
+            });
+            leaderboardVoteStatsCache = { votes: allVotes, statsMap };
+            return statsMap;
+        }
+
+        // Loads (only what is missing) and builds the rows for the chosen stat
+        async function loadLeaderboardStat(statType) {
+            if (!statType) return;
+            const loadId = ++leaderboardLoadId;
+            const needsVotes = LEADERBOARD_VOTE_STATS.includes(statType);
+            const needsShortlists = LEADERBOARD_SHORTLIST_STATS.includes(statType);
+            const needsUsers = !state.allUsers || state.allUsers.length === 0;
+            const fetchNeeded = needsUsers || (needsVotes && !state.globalVotesCache) || (needsShortlists && !state.leaderboardShortlistStats);
+            if (fetchNeeded) {
+                state.userLeaderboardData = 'loading';
+                render();
+            }
             try {
                 // Ensure allUsers is loaded so rows can be matched to display names
-                if (!state.allUsers || state.allUsers.length === 0) {
+                if (needsUsers) {
                     const usersResp = await fetchFromSupabase(`/rest/v1/users?select=id,username,avatar,is_banned`);
                     if (usersResp.ok) {
                         const users = await usersResp.json();
@@ -9700,80 +9757,55 @@
                     }
                 }
 
-                let allVotes;
-                if (state.globalVotesCache) {
-                    allVotes = state.globalVotesCache;
-                } else {
-                    allVotes = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
-                    state.globalVotesCache = allVotes;
+                let statsMap = {};
+                if (needsVotes) {
+                    if (!state.globalVotesCache) {
+                        state.globalVotesCache = await fetchAllVotesPaginated('', 'user_id,score,contest_id');
+                    }
+                    statsMap = getLeaderboardVoteStats(state.globalVotesCache);
                 }
-
-                // Build per-user stats
-                const statsMap = {};
-                allVotes.forEach(v => {
-                    if (!statsMap[v.user_id]) {
-                        statsMap[v.user_id] = {
-                            totalVotes: 0,
-                            contestIds: new Set(),
-                            scores: {1:0,2:0,3:0,4:0,5:0},
-                            scoreSum: 0,
-                            contestVotes: {} // contestId -> {sum, count}
-                        };
-                    }
-                    const s = statsMap[v.user_id];
-                    s.totalVotes++;
-                    if (v.contest_id) {
-                        s.contestIds.add(v.contest_id);
-                        if (!s.contestVotes[v.contest_id]) s.contestVotes[v.contest_id] = { sum: 0, count: 0 };
-                        s.contestVotes[v.contest_id].sum += v.score;
-                        s.contestVotes[v.contest_id].count++;
-                    }
-                    if (v.score >= 1 && v.score <= 5) {
-                        s.scores[v.score]++;
-                        s.scoreSum += v.score;
-                    }
-                });
 
                 // Real shortlists rows only (classic votes are never converted here): rows per user and distinct contests per user
-                const shortlistStats = {};
-                try {
-                    const shortlistRows = await fetchAllShortlistsPaginated('user_id=not.is.null', 'user_id,contest_id');
-                    shortlistRows.forEach(row => {
-                        if (!shortlistStats[row.user_id]) shortlistStats[row.user_id] = { rows: 0, contestIds: new Set() };
-                        shortlistStats[row.user_id].rows++;
-                        if (row.contest_id) shortlistStats[row.user_id].contestIds.add(row.contest_id);
-                    });
-                } catch (shortlistError) {
-                    console.error('Leaderboard shortlists error:', shortlistError);
+                let shortlistStats = {};
+                if (needsShortlists) {
+                    if (!state.leaderboardShortlistStats) {
+                        const stats = {};
+                        const shortlistRows = await fetchAllShortlistsPaginated('user_id=not.is.null', 'user_id,contest_id');
+                        shortlistRows.forEach(row => {
+                            if (!stats[row.user_id]) stats[row.user_id] = { rows: 0, contestIds: new Set() };
+                            stats[row.user_id].rows++;
+                            if (row.contest_id) stats[row.user_id].contestIds.add(row.contest_id);
+                        });
+                        state.leaderboardShortlistStats = stats;
+                    }
+                    shortlistStats = state.leaderboardShortlistStats;
                 }
 
-                // Build items-created map from already-loaded state data
+                // Items-created map comes from already-loaded state data
                 const createdMap = {};
-                [...(state.contests || []), ...(state.mergers || []), ...(state.extracts || [])].forEach(item => {
-                    if (item.createdBy) createdMap[item.createdBy] = (createdMap[item.createdBy] || 0) + 1;
-                });
+                if (statType === 'totalCreated') {
+                    [...(state.contests || []), ...(state.mergers || []), ...(state.extracts || [])].forEach(item => {
+                        if (item.createdBy) createdMap[item.createdBy] = (createdMap[item.createdBy] || 0) + 1;
+                    });
+                }
 
-                // Merge with allUsers for display info
+                // A newer choice superseded this load
+                if (loadId !== leaderboardLoadId) return;
+
+                // Merge with allUsers for display info: one row per user that has data for the chosen stat
+                const userIds = new Set([...Object.keys(statsMap), ...Object.keys(shortlistStats), ...Object.keys(createdMap)]);
                 const rows = [];
-                const emptyStats = () => ({ totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0}, scoreSum: 0, contestVotes: {} });
-                // Users with only shortlists (no classic votes) still get a row
-                Object.keys(shortlistStats).forEach(userId => { if (!statsMap[userId]) statsMap[userId] = emptyStats(); });
-                for (const [userId, s] of Object.entries(statsMap)) {
+                userIds.forEach(userId => {
                     const userInfo = state.allUsers.find(u => u.id === userId);
-                    if (!userInfo) continue;
-                    const totalContests = s.contestIds.size;
-
-                    // Per-contest averages for highest/lowest avg stats
-                    const contestAvgs = Object.values(s.contestVotes)
-                        .filter(c => c.count > 0)
-                        .map(c => c.sum / c.count);
+                    if (!userInfo) return;
+                    const s = statsMap[userId] || { totalVotes: 0, contestIds: new Set(), scores: {1:0,2:0,3:0,4:0,5:0}, scoreSum: 0, contestVotes: {} };
 
                     rows.push({
                         userId,
                         username: userInfo.username,
                         avatar: userInfo.avatar,
                         totalVotes: s.totalVotes,
-                        totalContests,
+                        totalContests: s.contestIds.size,
                         totalCreated: createdMap[userId] || 0,
                         totalShortlisted: shortlistStats[userId] ? shortlistStats[userId].rows : 0,
                         totalShortlists: shortlistStats[userId] ? shortlistStats[userId].contestIds.size : 0,
@@ -9782,13 +9814,12 @@
                         score3: s.scores[3],
                         score4: s.scores[4],
                         score5: s.scores[5],
-                        totalAvg: s.totalVotes > 0 ? s.scoreSum / s.totalVotes : 0,
-                        highestAvg: contestAvgs.length > 0 ? Math.max(...contestAvgs) : 0,
-                        lowestAvg: contestAvgs.length > 0 ? Math.min(...contestAvgs) : 0,
+                        totalAvg: s.totalVotes > 0 ? s.scoreSum / s.totalVotes : 0
                     });
-                }
+                });
                 state.userLeaderboardData = rows;
             } catch (err) {
+                if (loadId !== leaderboardLoadId) return;
                 console.error('Leaderboard error:', err);
                 state.userLeaderboardData = null;
                 showToast('❌ Failed to load leaderboard');
@@ -9803,7 +9834,13 @@
 
         function setLeaderboardStatType(value) {
             state.leaderboardStatType = value;
-            render();
+            if (!value) {
+                leaderboardLoadId++;   // abandon any load still in flight
+                state.userLeaderboardData = null;
+                render();
+                return;
+            }
+            loadLeaderboardStat(value);
         }
 
         function setLeaderboardScore(value) {
@@ -9834,7 +9871,7 @@
         function renderUserLeaderboard() {
             if (!state.showUserLeaderboard) return '';
             const data = state.userLeaderboardData;
-            const statType = state.leaderboardStatType || 'totalVotes';
+            const statType = state.leaderboardStatType || '';
             const selectedScore = state.leaderboardSelectedScore || 1;
             const sortDir = state.leaderboardSortDir || 'desc';
             const showCount = state.leaderboardShowCount;
@@ -9842,7 +9879,7 @@
             const thClass = 'px-2 py-2 text-left text-xs font-semibold text-gray-600 whitespace-nowrap';
 
             const statOptions = [
-                { value: 'totalVotes',       label: 'Total Votes' },
+                { value: 'totalVotes',       label: 'Total Classic Votes' },
                 { value: 'totalContests',    label: 'Contests Voted In' },
                 { value: 'totalCreated',     label: 'Items Created' },
                 { value: 'totalShortlisted', label: 'Total Shortlisted' },
@@ -9924,10 +9961,12 @@
             let bodyHtml = '';
             let appTotalHtml = '';
 
-            if (data === 'loading') {
+            if (!statType) {
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-500">Select a stat to load the leaderboard</td></tr>';
+            } else if (data === 'loading') {
                 bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-500 animate-pulse">Loading leaderboard data…</td></tr>';
             } else if (!data) {
-                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.userLeaderboardData=null;state.globalVotesCache=null;openUserLeaderboard()" class="underline">Retry</button></td></tr>';
+                bodyHtml = '<tr><td colspan="3" class="px-4 py-8 text-center text-red-500">Failed to load. <button onclick="state.globalVotesCache=null;state.leaderboardShortlistStats=null;loadLeaderboardStat(state.leaderboardStatType)" class="underline">Retry</button></td></tr>';
             } else {
                 let rows = [...data];
                 if (showLowConfidenceToggle && state.hideLowConfidenceLeaderboard) {
@@ -9958,7 +9997,7 @@
                 // App totals
                 if (statType === 'totalVotes') {
                     const total = data.reduce((s, r) => s + r.totalVotes, 0);
-                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} votes</span>`;
+                    appTotalHtml = `<span class="font-medium text-gray-700">App total: ${total.toLocaleString()} classic votes</span>`;
                 } else if (statType === 'totalShortlisted') {
                     appTotalHtml = `<span class="font-medium text-gray-700">App total: ${data.reduce((sum, r) => sum + r.totalShortlisted, 0).toLocaleString()} images shortlisted</span>`;
                 } else if (statType === 'totalShortlists') {
@@ -10000,6 +10039,7 @@
                             <div class="flex items-center gap-1.5">
                                 <label class="text-sm text-gray-600 shrink-0">View by:</label>
                                 <select onchange="setLeaderboardStatType(this.value)" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                                    <option value="" ${statType === '' ? 'selected' : ''}>Select...</option>
                                     ${statOptions.map(o => `<option value="${o.value}" ${statType === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
                                 </select>
                             </div>
@@ -11094,7 +11134,7 @@
                 <header class="safe-header app-bar-bg bg-gradient-to-r from-mauve-600 via-mauve-300 to-green-700 text-white shadow-lg">
                     <div class="max-w-7xl mx-auto px-3 py-2 sm:py-3 flex justify-between items-center gap-2">
                         <div class="flex items-center gap-2">
-                            <div onclick="backToHome()" class="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500 cursor-pointer hover:opacity-80 transition">
+                            <div onclick="backToHome()" class="peony-logo w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-mauve-300 to-mauve-500 cursor-pointer hover:opacity-80 transition">
                                 <span class="text-xl">🌺</span>
                             </div>
                             <h1 onclick="backToHome()" class="text-xl font-bold cursor-pointer hover:opacity-80 transition">Peony</h1>
@@ -11194,7 +11234,7 @@
                         </div>
                     ` : ''}
                     <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <div class="peony-logo w-16 h-16 bg-gradient-to-br from-mauve-300 to-mauve-500 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span class="text-3xl">🌺</span>
                         </div>
                         <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Peony</h2>
@@ -12917,7 +12957,7 @@
             const isAdmin = state.user && state.user.id === ADMIN_DISCORD_ID;
 
             return `
-                <div class="bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
+                <div class="merger-card bg-blue-50 border-2 border-blue-300 rounded-xl shadow-lg overflow-visible hover:shadow-xl transition fade-in p-4 relative">
                     ${unvotedLabel ? `
                         <div class="absolute -top-2.5 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg whitespace-nowrap z-10">
                             ${unvotedLabel}
@@ -13646,7 +13686,7 @@
                 if (startIdx < imageCount) {
                     panel = `
                         <div class="bg-gray-100 px-2 py-1.5 border-b border-gray-200">
-                            <div class="text-xs font-medium text-gray-600 mb-1">${startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`}</div>
+                            <div class="text-xs font-medium text-gray-600 mb-1">${startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`} - tap a segment below to jump to that image</div>
                             <div class="flex gap-1">
                                 ${state.shuffledImages.slice(startIdx, endIdx).map((img, i) => {
                                     const idx = startIdx + i;
@@ -13846,7 +13886,6 @@
                             <div class="flex items-center justify-center gap-2 mb-2">
                                 <span class="text-4xl">${icon}</span>
                                 <h2 class="text-2xl font-bold text-gray-800">${title}</h2>
-                                ${renderResultsFormatToggle()}
                             </div>
                             ${customHeaderContent}
                             <p class="text-gray-600 text-sm mb-1">${subtitle || (isShortlistFmt ? shortlistSubtitleMap : subtitleMap)[state.resultsView] || ''}</p>
@@ -13862,10 +13901,21 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
+                                <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
                                 <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
+                                        ${renderResultsFormatToggle()}
+                                    </div>
+                                </div>
                                 ${renderGlobalFilters()}
+                                ${isUserFilterActive() || isImageFilterActive() ? `
+                                    <div class="w-full max-w-2xl bg-amber-50 border border-amber-300 dark:bg-amber-900/20 dark:border-amber-600 rounded-lg px-3 py-2">
+                                        <p class="text-sm font-medium text-amber-800 dark:text-amber-300 text-center">⛲ Filter active, only partial results are being shown. If you want to see the complete results, click the "Reset" button above.</p>
+                                    </div>
+                                ` : ''}
                                 <div class="flex items-center justify-center gap-1 max-w-full">
                                     <button onclick="document.querySelector('.tabs-scroll-container').scrollBy({left:-120,behavior:'smooth'})" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-gray-200 hover:bg-gray-300 transition text-gray-700 font-bold text-lg select-none leading-none" title="Scroll left" aria-label="Scroll tabs left">&#8249;</button>
                                     <div class="tabs-scroll-container flex items-center gap-1 overflow-x-auto flex-nowrap py-0.5">
@@ -14754,7 +14804,7 @@
                                             </div>
                                         </td>
                                         ${columns.map(col => `
-                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${contestAvgPcts[col.key] || 0}%</span></td>
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="${isUnified ? getSimilarityStyle(contestAvgPcts[col.key] || 0) : `background: ${col.bg}; color: #1f2937;`}">${contestAvgPcts[col.key] || 0}%</span></td>
                                         `).join('')}
                                     </tr>
                                     ${comparisonData.map(voter => `
@@ -14766,7 +14816,7 @@
                                                 </div>
                                             </td>
                                             ${columns.map(col => `
-                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: ${col.bg}; color: #1f2937;">${voter[col.key]}%</span></td>
+                                                <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="${isUnified ? getSimilarityStyle(voter[col.key]) : `background: ${col.bg}; color: #1f2937;`}">${voter[col.key]}%</span></td>
                                             `).join('')}
                                         </tr>
                                     `).join('')}
@@ -14860,10 +14910,12 @@
                 if (visibleItems.length === 0 && hiddenCount === 0) return '';
                 const collapsed = !!state.comparisonDetailCollapsed[cat.key];
                 const catBgColor = cat.color;
+                // Unified headers are coloured by their similarity percentage; every other category keeps its own colour
+                const catStyle = cat.similarityPct !== undefined ? getSimilarityStyle(cat.similarityPct) : `background-color: ${catBgColor};`;
 
                 return `
                     <div class="mb-4">
-                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="background-color: ${catBgColor};" onclick="toggleComparisonDetailSection('${cat.key}')">
+                        <h3 class="text-sm font-bold mb-1 px-3 py-2 rounded-lg w-full flex items-center gap-1 cursor-pointer select-none comparison-cat-header" style="${catStyle}" onclick="toggleComparisonDetailSection('${cat.key}')">
                             <svg class="inline-block transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg> ${cat.label}${showRange && cat.range ? ` <span class="text-xs font-normal">(${cat.range})</span>` : ''}
                             <span class="text-xs font-normal ml-auto">Count: ${visibleItems.length}${hiddenCount > 0 ? ` <span class="opacity-70">(${hiddenCount} more hidden)</span>` : ''}</span>
                         </h3>
@@ -14880,7 +14932,7 @@
                                     const subOpacity = isDark ? (0.85 + shadeStep) : (0.85 - shadeStep);
                                     return `
                                         <div class="flex items-stretch gap-2">
-                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="background-color: ${catBgColor}; opacity: ${subOpacity};" onclick="toggleComparisonDetailSection('${sc.key}')">
+                                            <div class="w-16 flex-shrink-0 rounded-lg flex items-center justify-center text-xs font-bold shadow-lg px-1 py-2 cursor-pointer select-none comparison-cat-header" style="${catStyle} opacity: ${subOpacity};" onclick="toggleComparisonDetailSection('${sc.key}')">
                                                 <svg class="inline-block transition-transform duration-200 ${scCollapsed ? '' : 'rotate-90'} w-3 h-3 mr-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                                                 <div class="text-center leading-tight">${sc.label}<br><span class="font-normal text-[10px]">(${scVisibleItems.length}${scHidden > 0 ? `+${scHidden}` : ''})</span></div>
                                             </div>
@@ -16720,6 +16772,10 @@
                     await insertShortlistRows(session, autoImageIds);
                 }
 
+                // A brand-new shortlist (Start Fresh / Make a Shortlist with no real rows) starts with nothing skipped.
+                // Edit Shortlist (real rows) and Preload keep the saved set.
+                if (mode === 'empty' && realRows.length === 0) clearSkippedImages(itemType, itemId);
+
                 clearTimeout(autoSaveTimer);
                 state.votingFormat = 'shortlist';
                 state.shortlistSession = session;
@@ -16800,6 +16856,7 @@
         function confirmAutoGenerateShortlistFresh() {
             const pending = state.pendingShortlistItem;
             if (!pending) return closeModal();
+            clearSkippedImages(pending.itemType, pending.itemId);
             startShortlistVoting(pending.itemType, pending.itemId, 'empty');
         }
 
@@ -16912,6 +16969,13 @@
             return `peony_sl_skipped_${state.user ? state.user.id : 'anon'}_${session.itemType}_${session.itemId}`;
         }
 
+        // Forgets the saved explicit-skip set of one item so its voting screen starts without red tiles or segments
+        function clearSkippedImages(itemType, itemId) {
+            try {
+                sessionStorage.removeItem(getSkippedStorageKey({ itemType, itemId }));
+            } catch (e) { /* storage unavailable: nothing saved to clear */ }
+        }
+
         function loadSkippedImages(session, imageIdSet) {
             const skipped = {};
             try {
@@ -16941,10 +17005,10 @@
         }
 
         // ---------- Prank: "ItsADifferentConcept" (purely visual, never touches votes, shortlists or the database) ----------
-        // After a real vote action there is a 0.8% chance a mirrored copy of the image appears. It has a synthetic id,
+        // After a real vote action there is a 4% chance (PRANK_CHANCE) a mirrored copy of the image appears. It has a synthetic id,
         // is never part of state.shuffledImages / votes / shortlists, and any vote on it just removes it.
 
-        const PRANK_CHANCE = 0.008;
+        const PRANK_CHANCE = 0.04;   // 4% per roll
         let prankSerial = 0;
 
         function rollPrank() {
@@ -17225,6 +17289,8 @@
         // Same theme-aware gradient as the "View Results" button on the home cards
         const VIEW_RESULTS_BTN_CLASS = 'bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold hover:from-blue-600 hover:to-blue-700 transition shadow-md';
 
+        const SHORTLIST_AUTOSAVE_CAPTION = 'Each tick and untick saves as you go.';
+
         function renderShortlistMultiBottomPanel(shortlistedCount, totalCount) {
             return `
                 <div class="flex items-center justify-between gap-4">
@@ -17232,11 +17298,12 @@
                         Click images to add or remove them from your shortlist
                         <span class="font-bold" style="color: ${getScoreColor(5)};">(${shortlistedCount}/${totalCount})</span>
                     </span>
+                    <span class="hidden sm:block flex-1 text-center text-sm text-gray-500 leading-tight whitespace-nowrap">${SHORTLIST_AUTOSAVE_CAPTION}</span>
                     <div class="flex flex-col items-end gap-1 flex-shrink-0">
                         <button onclick="finishShortlistVoting()" class="${VIEW_RESULTS_BTN_CLASS} px-8 py-3 rounded-lg whitespace-nowrap">
                             View Results
                         </button>
-                        <span class="text-xs text-gray-500 leading-tight">Each tick and untick saves right away.</span>
+                        <span class="text-sm text-gray-500 leading-tight text-right max-w-[11rem] sm:hidden">${SHORTLIST_AUTOSAVE_CAPTION}</span>
                     </div>
                 </div>
             `;
@@ -17244,31 +17311,31 @@
 
         // Prev on the left; View Results (same look as the card button) next to Next on the right. The whole row swipes (left = next, right = previous).
         function renderShortlistNavRow() {
+            // Narrow: Prev / View Results / Next share one row (View Results truly centred) with the caption centred underneath.
+            // Wide (sm+): Prev, caption filling the free space, then View Results and Next on the right.
             return `
-                <div class="flex justify-between items-center gap-2" data-swipe="nav" style="touch-action: pan-y; user-select: none;">
+                <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-x-2 gap-y-2 sm:flex sm:gap-2" data-swipe="nav" style="touch-action: pan-y; user-select: none;">
                     <button
                         onclick="navigateImage('prev')"
                         ${state.currentImageIndex === 0 ? 'disabled' : ''}
-                        class="flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm flex-shrink-0"
+                        class="col-start-1 row-start-1 justify-self-start flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm flex-shrink-0"
                     >
                         ← Prev
                     </button>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        <button
-                            onclick="finishShortlistVoting()"
-                            class="${VIEW_RESULTS_BTN_CLASS} px-6 py-2 rounded-lg text-sm"
-                        >
-                            View Results
-                        </button>
-                        <button
-                            onclick="navigateImage('next')"
-                            class="flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition text-sm"
-                        >
-                            Next →
-                        </button>
-                    </div>
+                    <p class="col-span-3 row-start-2 text-sm text-gray-500 leading-tight text-center sm:flex-1 sm:col-auto sm:row-auto">${SHORTLIST_AUTOSAVE_CAPTION}</p>
+                    <button
+                        onclick="finishShortlistVoting()"
+                        class="${VIEW_RESULTS_BTN_CLASS} col-start-2 row-start-1 px-4 sm:px-6 py-2 rounded-lg text-sm whitespace-nowrap flex-shrink-0"
+                    >
+                        View Results
+                    </button>
+                    <button
+                        onclick="navigateImage('next')"
+                        class="col-start-3 row-start-1 justify-self-end flex items-center gap-1 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-semibold hover:bg-gray-300 transition text-sm flex-shrink-0"
+                    >
+                        Next →
+                    </button>
                 </div>
-                <p class="text-[11px] text-gray-500 leading-tight text-center mt-2">Each tick and untick saves right away.</p>
             `;
         }
 
@@ -17278,14 +17345,14 @@
                 <div class="flex gap-3 mb-3" data-swipe="vote" style="touch-action: pan-y; user-select: none;">
                     <button
                         onclick="handleShortlistNo()"
-                        class="flex-1 py-3 px-2 rounded-xl font-bold text-white text-sm sm:text-base shadow-lg hover:scale-[1.02] transition-transform ${status === 'no' ? 'ring-4 ring-offset-2' : ''}"
+                        class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'no' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(1)}; ring-color: ${getScoreColor(1)};"
-                    >← Swipe left to Skip ✕</button>
+                    ><span class="hidden sm:inline">← </span>Swipe left to Skip<span class="hidden sm:inline"> ✕</span></button>
                     <button
                         onclick="handleShortlistYes()"
-                        class="flex-1 py-3 px-2 rounded-xl font-bold text-white text-sm sm:text-base shadow-lg hover:scale-[1.02] transition-transform ${status === 'yes' ? 'ring-4 ring-offset-2' : ''}"
+                        class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'yes' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(5)}; ring-color: ${getScoreColor(5)};"
-                    >Swipe right to Shortlist ✓ →</button>
+                    >Swipe right to Shortlist<span class="hidden sm:inline"> ✓ →</span></button>
                 </div>
             `;
         }
@@ -17581,7 +17648,7 @@
             render();
         }
 
-        // Small ⭐ / 🔖 button (card-toggle look) to the right of the page title: emoji + format name on one row
+        // Small ⭐ / 🔖 button (card-toggle look) next to the "Voting Format:" label: emoji + format name on one row
         function renderResultsFormatToggle() {
             const isShortlist = isShortlistFormat();
             return `
@@ -17953,6 +18020,31 @@
             return document.body.classList.contains('dark-theme') ? `hsl(${hue}, 85%, 60%)` : `hsl(${hue}, 70%, 45%)`;
         }
 
+        // Similarity colouring for the compare-with-others screens: the Total tab's spectrum driven by the percentage (0-100),
+        // with white or black text, whichever reads better on that colour (always >= 4.5:1 in every theme)
+        function getSimilarityStyle(pct) {
+            const value = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+            const bg = getSpectrumColor(value, 100);
+            let rgb = [107, 114, 128];
+            if (value !== 0) {
+                const dark = document.body.classList.contains('dark-theme');
+                const h = ((270 + (value / 100) * 330) % 360) / 360, s = dark ? 0.85 : 0.7, l = dark ? 0.6 : 0.45;
+                const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+                const channel = t => {
+                    t = (t + 1) % 1;
+                    const v = t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p;
+                    const lin = v;
+                    return lin <= 0.03928 ? lin / 12.92 : Math.pow((lin + 0.055) / 1.055, 2.4);
+                };
+                rgb = [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)];
+            } else {
+                rgb = rgb.map(c => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+            }
+            const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            const fg = 1.05 / (lum + 0.05) >= (lum + 0.05) / 0.05 ? '#ffffff' : '#000000';
+            return `background-color: ${bg}; color: ${fg} !important;`;
+        }
+
         // Shortlist Total value of an image: # = users who shortlisted it; % = that count / the image's eligible users (whole number)
         function getShortlistImageValue(view, imageId, mode) {
             const count = (view.byImage.get(imageId) || []).length;
@@ -18188,7 +18280,7 @@
                                                     <span class="font-medium truncate max-w-[120px]">${row.username}</span>
                                                 </div>
                                             </td>
-                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="background: #c4b5fd; color: #1f2937;">${state.comparisonShowMode === 'pct' ? row.overlapPct + '%' : row.overlapCount}</span></td>
+                                            <td class="text-center py-2 px-1"><span class="inline-block px-2 py-0.5 rounded text-xs font-bold comparison-pct-badge" style="${getSimilarityStyle(row.overlapPct)}">${state.comparisonShowMode === 'pct' ? row.overlapPct + '%' : row.overlapCount}</span></td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -18228,7 +18320,7 @@
                                 <span>←</span> Back to comparison
                             </button>
                             <h2 class="text-lg font-bold text-gray-800">${x.username} vs ${y.username}</h2>
-                            <span class="text-sm font-semibold text-gray-600">Overlap: ${state.comparisonShowMode === 'pct' ? (comparison.jaccard === null ? '—' : Math.round(comparison.jaccard * 100) + '%') : comparison.overlap.length}</span>
+                            <span class="inline-block px-2 py-0.5 rounded text-sm font-bold comparison-pct-badge" style="${getSimilarityStyle(comparison.jaccard === null ? 0 : Math.round(comparison.jaccard * 100))}">Overlap: ${state.comparisonShowMode === 'pct' ? (comparison.jaccard === null ? '—' : Math.round(comparison.jaccard * 100) + '%') : comparison.overlap.length}</span>
                         </div>
                         ${renderShowModeSwitch('setComparisonShowMode', state.comparisonShowMode)}
                         <div class="flex items-center gap-2 mb-4">
@@ -18713,6 +18805,7 @@
         window.cancelRenameModal = cancelRenameModal;
         window.state = state;
         window.openUserLeaderboard = openUserLeaderboard;
+        window.loadLeaderboardStat = loadLeaderboardStat;
         window.closeUserLeaderboard = closeUserLeaderboard;
         window.render = render;
         window.setLeaderboardSort = setLeaderboardSort;
