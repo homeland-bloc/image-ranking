@@ -1329,7 +1329,11 @@
             authModalDismissed: false, // once the session-expired modal was dismissed, do not show it again this page load
             brokenAvatarUrl: null,     // avatar URL that failed to load in the top bar (set from the img onerror handler)
             spotlightActive: false,    // the one-time Shortlist toggle callout was started on this page load
-            spotlightDismissed: false  // ...and has been dismissed
+            spotlightDismissed: false, // ...and has been dismissed
+            themePrefSet: false,       // users.app_theme is not NULL for the logged-in user
+            prefsLoaded: false,        // the user's saved preferences were read (the preferences callout needs them)
+            prefsCalloutActive: false,    // the one-time preferences callout was started on this page load
+            prefsCalloutDismissed: false  // ...and has been dismissed
         };
 
         function loadMultiAutoJump() {
@@ -3205,6 +3209,8 @@
                 state.appTheme = previous;
                 applyTheme(previous);
                 render();
+            } else {
+                state.themePrefSet = true;
             }
         }
 
@@ -4189,6 +4195,9 @@
             try { localStorage.removeItem(THEME_CACHE_KEY); } catch (e) { /* ignore */ }
             state.votingFormatPref = null;
             state.votingModePref = null;
+            state.themePrefSet = false;
+            state.prefsLoaded = false;
+            state.prefsCalloutActive = false;
             state.votingModeSession = null;
             state.cardFormats = {};
             state.isLoggedIn = false;
@@ -11545,6 +11554,13 @@
                                     ${state.brokenAvatarUrl && state.brokenAvatarUrl === state.user.avatar ? `
                                         <button onclick="showNoticeModal('avatar')" class="text-base leading-none hover:opacity-80 focus:outline-none" title="Your profile picture link has expired" aria-label="Your profile picture link has expired">⚠️</button>
                                     ` : ''}
+                                    ${shouldShowPrefsCallout() ? `
+                                        <div data-callout="prefs" class="absolute top-full right-0 mt-2 w-56 max-w-[calc(100vw-1.5rem)] bg-mauve-700 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-[80]">
+                                            Tip: tap your name to set your app theme, voting mode and voting format.
+                                            <button onclick="dismissPrefsCallout()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
+                                            <div class="absolute bottom-full right-5 w-2 h-2 bg-mauve-700 rotate-45 -mb-1"></div>
+                                        </div>
+                                    ` : ''}
                                     <button onclick="toggleUserDropdown()" class="flex items-center gap-2 cursor-pointer hover:opacity-80 focus:outline-none">
                                         <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="markAvatarBroken(this.getAttribute('src')); ghostAvatar(this)" />
                                         <span class="font-medium text-sm hidden sm:inline">${state.user.username}</span>
@@ -16941,10 +16957,10 @@
             return `
                 <div class="relative">
                     ${toggle}
-                    <div class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
+                    <div data-callout="spotlight" class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
                         New: tap here to try Shortlist voting
                         <button onclick="dismissSpotlight()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
-                        <div class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
+                        <div data-callout-arrow class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
                     </div>
                 </div>
             `;
@@ -16990,6 +17006,44 @@
             }
             state.spotlightActive = true;
             return true;
+        }
+
+        // ---------- One-time callout on the user menu button (saved preferences) ----------
+        // Independent of the spotlight above: neither suppresses, delays or marks the other as seen. Seen is stored the
+        // moment it is first drawn; the X hides it for this page view; it is also hidden (not marked) while the menu is open.
+        function shouldShowPrefsCallout() {
+            if (!state.isLoggedIn || !state.user || state.view !== 'home' || state.prefsCalloutDismissed || !state.prefsLoaded) return false;
+            if (state.showUserDropdown) return false;
+            if (state.themePrefSet && state.votingModePref !== null && state.votingFormatPref !== null) return false;
+            if (state.prefsCalloutActive) return true;
+            const storageKey = `peony_prefs_callout_seen_${state.user.id}`;
+            try {
+                if (localStorage.getItem(storageKey)) return false;
+                localStorage.setItem(storageKey, '1');
+            } catch (e) {
+                return false;   // cannot remember it, so do not risk showing it every visit
+            }
+            state.prefsCalloutActive = true;
+            return true;
+        }
+
+        function dismissPrefsCallout() {
+            state.prefsCalloutDismissed = true;
+            render();
+        }
+
+        // If the spotlight bubble would collide with the preferences bubble, flip it below its button (still visible, still pointing at it)
+        function layoutCallouts() {
+            const prefs = document.querySelector('[data-callout="prefs"]');
+            const spot = document.querySelector('[data-callout="spotlight"]');
+            if (!prefs || !spot) return;
+            const a = prefs.getBoundingClientRect(), b = spot.getBoundingClientRect();
+            if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+                spot.classList.remove('bottom-full', 'mb-2');
+                spot.classList.add('top-full', 'mt-2');
+                const arrow = spot.querySelector('[data-callout-arrow]');
+                if (arrow) arrow.classList.remove('top-full', '-mt-1'), arrow.classList.add('bottom-full', '-mb-1');
+            }
         }
 
         function dismissSpotlight() {
@@ -19669,6 +19723,7 @@
                 app.innerHTML = html;
             }
 
+            layoutCallouts();
             document.documentElement.classList.toggle('no-scroll-anchor', state.view === 'vote' && state.votingMode === 'multi' && !state.multiAutoJump);
 
             // Restore scroll positions
@@ -19949,6 +20004,7 @@
         window.viewUserShortlistInTotal = viewUserShortlistInTotal;
         window.setPairsShowMode = setPairsShowMode;
         window.dismissSpotlight = dismissSpotlight;
+        window.dismissPrefsCallout = dismissPrefsCallout;
         window.openResultsFromCard = openResultsFromCard;
         window.dismissModeCallout = dismissModeCallout;
         window.showNoticeModal = showNoticeModal;
@@ -20076,6 +20132,8 @@
                         const savedTheme = normalizeTheme(userData.app_theme);
                         state.appTheme = savedTheme;
                         applyTheme(savedTheme);
+                        state.themePrefSet = userData.app_theme !== null && userData.app_theme !== undefined;
+                        state.prefsLoaded = true;
                         state.votingFormatPref = (userData.voting_format === 'classic' || userData.voting_format === 'shortlist') ? userData.voting_format : null;
                         state.votingModePref = (userData.voting_mode === 'single' || userData.voting_mode === 'multi') ? userData.voting_mode : null;
                         state.votingMode = getDefaultVotingMode();
