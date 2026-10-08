@@ -5715,7 +5715,7 @@
                 state.currentMergerId = mergerId;
                 state.mergerContestIds = merger.contestIds;
                 state.votes = {};
-                await loadMergedResults(mergerId);
+                await loadMergedResults(merger.contestIds);
                 state.view = 'mergedResults';
                 window.location.hash = `merger=${mergerId}`;
                 clearLoading();
@@ -8330,7 +8330,8 @@
                 } else {
                     state.imageFilterSelectedImages.add(imageId);
                 }
-                // Don't automatically reset to null - user may want explicit control
+                // Everything shown again: the filter is inactive (no partial-results banner, no Reset button)
+                if (allImages.every(img => state.imageFilterSelectedImages.has(img.id))) state.imageFilterSelectedImages = null;
             }
             render();
         }
@@ -17001,6 +17002,8 @@
         // Same "seen on first render" rule as the format callout; only while voting_mode has never been chosen.
         function shouldShowModeCallout() {
             if (!state.user || state.view !== 'vote' || state.modeCalloutDismissed || state.votingModePref !== null) return false;
+            // Hidden (not marked seen) while the single-mode tools panel is open, so the two never overlap
+            if (state.votingMode === 'single' && state.singleToolsOpen) return false;
             if (state.modeCalloutActive) return true;
             const storageKey = `peony_mode_callout_seen_${state.user.id}`;
             try {
