@@ -1136,6 +1136,9 @@
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
 
+        const DEFAULT_SCORING_FORMULA = 2;   // the app's default scoring formula (Squared)
+        const RESULTS_OPTIONS_KEY = 'peony_results_options_open';
+
         let state = {
             isLoggedIn: false,
             user: null,
@@ -1160,7 +1163,8 @@
             newContest: { title: '', images: [] },
             showMyVotes: false,  // Deprecated, use resultsView
             resultsView: 'average',  // 'average', 'divisive', 'count', 'userVotes', or 'byVoter'
-            scoringFormula: 2,       // Power mean exponent: 1=Linear, 2=Squared (default), 3=Cubed
+            resultsOptionsOpen: loadResultsOptionsOpen(),  // results page: the foldable Options section (switch + scoring formula) is open
+            scoringFormula: DEFAULT_SCORING_FORMULA,       // Power mean exponent: 1=Linear, 2=Squared (default), 3=Cubed
             showScoringFormulaModal: false,
             scoringFormulaSampleImage: null,  // Random sample image for formula demo
             voterSortBy: 'scoreDesc',  // 'scoreDesc', 'scoreAsc', 'nameAsc', 'nameDesc', 'mostScore', 'leastScore' for byVoter view
@@ -1329,7 +1333,11 @@
             authModalDismissed: false, // once the session-expired modal was dismissed, do not show it again this page load
             brokenAvatarUrl: null,     // avatar URL that failed to load in the top bar (set from the img onerror handler)
             spotlightActive: false,    // the one-time Shortlist toggle callout was started on this page load
-            spotlightDismissed: false  // ...and has been dismissed
+            spotlightDismissed: false, // ...and has been dismissed
+            themePrefSet: false,       // users.app_theme is not NULL for the logged-in user
+            prefsLoaded: false,        // the user's saved preferences were read (the preferences callout needs them)
+            prefsCalloutActive: false,    // the one-time preferences callout was started on this page load
+            prefsCalloutDismissed: false  // ...and has been dismissed
         };
 
         function loadMultiAutoJump() {
@@ -3205,6 +3213,8 @@
                 state.appTheme = previous;
                 applyTheme(previous);
                 render();
+            } else {
+                state.themePrefSet = true;
             }
         }
 
@@ -4189,6 +4199,9 @@
             try { localStorage.removeItem(THEME_CACHE_KEY); } catch (e) { /* ignore */ }
             state.votingFormatPref = null;
             state.votingModePref = null;
+            state.themePrefSet = false;
+            state.prefsLoaded = false;
+            state.prefsCalloutActive = false;
             state.votingModeSession = null;
             state.cardFormats = {};
             state.isLoggedIn = false;
@@ -7404,9 +7417,13 @@
             state.singleFreeze = null;
         }
 
+        // Folds the tools panel in / out (single and multi mode). Updated in place with the scroll position kept, so
+        // images do not reload and the page does not jump.
         function toggleSingleTools() {
             state.singleToolsOpen = !state.singleToolsOpen;
-            render();
+            const x = window.scrollX, y = window.scrollY;
+            render({ morph: true });
+            window.scrollTo({ left: x, top: y, behavior: 'instant' });
         }
 
         function clearSingleFilter() {
@@ -11515,7 +11532,7 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
                                     </svg>
                                 </button>
-                                ${state.votingMode === 'single' ? `
+                                ${state.view === 'vote' ? `
                                     <button
                                         onclick="toggleSingleTools()"
                                         class="ml-1 w-8 h-8 flex items-center justify-center rounded-lg text-base leading-none focus:outline-none transition ${singleToolsActive() ? 'bg-mauve-500 ring-2 ring-white shadow-md' : state.singleToolsOpen ? 'bg-white/40' : 'bg-white/20 hover:bg-white/30'}"
@@ -11544,6 +11561,13 @@
                                     <div class="flex items-center gap-1">
                                     ${state.brokenAvatarUrl && state.brokenAvatarUrl === state.user.avatar ? `
                                         <button onclick="showNoticeModal('avatar')" class="text-base leading-none hover:opacity-80 focus:outline-none" title="Your profile picture link has expired" aria-label="Your profile picture link has expired">⚠️</button>
+                                    ` : ''}
+                                    ${shouldShowPrefsCallout() ? `
+                                        <div data-callout="prefs" class="absolute top-full right-0 mt-2 w-56 max-w-[calc(100vw-1.5rem)] bg-mauve-700 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-[80]">
+                                            Tip: tap your name to set your app theme, voting mode and voting format.
+                                            <button onclick="dismissPrefsCallout()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
+                                            <div class="absolute bottom-full right-5 w-2 h-2 bg-mauve-700 rotate-45 -mb-1"></div>
+                                        </div>
                                     ` : ''}
                                     <button onclick="toggleUserDropdown()" class="flex items-center gap-2 cursor-pointer hover:opacity-80 focus:outline-none">
                                         <img referrerpolicy="no-referrer" src="${state.user.avatar}" alt="Avatar" class="w-7 h-7 rounded-full"  onerror="markAvatarBroken(this.getAttribute('src')); ghostAvatar(this)" />
@@ -13677,6 +13701,14 @@
             `;
         }
 
+        // Multi mode only: the page follows the just-voted tile
+        function renderAutoJumpOption() {
+            return `<label class="flex items-center gap-1.5 mt-2 text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer select-none" title="When on, the page follows the tile you just voted on if it moves">
+                <input type="checkbox" ${state.multiAutoJump ? 'checked' : ''} onchange="setMultiAutoJump(this.checked)" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
+                Auto-jump to voted image
+            </label>`;
+        }
+
         // Classic score filter (gray = not voted, then 1-5), shared by the multi view header and the single-mode tools panel
         function renderClassicScoreFilter() {
             return `<div class="flex-1 min-w-0">
@@ -13784,17 +13816,6 @@
                                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300 w-12">${imageScale}%</span>
                                 </div>
                             </div>
-
-                            <!-- Filter and Sort Controls — two-column layout -->
-                            <div class="mt-3 flex gap-4 items-start">
-                                <!-- Left: Filter -->
-                                ${isShortlist ? renderShortlistMultiFilter() : renderClassicScoreFilter()}
-                                <!-- Right: Sort -->
-                                ${renderVotingSortSelect(`<label class="flex items-center gap-1.5 mt-2 text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer select-none" title="When on, the page follows the tile you just voted on if it moves">
-                                        <input type="checkbox" ${state.multiAutoJump ? 'checked' : ''} onchange="setMultiAutoJump(this.checked)" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
-                                        Auto-jump to voted image
-                                    </label>`)}
-                            </div>
                         </div>
 
                         <!-- Image grid with flex-wrap layout -->
@@ -13880,9 +13901,8 @@
                                         const tile = renderTile(image, idx, false);
                                         // Prank: a mirrored copy right after the tile that was just interacted with
                                         if (!(state.prank && state.prank.kind === 'multi' && String(state.prank.imageId) === String(image.id))) return tile;
-                                        // The fake copies the image it mirrors, including that image's score / tick state
-                                        const mirrored = state.shuffledImages.find(img => String(img.id) === String(state.prank.mirrorId)) || image;
-                                        return tile + renderTile(mirrored, idx, true);
+                                        // The fake copies the tile just interacted with, including its score / tick state
+                                        return tile + renderTile(image, idx, true);
                                     }).join('');
                                 })()}
                             </div>
@@ -14084,13 +14104,14 @@
         // Single-mode sort / filter tools, folded below the app bar (🛠️ next to the voting mode switch).
         // The filter circles and the sort select are the same pieces the multi view uses; the state is shared.
         function renderSingleToolsPanel() {
-            if (state.view !== 'vote' || state.votingMode !== 'single' || !state.singleToolsOpen) return '';
+            if (state.view !== 'vote' || !state.singleToolsOpen) return '';
+            const isMulti = state.votingMode === 'multi';
             return `
-                <div class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm" data-tools-panel="1">
+                <div class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm" data-tools-panel="1" data-morph-key="tools-panel">
                     <div class="max-w-4xl mx-auto px-3 py-3">
                         <div class="flex gap-4 items-start">
                             ${isShortlistVoting() ? renderShortlistMultiFilter() : renderClassicScoreFilter()}
-                            ${renderVotingSortSelect()}
+                            ${renderVotingSortSelect(isMulti ? renderAutoJumpOption() : '')}
                         </div>
                         <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Tap the gray circle to hide images you have already voted on and focus on the rest.</p>
                     </div>
@@ -14145,9 +14166,9 @@
             const realImage = workingSet[state.currentImageIndex];
             // The mirrored prank copy must look unvoted: no score / shortlist tag and neutral controls (real state is never touched)
             const onPrankCopy = hasSinglePrank();
-            // The fake shows a mirrored copy of a random image (see startPrank); it never touches that image's state
+            // The fake is a mirrored copy of the image just voted on (the screen already sits on the next image underneath)
             const currentImage = onPrankCopy
-                ? (state.shuffledImages.find(img => String(img.id) === String(state.prank.mirrorId)) || realImage)
+                ? (state.shuffledImages.find(img => String(img.id) === String(state.prank.imageId)) || realImage)
                 : realImage;
             const currentVote = onPrankCopy ? undefined : isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
             const shortlistStatus = isShortlist ? (onPrankCopy ? 'undecided' : getShortlistStatus(currentImage.id)) : null;
@@ -14343,18 +14364,25 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
-                                ${renderAutoConvertedSwitch() ? `<div class="flex items-center justify-center flex-wrap">${renderAutoConvertedSwitch()}</div>` : ''}
+                                ${renderResultsOptionsHandle()}
+                                ${state.resultsOptionsOpen ? `
+                                    <div class="flex flex-col items-center justify-center gap-2 w-full">
+                                        ${renderAutoConvertedSwitch() ? `<div class="flex items-center justify-center flex-wrap">${renderAutoConvertedSwitch()}</div>` : ''}
+                                        <div class="flex items-center justify-center flex-wrap">
+                                <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
+                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
+                                </button>
+                                        </div>
+                                    </div>
+                                ` : ''}
                                 <div class="flex flex-col items-center gap-1">
                                     <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
                                         <div class="flex items-center gap-1.5">
                                             <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
                                             ${renderResultsFormatToggle()}
                                         </div>
-                                <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
-                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
-                                </button>
                                     </div>
-                                    <p class="text-xs text-gray-500 text-center">Switch between ⭐ Classic (1-5 scores) and 🔖 Shortlist (the images people picked).</p>
+                                    <p class="text-xs text-gray-500 text-center">Switch between ⭐ Classic (1-5 scores) and 🔖 Shortlist (Yes/No).</p>
                                 </div>
                                 ${renderGlobalFilters()}
                                 ${isUserFilterActive() || isImageFilterActive() ? `
@@ -15694,9 +15722,10 @@
             (imgA.breakdown || []).forEach(v => {
                 if (v.isBlocked || v.isBanned) return;
                 if (filterIds !== null && !filterIds.has(v.userId)) return;
-                aVoteMap[v.userId] = { score: v.score, username: v.username, avatar: v.avatar, isCurrentUser: v.isCurrentUser };
+                aVoteMap[v.userId] = { score: v.score, username: v.username, avatar: v.avatar, isCurrentUser: v.isCurrentUser, autoConverted: !!v.autoConverted };
             });
             const bVoteMap = getClassicScoreMap(imgB, filterIds);
+            const bAuto = new Set((imgB.breakdown || []).filter(v => v.autoConverted).map(v => v.userId));
 
             const sharedIds = Object.keys(aVoteMap).filter(id => bVoteMap[id] !== undefined);
 
@@ -15729,7 +15758,9 @@
                     avatar: aVoteMap[id].avatar,
                     isCurrentUser: aVoteMap[id].isCurrentUser,
                     scoreA: aVoteMap[id].score,
-                    scoreB: bVoteMap[id]
+                    scoreB: bVoteMap[id],
+                    autoA: aVoteMap[id].autoConverted,
+                    autoB: bAuto.has(id)
                 };
                 const relation = classifyScorePair(voter.scoreA, voter.scoreB);
                 (relation === 'correlated' ? correlated : relation === 'inverse' ? inverse : indifferent).push(voter);
@@ -15786,7 +15817,12 @@
                                         ${g.voters.map(v => `
                                             <div class="flex items-center gap-2 px-2 py-1.5 ${v.isCurrentUser ? 'bg-blue-50' : 'bg-white'}">
                                                 <img referrerpolicy="no-referrer" src="${v.avatar}" alt="${v.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation();viewUserProfile('${v.userId}');"  onerror="ghostAvatar(this)" />
-                                                <span class="text-sm text-gray-700 flex-1 truncate cursor-pointer hover:text-mauve-600" onclick="event.stopPropagation();viewUserProfile('${v.userId}');">${v.username}${v.isCurrentUser ? ' (You)' : ''}</span>
+                                                <span class="flex items-center min-w-0 flex-1">
+                                                    <span class="text-sm text-gray-700 truncate min-w-0 cursor-pointer hover:text-mauve-600" onclick="event.stopPropagation();viewUserProfile('${v.userId}');">${v.username}${v.isCurrentUser ? ' (You)' : ''}</span>${(v.autoA || v.autoB) ? renderAutoMarker(AUTO_LABEL_CLASSIC) : ''}
+                                                </span>
+                                                ${[[v.autoA, v.scoreA], [v.autoB, v.scoreB]].filter(([auto]) => auto).map(([, score]) => score === SHORTLISTED_AS_SCORE
+                                                    ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Auto-converted: shortlisted">✓</span>`
+                                                    : `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(1)};" title="Auto-converted: not shortlisted">✗</span>`).join('')}
                                             </div>
                                         `).join('')}
                                     </div>
@@ -15828,6 +15864,7 @@
                             </div>
                         </div>
                         <div class="overflow-y-auto flex-1 p-4">
+                            ${[...correlated, ...indifferent, ...inverse].some(v => v.autoA || v.autoB) ? renderAutoLabel(AUTO_LABEL_CLASSIC) : ''}
                             ${renderSection(correlated,  'Correlated',  'same side on both images',  C_COLOR)}
                             ${renderSection(indifferent, 'Indifferent', 'one score is neutral (3)', I_COLOR)}
                             ${renderSection(inverse,     'Inverse',     'opposite sides',            V_COLOR)}
@@ -15932,6 +15969,7 @@
                                 </div>
                             </div>
 
+                            ${Object.values(votesByScore).some(list => list.some(v => v.autoConverted)) ? renderAutoLabel(AUTO_LABEL_CLASSIC) : ''}
                             <div class="space-y-3">
                                 ${[5, 4, 3, 2, 1].map(score => `
                                     <div>
@@ -15949,12 +15987,14 @@
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
                                                         <img referrerpolicy="no-referrer" src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''} cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');"  onerror="ghostAvatar(this)" />
-                                                        <span class="text-sm flex-1 truncate cursor-pointer ${
+                                                        <span class="flex items-center min-w-0 flex-1">
+                                                        <span class="text-sm truncate min-w-0 cursor-pointer ${
                                                             vote.isBanned ? 'line-through text-red-600' :
                                                             vote.isBlocked ? 'line-through text-gray-700' :
                                                             'text-gray-700 hover:text-mauve-600'
                                                         }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBanned ? ' (BANNED)' : ''}
+                                                        </span>${vote.autoConverted ? renderAutoMarker(AUTO_LABEL_CLASSIC) : ''}
                                                         </span>
                                                         ${vote.autoConverted ? (vote.score === SHORTLISTED_AS_SCORE
                                                             ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Auto-converted: shortlisted">✓</span>`
@@ -16941,10 +16981,10 @@
             return `
                 <div class="relative">
                     ${toggle}
-                    <div class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
+                    <div data-callout="spotlight" class="absolute bottom-full left-0 mb-2 w-44 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-20">
                         New: tap here to try Shortlist voting
                         <button onclick="dismissSpotlight()" class="absolute top-1 right-1.5 text-white/80 hover:text-white leading-none" title="Dismiss" aria-label="Dismiss">✕</button>
-                        <div class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
+                        <div data-callout-arrow class="absolute top-full left-4 w-2 h-2 bg-mauve-600 rotate-45 -mt-1"></div>
                     </div>
                 </div>
             `;
@@ -16992,6 +17032,44 @@
             return true;
         }
 
+        // ---------- One-time callout on the user menu button (saved preferences) ----------
+        // Independent of the spotlight above: neither suppresses, delays or marks the other as seen. Seen is stored the
+        // moment it is first drawn; the X hides it for this page view; it is also hidden (not marked) while the menu is open.
+        function shouldShowPrefsCallout() {
+            if (!state.isLoggedIn || !state.user || state.view !== 'home' || state.prefsCalloutDismissed || !state.prefsLoaded) return false;
+            if (state.showUserDropdown) return false;
+            if (state.themePrefSet && state.votingModePref !== null && state.votingFormatPref !== null) return false;
+            if (state.prefsCalloutActive) return true;
+            const storageKey = `peony_prefs_callout_seen_${state.user.id}`;
+            try {
+                if (localStorage.getItem(storageKey)) return false;
+                localStorage.setItem(storageKey, '1');
+            } catch (e) {
+                return false;   // cannot remember it, so do not risk showing it every visit
+            }
+            state.prefsCalloutActive = true;
+            return true;
+        }
+
+        function dismissPrefsCallout() {
+            state.prefsCalloutDismissed = true;
+            render();
+        }
+
+        // If the spotlight bubble would collide with the preferences bubble, flip it below its button (still visible, still pointing at it)
+        function layoutCallouts() {
+            const prefs = document.querySelector('[data-callout="prefs"]');
+            const spot = document.querySelector('[data-callout="spotlight"]');
+            if (!prefs || !spot) return;
+            const a = prefs.getBoundingClientRect(), b = spot.getBoundingClientRect();
+            if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+                spot.classList.remove('bottom-full', 'mb-2');
+                spot.classList.add('top-full', 'mt-2');
+                const arrow = spot.querySelector('[data-callout-arrow]');
+                if (arrow) arrow.classList.remove('top-full', '-mt-1'), arrow.classList.add('bottom-full', '-mb-1');
+            }
+        }
+
         function dismissSpotlight() {
             state.spotlightDismissed = true;
             render();
@@ -17003,7 +17081,7 @@
         function shouldShowModeCallout() {
             if (!state.user || state.view !== 'vote' || state.modeCalloutDismissed || state.votingModePref !== null) return false;
             // Hidden (not marked seen) while the single-mode tools panel is open, so the two never overlap
-            if (state.votingMode === 'single' && state.singleToolsOpen) return false;
+            if (state.singleToolsOpen) return false;
             if (state.modeCalloutActive) return true;
             const storageKey = `peony_mode_callout_seen_${state.user.id}`;
             try {
@@ -17745,10 +17823,7 @@
         function startPrank(kind, imageId) {
             prankSerial++;
             // spawnedAt lets the dismiss listener ignore the very event that created the fake (event.timeStamp <= spawnedAt)
-            // The fake mirrors a RANDOM image of the whole voting (any image, possibly the current one), not the one just voted
-            const pool = state.shuffledImages;
-            const mirrorId = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)].id : imageId;
-            state.prank = { kind, imageId, mirrorId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
+            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
         }
 
         // Any click or tap inside the voting card (image area, vote / Skip / Shortlist buttons, progress bar and panel,
@@ -18442,6 +18517,33 @@
                 if (state.selectedVoterUserId && !state.contestVoters.some(v => v.userId === state.selectedVoterUserId)) state.selectedVoterUserId = null;
             }
             render();
+        }
+
+        // ---------- Foldable results options (auto-converted switch + scoring formula) ----------
+        function loadResultsOptionsOpen() {
+            try { return localStorage.getItem(RESULTS_OPTIONS_KEY) === '1'; } catch (e) { return false; }
+        }
+
+        function toggleResultsOptions() {
+            state.resultsOptionsOpen = !state.resultsOptionsOpen;
+            try { localStorage.setItem(RESULTS_OPTIONS_KEY, state.resultsOptionsOpen ? '1' : '0'); } catch (e) { /* lasts for this page view */ }
+            render();
+        }
+
+        // Something inside the folded section differs from its default: the switch is off (while it is shown) or the formula changed (Classic only: the formula is not applied in Shortlist)
+        function hasNonDefaultResultsOptions() {
+            return (getAutoConvertedUserCount() > 0 && !state.includeAutoConverted) || (!isShortlistFormat() && state.scoringFormula !== DEFAULT_SCORING_FORMULA);
+        }
+
+        function renderResultsOptionsHandle() {
+            const open = state.resultsOptionsOpen;
+            const active = hasNonDefaultResultsOptions();
+            return `
+                <button onclick="toggleResultsOptions()" aria-expanded="${open}" title="${active ? 'Options (a non-default option is set)' : 'Options'}"
+                    class="px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${active ? 'bg-mauve-700 text-white ring-2 ring-mauve-300 shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}">
+                    Options <span class="inline-block transition-transform ${open ? 'rotate-180' : ''}">▾</span>
+                </button>
+            `;
         }
 
         // Compact "Include auto-converted (+N)" switch for the results page (hidden when nothing could be converted)
@@ -19355,6 +19457,20 @@
             `;
         }
 
+        // ---------- Auto-converted marker (🛸) and explanatory label in the breakdown / pairs modals ----------
+        const AUTO_LABEL_CLASSIC = '🛸 Auto-converted from shortlists: shortlisted images count as 4, all others as 2. ✓ = shortlisted, ✗ = not shortlisted.';
+        const AUTO_LABEL_SHORTLIST = '🛸 Auto-converted from classic votes: scores 4-5 count as shortlisted, scores 1-3 as not shortlisted. The colored circle shows the score they gave.';
+
+        // Directly after the username; never shrinks, so the name truncates first
+        function renderAutoMarker(label) {
+            return `<span class="ml-1 text-sm leading-none flex-shrink-0" title="${label}">🛸</span>`;
+        }
+
+        // One small muted line between the top stats and the voter lists; callers only draw it when a converted row is visible
+        function renderAutoLabel(label) {
+            return `<p class="text-xs text-gray-500 mb-3 leading-snug">${label}</p>`;
+        }
+
         // Marker for one user on one image in the shortlist breakdown modals: a classic-converted user shows their actual
         // score in a colored circle (with the image's score); a real shortlister shows a green check when the image is
         // in their set and a red cross when it is not. Nothing is drawn for a converted user who never scored the image.
@@ -19393,7 +19509,9 @@
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-7 h-7 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
-                        <span class="text-sm flex-1 min-w-0 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
+                        <span class="flex items-center min-w-0 flex-1">
+                            <span class="text-sm truncate min-w-0 cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>${(voter.scoreByImage.has(imageAId) || voter.scoreByImage.has(imageBId)) ? renderAutoMarker(AUTO_LABEL_SHORTLIST) : ''}
+                        </span>
                         ${renderShortlistMarker(voter, imageAId, contestA, 'w-5 h-5 text-[10px]')}${renderShortlistMarker(voter, imageBId, contestB, 'w-5 h-5 text-[10px]')}
                     </div>
                 `;
@@ -19429,6 +19547,7 @@
                             </div>
                         </div>
                         <div class="overflow-y-auto overflow-x-hidden flex-1 p-4">
+                            ${pool.some(v => v.scoreByImage.has(imageAId) || v.scoreByImage.has(imageBId)) ? renderAutoLabel(AUTO_LABEL_SHORTLIST) : ''}
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div class="flex flex-col gap-4 min-w-0">
                                     ${renderSection('Both', getScoreColor(5), columns.both)}
@@ -19463,10 +19582,13 @@
             const renderVoter = (voter, isShortlisted) => {
                 const isCurrentUser = state.user && voter.userId === state.user.id;
                 const marker = renderShortlistMarker(voter, imageId, view.imageContest.get(imageId));
+                const isAuto = voter.scoreByImage.has(imageId);
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
-                        <span class="text-sm flex-1 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
+                        <span class="flex items-center min-w-0 flex-1">
+                            <span class="text-sm truncate min-w-0 cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>${isAuto ? renderAutoMarker(AUTO_LABEL_SHORTLIST) : ''}
+                        </span>
                         ${marker}
                     </div>
                 `;
@@ -19511,6 +19633,7 @@
                                 </div>
                             </div>
 
+                            ${[...shortlisters, ...notShortlisted].some(v => v.scoreByImage.has(imageId)) ? renderAutoLabel(AUTO_LABEL_SHORTLIST) : ''}
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 ${renderColumn('Shortlisted', yesColor, shortlisters, true)}
                                 ${renderColumn('Not Shortlisted', noColor, notShortlisted, false)}
@@ -19558,7 +19681,9 @@
             if (node.nodeType !== 1) return null;
             if (node.hasAttribute('data-fake-tile')) return 'fake';
             const id = node.getAttribute('data-tile-id');
-            return id !== null ? 't' + id : null;
+            if (id !== null) return 't' + id;
+            const key = node.getAttribute('data-morph-key');
+            return key !== null ? 'k' + key : null;
         }
 
         function morphAttributes(oldEl, newEl) {
@@ -19669,6 +19794,7 @@
                 app.innerHTML = html;
             }
 
+            layoutCallouts();
             document.documentElement.classList.toggle('no-scroll-anchor', state.view === 'vote' && state.votingMode === 'multi' && !state.multiAutoJump);
 
             // Restore scroll positions
@@ -19758,6 +19884,7 @@
         window.setMultiModeSort = setMultiModeSort;
         window.setMultiAutoJump = setMultiAutoJump;
         window.setIncludeAutoConverted = setIncludeAutoConverted;
+        window.toggleResultsOptions = toggleResultsOptions;
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
@@ -19949,6 +20076,7 @@
         window.viewUserShortlistInTotal = viewUserShortlistInTotal;
         window.setPairsShowMode = setPairsShowMode;
         window.dismissSpotlight = dismissSpotlight;
+        window.dismissPrefsCallout = dismissPrefsCallout;
         window.openResultsFromCard = openResultsFromCard;
         window.dismissModeCallout = dismissModeCallout;
         window.showNoticeModal = showNoticeModal;
@@ -20076,6 +20204,8 @@
                         const savedTheme = normalizeTheme(userData.app_theme);
                         state.appTheme = savedTheme;
                         applyTheme(savedTheme);
+                        state.themePrefSet = userData.app_theme !== null && userData.app_theme !== undefined;
+                        state.prefsLoaded = true;
                         state.votingFormatPref = (userData.voting_format === 'classic' || userData.voting_format === 'shortlist') ? userData.voting_format : null;
                         state.votingModePref = (userData.voting_mode === 'single' || userData.voting_mode === 'multi') ? userData.voting_mode : null;
                         state.votingMode = getDefaultVotingMode();
