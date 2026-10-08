@@ -1179,6 +1179,7 @@
             view: 'home',
             viewingUserId: null, // User ID being viewed in profile
             showUserProfileModal: false, // Show user profile modal
+            adminPrefOpen: {},  // Admin dashboard Preferences: 'theme:dark' -> true while that option's user list is expanded
             adminUserListScroll: 0, // Saved scroll position of admin dashboard user list
             globalSimilarityResults: {}, // Cache for global similarity results per userId ('loading' | {results} | {tooFewVotes} | {error})
             renameModal: null, // { itemId, itemType, name } when rename modal is open
@@ -8913,7 +8914,11 @@
                     id: user.id,
                     username: user.username,
                     avatar: user.avatar,
-                    isBanned: user.is_banned || false
+                    isBanned: user.is_banned || false,
+                    // saved preferences (NULL / unrecognised = not selected), for the dashboard's Preferences section
+                    theme: normalizePref(user.app_theme === 'hell' ? 'hot' : user.app_theme, ['light', 'dark', 'hot', 'cold']),
+                    mode: normalizePref(user.voting_mode, ['single', 'multi']),
+                    format: normalizePref(user.voting_format, ['classic', 'shortlist'])
                 }));
 
                 // Fetch admin statistics from database with aggressive cache-busting
@@ -8951,23 +8956,7 @@
                     console.error('Failed to count shortlists:', e);
                 }
 
-                // Users per saved preference; NULL / unrecognised = "Not selected"
-                const tally = (field, keys, normalize = v => v) => {
-                    const counts = { none: 0 };
-                    keys.forEach(k => { counts[k] = 0; });
-                    users.forEach(u => {
-                        const v = normalize(u[field]);
-                        if (keys.includes(v)) counts[v]++; else counts.none++;
-                    });
-                    return counts;
-                };
-                const prefStats = {
-                    theme: tally('app_theme', ['light', 'dark', 'hot', 'cold'], v => v === 'hell' ? 'hot' : v),
-                    mode: tally('voting_mode', ['single', 'multi']),
-                    format: tally('voting_format', ['classic', 'shortlist'])
-                };
-
-                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists, totalShortlistSets, prefStats };
+                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists, totalShortlistSets };
 
                 state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
@@ -8978,6 +8967,44 @@
                 state.showAdminDashboard = false;
                 showAlert('Failed to load admin dashboard: ' + error.message, '❌');
             }
+        }
+
+        // app_settings.hide_admin_vote_tools: a missing row counts as true. When true the admin edit / block vote controls are hidden.
+        function hideAdminVoteTools() {
+            return state.appSettings.hide_admin_vote_tools !== false;
+        }
+
+        // The row is created by the owner via SQL and the table only allows admin UPDATEs: save by PATCH, never by insert
+        async function toggleHideAdminVoteTools() {
+            const newValue = !hideAdminVoteTools();
+            try {
+                const response = await fetchFromSupabase(`/rest/v1/app_settings?setting_name=eq.hide_admin_vote_tools`, {
+                    method: 'PATCH',
+                    headers: { 'Prefer': 'return=representation' },
+                    body: JSON.stringify({ value: newValue })
+                });
+                if (!response.ok) throw new Error('Failed to update setting');
+                const updated = await response.json();
+                if (!Array.isArray(updated) || updated.length === 0) {
+                    throw new Error('The hide_admin_vote_tools row does not exist yet - create it in the database first');
+                }
+                state.appSettings.hide_admin_vote_tools = newValue;
+                showToast(`✅ Admin vote tools ${newValue ? 'hidden' : 'shown'}`);
+                render();
+            } catch (error) {
+                console.error('Error updating hide_admin_vote_tools:', error);
+                showToast('Failed to update setting: ' + error.message, 'error');
+            }
+        }
+
+        function normalizePref(value, allowed) {
+            return allowed.includes(value) ? value : 'none';
+        }
+
+        // Preferences section: which option's user list is open (collapsed by default)
+        function toggleAdminPref(key) {
+            state.adminPrefOpen[key] = !state.adminPrefOpen[key];
+            render();
         }
 
         function closeAdminDashboard() {
@@ -15896,7 +15923,7 @@
                                                         ${vote.autoConverted ? (vote.score === SHORTLISTED_AS_SCORE
                                                             ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Auto-converted: shortlisted">✓</span>`
                                                             : `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(1)};" title="Auto-converted: not shortlisted">✗</span>`) : ''}
-                                                        ${isAdmin && !vote.autoConverted ? `
+                                                        ${isAdmin && !vote.autoConverted && !hideAdminVoteTools() ? `
                                                             <button
                                                                 onclick="adminEditVote('${vote.userId}', ${item.id}, ${score})"
                                                                 class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
@@ -15959,19 +15986,39 @@
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalShortlists = state.adminStats.totalShortlists ?? 0;
             const totalShortlistSets = state.adminStats.totalShortlistSets ?? 0;
-            const prefStats = state.adminStats.prefStats;
-            const prefGroup = (title, counts, rows) => `
+            // Preferences: one group per setting, each option with its user count; click expands the list of those users
+            const prefGroup = (title, field, rows) => `
                 <div class="bg-white rounded-lg p-3">
-                    <div class="text-xs font-bold text-gray-700 mb-1">${title}</div>
-                    ${rows.map(([key, label]) => `<div class="flex justify-between text-xs text-gray-600"><span>${label}</span><span class="font-semibold">${counts[key] ?? 0}</span></div>`).join('')}
-                    <div class="flex justify-between text-xs text-gray-500 border-t border-gray-200 mt-1 pt-1"><span>Not selected</span><span class="font-semibold">${counts.none ?? 0}</span></div>
+                    <div class="text-sm font-bold text-gray-700 mb-2">${title}</div>
+                    <div class="space-y-1">
+                        ${[...rows, ['none', 'Not selected']].map(([key, label]) => {
+                            const users = state.allUsers.filter(u => u[field] === key);
+                            const openKey = `${field}:${key}`;
+                            const open = !!state.adminPrefOpen[openKey];
+                            return `
+                                <div>
+                                    <button onclick="toggleAdminPref('${openKey}')" class="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm text-gray-700 transition" aria-expanded="${open}">
+                                        <span class="flex items-center gap-1.5"><svg class="w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"/></svg>${label}</span>
+                                        <span class="font-semibold">${users.length}</span>
+                                    </button>
+                                    ${open ? `
+                                        <div class="mt-1 ml-2 max-h-48 overflow-y-auto space-y-1 pr-1">
+                                            ${users.length === 0 ? '<p class="text-xs text-gray-500 italic px-2 py-1">No users</p>' : [...users].sort((a, b) => a.username.localeCompare(b.username)).map(u => `
+                                                <div class="flex items-center gap-2 px-2 py-1 bg-gray-50 rounded-lg">
+                                                    <img referrerpolicy="no-referrer" src="${u.avatar}" alt="${u.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer" onclick="event.stopPropagation(); viewUserProfile('${u.id}');" onerror="ghostAvatar(this)" />
+                                                    <span class="text-sm text-gray-700 truncate">${u.username}</span>
+                                                </div>`).join('')}
+                                        </div>` : ''}
+                                </div>`;
+                        }).join('')}
+                    </div>
                 </div>`;
             const totalBannedUsers = state.bannedUsers.length;
             const totalImages = state.adminStats.totalImages ?? state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeAdminDashboard()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-content" data-preserve-scroll="admin-dashboard" onclick="event.stopPropagation()">
                         <div class="p-6">
                             <div class="flex justify-between items-center mb-4">
                                 <h3 class="text-2xl font-bold text-gray-800">Admin Dashboard</h3>
@@ -16023,13 +16070,15 @@
                                             <div class="text-xs text-gray-600">Total Images</div>
                                         </div>
                                     </div>
-                                    ${prefStats ? `
-                                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                                            ${prefGroup('🎨 App Theme', prefStats.theme, [['light', 'Light'], ['dark', 'Dark'], ['hot', 'Hot'], ['cold', 'Cold']])}
-                                            ${prefGroup('🖼️ Voting Mode', prefStats.mode, [['single', 'Single'], ['multi', 'Multi']])}
-                                            ${prefGroup('🗳️ Voting Format', prefStats.format, [['classic', 'Classic'], ['shortlist', 'Shortlist']])}
-                                        </div>
-                                    ` : ''}
+                                </div>
+
+                                <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
+                                    <h4 class="font-bold text-gray-800 mb-3">Preferences</h4>
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        ${prefGroup('🎨 App Theme', 'theme', [['light', 'Light'], ['dark', 'Dark'], ['hot', 'Hot'], ['cold', 'Cold']])}
+                                        ${prefGroup('🖼️ Voting Mode', 'mode', [['single', 'Single'], ['multi', 'Multi']])}
+                                        ${prefGroup('🗳️ Voting Format', 'format', [['classic', 'Classic'], ['shortlist', 'Shortlist']])}
+                                    </div>
                                 </div>
 
                                 <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
@@ -16133,6 +16182,22 @@
                                     <div
                                         class="toggle-switch ${showPinIcons ? 'active' : ''}"
                                         onclick="toggleAppSetting('show_pin_icons')"
+                                    >
+                                        <div class="toggle-slider"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Hide admin vote tools Toggle -->
+                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-gray-800">Hide admin edit/block vote tools</h4>
+                                        <p class="text-sm text-gray-600 mt-1">
+                                            Hides the edit-vote and block-vote buttons everywhere. Blocked votes stay excluded from results.
+                                        </p>
+                                    </div>
+                                    <div
+                                        class="toggle-switch ${hideAdminVoteTools() ? 'active' : ''}"
+                                        onclick="toggleHideAdminVoteTools()"
                                     >
                                         <div class="toggle-slider"></div>
                                     </div>
@@ -19666,6 +19731,8 @@
         window.showAppSettings = showAppSettings;
         window.closeAppSettings = closeAppSettings;
         window.toggleAppSetting = toggleAppSetting;
+        window.toggleHideAdminVoteTools = toggleHideAdminVoteTools;
+        window.toggleAdminPref = toggleAdminPref;
         window.showActivityLogs = showActivityLogs;
         window.closeActivityLogs = closeActivityLogs;
         window.setActivityStartDate = setActivityStartDate;
