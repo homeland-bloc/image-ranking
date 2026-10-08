@@ -956,6 +956,38 @@
         }
         body.cold-theme .cold-all-more:hover { background-image: linear-gradient(to right, #d3ebde, #bfe0cf) !important; }
 
+        /* Home folders in Dark and Hot: same hues as the default (red Pinned, green All Votings) but about 30% darker and
+           less saturated, still left-to-right gradients. White on the headers: red 6.9:1 to 9.4:1, green 5.3:1 to 7.7:1.
+           (Hot also carries dark-theme; Light and Cold are untouched.) */
+        body.dark-theme .cold-pinned-header {
+            background-image: linear-gradient(to right, #9a3b3b, #7d2a2c) !important;
+            box-shadow: 0 4px 10px rgba(125, 42, 44, 0.35) !important;
+        }
+        body.dark-theme .cold-all-header {
+            background-image: linear-gradient(to right, #2b7a50, #1e5e3b) !important;
+            box-shadow: 0 4px 10px rgba(30, 94, 59, 0.35) !important;
+        }
+        body.dark-theme .cold-pinned-header, body.dark-theme .cold-pinned-header .text-white,
+        body.dark-theme .cold-all-header, body.dark-theme .cold-all-header .text-white { color: #ffffff !important; }
+        /* Search / create buttons on the green header: dark green fill, white label */
+        body.dark-theme button.cold-all-btn.cold-all-btn {
+            background-color: #123d28 !important;
+            color: #ffffff !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
+        }
+        body.dark-theme button.cold-all-btn.cold-all-btn:hover { background-color: #1a5236 !important; }
+        /* "Load more votings": dark tinted gradient pills with a light label (>= 7:1) */
+        body.dark-theme .cold-pinned-more.cold-pinned-more {
+            background-image: linear-gradient(to right, #3a1a1d, #2e1417) !important;
+            color: #f1b9bc !important;
+        }
+        body.dark-theme .cold-pinned-more.cold-pinned-more:hover { background-image: linear-gradient(to right, #4a2024, #3a1a1d) !important; }
+        body.dark-theme .cold-all-more.cold-all-more {
+            background-image: linear-gradient(to right, #12301f, #0e261a) !important;
+            color: #a9dcc0 !important;
+        }
+        body.dark-theme .cold-all-more.cold-all-more:hover { background-image: linear-gradient(to right, #184029, #12301f) !important; }
+
         /* Ice-tinted cards, panels and borders */
         body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
             background-color: #f8fbfe !important;
@@ -1005,6 +1037,24 @@
         body.hot-theme .bg-white:not(.rounded-full) {
             background-color: #1a0000 !important;
         }
+
+        /* Score sparkles: a short burst from the pressed button / tile (see emitSparkles) */
+        .sparkle-burst { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 9990; }
+        .sparkle-burst > span {
+            position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%;
+            background: var(--sparkle-color); box-shadow: 0 0 6px 1px var(--sparkle-color);
+            pointer-events: none; opacity: 0;
+            animation: sparkle-fly 500ms ease-out forwards;
+        }
+        .sparkle-burst > span:nth-child(odd) { border-radius: 1px; transform: rotate(45deg); }
+        @keyframes sparkle-fly {
+            0% { opacity: 1; transform: translate(0, 0) scale(1); }
+            100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.2); }
+        }
+        @media (prefers-reduced-motion: reduce) { .sparkle-burst { display: none; } }
+
+        /* Multi-mode voting with "Auto-jump" OFF: no browser scroll anchoring either */
+        html.no-scroll-anchor, html.no-scroll-anchor body { overflow-anchor: none; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1161,6 +1211,7 @@
             view: 'home',
             viewingUserId: null, // User ID being viewed in profile
             showUserProfileModal: false, // Show user profile modal
+            adminPrefOpen: {},  // Admin dashboard Preferences: 'theme:dark' -> true while that option's user list is expanded
             adminUserListScroll: 0, // Saved scroll position of admin dashboard user list
             globalSimilarityResults: {}, // Cache for global similarity results per userId ('loading' | {results} | {tooFewVotes} | {error})
             renameModal: null, // { itemId, itemType, name } when rename modal is open
@@ -1196,6 +1247,7 @@
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (20-200%)
             multiModeFilter: [],  // Filter for multi-mode voting: array of scores (1-5) or 'non-voted'
             multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
+            multiAutoJump: loadMultiAutoJump(),  // multi mode: the page follows the just-voted tile (default ON, persisted in localStorage)
             showUnifiedCreateModal: false,  // Show unified creation modal
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
@@ -1264,16 +1316,25 @@
             shortlistFilter: [],       // multi-mode filter buckets: 'undecided' | 'shortlisted' | 'skipped'
             voteHold: null,            // { kind, prank, imageId, opacity, timer } while the single-mode tint is held before advancing
             prank: null,               // { kind: 'single' | 'multi', imageId, fakeId } - purely visual mirrored copy (ItsADifferentConcept)
-            progressPanelIndex: null,  // single mode, 20+ images: index of the grouped progress segment whose per-image panel is open
+            progressPath: [],          // single mode progress bar: opened segment ranges per level, [{ start, end }, ...] (indexes into the working set)
+            singleToolsOpen: false,    // single mode: the sort / filter tools panel below the app bar is unfolded
+            singleFreeze: null,        // single mode: the working set frozen while a vote settles, so the voted image stays on screen
             resultsFormat: 'classic',  // 'classic' | 'shortlist' — results page voting-format switch
             resultsFormatKey: null,    // scope key the shortlist switch was chosen for (so it resets on other pages)
             shortlistData: null,       // cached shortlist results data (real rows + auto-converted votes) for the open results page
+            shortlistRows: null,       // { key, rows } real shortlists rows of the open results item (shared by the classic injection and the shortlist tabs)
+            autoConvertCache: null,    // { kind, key, synthetic, userCount, baseVoters } shortlist-to-classic synthetic votes of the open classic results
+            includeAutoConverted: true, // results switch: include auto-converted data (both directions), default ON
             noticeModal: null,         // { kind: 'auth' | 'avatar' } - informational "how to fix it" modal
             authModalDismissed: false, // once the session-expired modal was dismissed, do not show it again this page load
             brokenAvatarUrl: null,     // avatar URL that failed to load in the top bar (set from the img onerror handler)
             spotlightActive: false,    // the one-time Shortlist toggle callout was started on this page load
             spotlightDismissed: false  // ...and has been dismissed
         };
+
+        function loadMultiAutoJump() {
+            try { return localStorage.getItem('peony_multi_auto_jump') !== '0'; } catch (e) { return true; }
+        }
 
         function shuffleArray(array) {
             const newArray = [...array];
@@ -1282,6 +1343,13 @@
                 [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
             }
             return newArray;
+        }
+
+        // Draft resume order: the images still unvoted first (shuffled), then the already voted ones (shuffled)
+        function orderUnvotedFirst(images, votes) {
+            const unvoted = images.filter(img => !votes[img.id]);
+            const voted = images.filter(img => votes[img.id]);
+            return [...shuffleArray(unvoted), ...shuffleArray(voted)];
         }
 
         function formatVoterCount(voterCount, voterCountMin, voterCountMax) {
@@ -1465,6 +1533,9 @@
             try {
                 let allVotes = [];
                 const isExtract = state.currentContest.isExtract === true;
+                // Users with ANY real classic vote per contest (before the extract's image filter), for the shortlist-to-classic rule
+                const realVotePairs = new Set();
+                const noteRealVotes = votes => (Array.isArray(votes) ? votes : []).forEach(v => realVotePairs.add(`${v.user_id}|${v.contest_id}`));
 
                 if (isExtract) {
                     // For extracts, query votes from source contest(s) with pagination
@@ -1477,6 +1548,7 @@
                             `contest_id=eq.${contestId}`,
                             '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
                         );
+                        noteRealVotes(votes);
                         allVotes = Array.isArray(votes) ? votes.filter(v => extractImageIds.includes(v.image_id)) : [];
                     } else if (state.currentContest.extractSourceType === 'merger') {
                         // Query votes from all merged contests with pagination, filtering by extract image IDs
@@ -1491,6 +1563,7 @@
                             );
                             const votesArrays = await Promise.all(votesPromises);
                             const combinedVotes = votesArrays.flat();
+                            noteRealVotes(combinedVotes);
                             allVotes = combinedVotes.filter(v => extractImageIds.includes(v.image_id));
                         }
                     }
@@ -1500,6 +1573,7 @@
                         `contest_id=eq.${state.currentContest.id}`,
                         '*,voter:users!votes_user_id_fkey(username,avatar,is_banned)'
                     );
+                    noteRealVotes(allVotes);
                 }
 
                 // Check if votes response is valid
@@ -1571,6 +1645,10 @@
                         breakdown: imageScores[img.id]?.breakdown || []
                     };
                 }).sort(compareWithTieBreaking);
+
+                // Shortlist-to-classic: synthetic votes for users who only made a shortlist (never written anywhere)
+                const scope = getClassicAutoScope(state.currentContest);
+                await attachAutoConverted({ kind: 'results', key: `${isExtract ? 'extract' : 'contest'}:${state.currentContest.id}`, scope, realPairs: realVotePairs });
 
             } catch (error) {
                 console.error('Full error details:', error);
@@ -1683,6 +1761,15 @@
                 state.contestVoters = Array.from(mergedVoterMap.values()).sort((a, b) =>
                     a.username.toLowerCase().localeCompare(b.username.toLowerCase())
                 );
+
+                // Shortlist-to-classic (per contest of the merger)
+                const realVotePairs = new Set(allVotes.map(v => `${v.user_id}|${v.contest_id}`));
+                await attachAutoConverted({
+                    kind: 'merged',
+                    key: state.currentMergerId ? `merger:${state.currentMergerId}` : `merger-ad-hoc:${contestIds.join(',')}`,
+                    scope: { contestIds: [...contestIds], images: allImages.map(img => ({ id: img.id, url: img.url, contestId: img.contestId })) },
+                    realPairs: realVotePairs
+                });
 
             } catch (error) {
                 console.error('Error loading merged results:', error);
@@ -2011,12 +2098,14 @@
                             username: vote.username,
                             avatar: vote.avatar,
                             isCurrentUser: vote.isCurrentUser || false,
+                            autoConverted: false,
                             votes: [],
                             totalScore: 0,
                             totalImages: 0
                         };
                     }
 
+                    if (vote.autoConverted) voterVotes[vote.userId].autoConverted = true;
                     voterVotes[vote.userId].votes.push(vote.score);
                     voterVotes[vote.userId].totalScore += vote.score;
                     voterVotes[vote.userId].totalImages++;
@@ -5446,6 +5535,7 @@
                     Object.entries(autosaves).forEach(([imgId, score]) => {
                         state.votes[parseInt(imgId)] = score;
                     });
+                    state.shuffledImages = orderUnvotedFirst(state.shuffledImages, state.votes);
                 } else {
                     // If the user clicked "Start Voting" but autosaves exist, prompt them
                     if (hasAutosaveDraft(autosaveKey)) {
@@ -5625,7 +5715,7 @@
                 state.currentMergerId = mergerId;
                 state.mergerContestIds = merger.contestIds;
                 state.votes = {};
-                await loadMergedResults(mergerId);
+                await loadMergedResults(merger.contestIds);
                 state.view = 'mergedResults';
                 window.location.hash = `merger=${mergerId}`;
                 clearLoading();
@@ -6445,6 +6535,7 @@
                 Object.entries(autosaves).forEach(([imgId, score]) => {
                     state.votes[parseInt(imgId)] = score;
                 });
+                state.shuffledImages = orderUnvotedFirst(state.shuffledImages, state.votes);
             }
 
             // Saved voting mode preference (DB value, else the old localStorage choice), default 'single'
@@ -7205,12 +7296,138 @@
 
         // ==================== END EXTRACT SYSTEM FUNCTIONS ====================
 
+        // ==================== SINGLE-MODE WORKING SET ====================
+        // Single mode shows the filtered, sorted list (the same Sort / Filter state as multi mode); currentImageIndex is an
+        // index INTO that list. Default order = this session's shuffled order. While a vote settles the list is frozen
+        // (state.singleFreeze) so the voted image stays on screen; afterwards it is rebuilt live and the screen moves to
+        // the image that was next BEFORE the vote (or the nearest remaining one).
+        function isShortlistVoting() {
+            return state.votingFormat === 'shortlist' && !!state.shortlistSession;
+        }
+
+        function singleFilterActive() {
+            return isShortlistVoting() ? state.shortlistFilter.length > 0 : state.multiModeFilter.length > 0;
+        }
+
+        // Anything but the default order with no filter: highlights the tools button
+        function singleToolsActive() {
+            return singleFilterActive() || state.multiModeSort !== 'default';
+        }
+
+        function singleMatchesFilter(img) {
+            if (isShortlistVoting()) {
+                if (state.shortlistFilter.length === 0) return true;
+                const bucketOf = { yes: 'shortlisted', no: 'skipped', undecided: 'undecided' };
+                return state.shortlistFilter.includes(bucketOf[getShortlistStatus(img.id)]);
+            }
+            if (state.multiModeFilter.length === 0) return true;
+            const vote = state.votes[img.id];
+            return vote ? state.multiModeFilter.includes(vote) : state.multiModeFilter.includes('non-voted');
+        }
+
+        // Own score for the Highest / Lowest sort; null = not voted / undecided (always last). Shortlist: shortlisted > skipped.
+        function singleSortScore(img) {
+            if (isShortlistVoting()) {
+                const status = getShortlistStatus(img.id);
+                return status === 'yes' ? 2 : status === 'no' ? 1 : null;
+            }
+            return state.votes[img.id] || null;
+        }
+
+        function getWorkingSet() {
+            if (state.singleFreeze) return state.singleFreeze;
+            let list = state.shuffledImages;
+            if (singleFilterActive()) list = list.filter(singleMatchesFilter);
+            if (state.multiModeSort === 'highest' || state.multiModeSort === 'lowest') {
+                const dir = state.multiModeSort === 'highest' ? -1 : 1;
+                list = list.map((img, i) => ({ img, i, score: singleSortScore(img) }))
+                    .sort((a, b) => ((a.score === null) - (b.score === null)) || (a.score === null ? 0 : dir * (a.score - b.score)) || (a.i - b.i))
+                    .map(x => x.img);
+            }
+            return list;
+        }
+
+        // Index in newList of the image nearest to oldList[oldIdx]: increasing distance, forward first on a tie
+        function nearestRemainingIndex(oldList, oldIdx, newList) {
+            if (newList.length === 0) return 0;
+            const pos = new Map(newList.map((img, i) => [img.id, i]));
+            for (let d = 1; d < oldList.length; d++) {
+                for (const j of [oldIdx + d, oldIdx - d]) {
+                    const img = oldList[j];
+                    if (img && pos.has(img.id)) return pos.get(img.id);
+                }
+            }
+            const own = oldList[oldIdx];
+            return own && pos.has(own.id) ? pos.get(own.id) : 0;
+        }
+
+        // Taken BEFORE a vote is applied: the working set, the position in it and the id of the image that comes next
+        function captureAdvance() {
+            const list = getWorkingSet();
+            const idx = Math.max(0, Math.min(state.currentImageIndex, list.length - 1));
+            const next = list[idx + 1];
+            return { list, idx, nextId: next ? next.id : null };
+        }
+
+        // After the vote settled: rebuild the working set and move to the remembered next image, else stay on the voted
+        // image (last image), else the nearest remaining one
+        function goToAdvanceTarget(anchor) {
+            const list = getWorkingSet();
+            const wanted = anchor.nextId !== null ? anchor.nextId : (anchor.list[anchor.idx] ? anchor.list[anchor.idx].id : null);
+            const pos = wanted === null ? -1 : list.findIndex(img => img.id === wanted);
+            state.currentImageIndex = pos > -1 ? pos : nearestRemainingIndex(anchor.list, anchor.idx, list);
+        }
+
+        // Filter / sort changes keep the current image when it is still in the set, else move to the nearest remaining one
+        function captureSingleAnchor() {
+            if (state.view !== 'vote' || state.votingMode !== 'single') return null;
+            const list = getWorkingSet();
+            const idx = Math.max(0, Math.min(state.currentImageIndex, list.length - 1));
+            return { list, idx, id: list[idx] ? list[idx].id : null };
+        }
+
+        function restoreSingleAnchor(anchor) {
+            if (!anchor) return;
+            const list = getWorkingSet();
+            const pos = anchor.id === null ? -1 : list.findIndex(img => img.id === anchor.id);
+            state.currentImageIndex = pos > -1 ? pos : (anchor.id === null ? 0 : nearestRemainingIndex(anchor.list, anchor.idx, list));
+            state.progressPath = [];
+            state.prank = null;
+        }
+
+        function resetVotingToolsState() {
+            state.multiModeFilter = [];
+            state.shortlistFilter = [];
+            state.multiModeSort = 'default';
+            state.progressPath = [];
+            state.singleToolsOpen = false;
+            state.singleFreeze = null;
+        }
+
+        function toggleSingleTools() {
+            state.singleToolsOpen = !state.singleToolsOpen;
+            render();
+        }
+
+        function clearSingleFilter() {
+            const anchor = captureSingleAnchor();
+            state.multiModeFilter = [];
+            state.shortlistFilter = [];
+            restoreSingleAnchor(anchor);
+            render();
+        }
+
         function handleVote(score) {
             if (state.isAnimating) return;
             if (hasSinglePrank()) { resolveSinglePrank(); return; }   // a vote on the mirrored copy is discarded
 
+            const anchor = captureAdvance();
+            const currentImage = anchor.list[anchor.idx];
+            if (!currentImage) return;
+
+            emitSparkles(document.querySelector(`[data-score="${score}"]`), getScoreColor(score));
             state.isAnimating = true;
-            const currentImage = state.shuffledImages[state.currentImageIndex];
+            state.singleFreeze = anchor.list;
             state.votes[currentImage.id] = score;
             state.lastClickedImageId = currentImage.id;
             state.showTickAnimation = true;
@@ -7222,22 +7439,42 @@
             setTimeout(() => {
                 state.showTickAnimation = false;
                 state.isAnimating = false;
-                if (rollPrank()) {
-                    startPrank('single', currentImage.id);   // show a mirrored copy instead of advancing
-                } else if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                    state.currentImageIndex++;
-                }
+                state.singleFreeze = null;
+                goToAdvanceTarget(anchor);
+                if (rollPrank()) startPrank('single', currentImage.id);   // a mirrored copy is shown on the image we moved to
                 render();
             }, 500);
         }
 
+        // A shortlist vote is held for SHORTLIST_HOLD_MS before the screen moves on. Navigating during the hold finishes
+        // it first. Returns true when the finish already moved to the next image (so Next must not move once more).
+        function settleVoteHold(direction) {
+            const hold = state.voteHold;
+            if (!hold) return false;
+            cancelVoteHold();   // clears the hold and unfreezes the working set
+            const anchor = hold.anchor;
+            if (!anchor) return false;
+            if (direction === 'next') { goToAdvanceTarget(anchor); return true; }
+            // Prev / jump: park on the voted image (or the nearest remaining one) and move on from there
+            const list = getWorkingSet();
+            const own = anchor.list[anchor.idx];
+            const pos = own ? list.findIndex(img => img.id === own.id) : -1;
+            state.currentImageIndex = pos > -1 ? pos : nearestRemainingIndex(anchor.list, anchor.idx, list);
+            return false;
+        }
+
         function navigateImage(direction) {
-            cancelVoteHold();
-            if (hasSinglePrank()) state.prank = null;   // any navigation removes the mirrored copy for good
+            if (state.isAnimating) return;   // the classic vote is still settling (500ms)
+            const advanced = settleVoteHold(direction);
+            if (hasSinglePrank()) {
+                // any navigation removes the mirrored copy for good; the screen already sits on the image after the voted one
+                state.prank = null;
+                if (direction === 'next') { render(); return; }
+            }
+            if (advanced) { render(); return; }
+            const list = getWorkingSet();
             if (direction === 'next') {
-                if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                    state.currentImageIndex++;
-                }
+                if (state.currentImageIndex < list.length - 1) state.currentImageIndex++;
             } else if (direction === 'prev' && state.currentImageIndex > 0) {
                 state.currentImageIndex--;
             }
@@ -7246,16 +7483,21 @@
 
         function jumpToImage(index) {
             if (state.isAnimating) return;
-            cancelVoteHold();
+            const target = getWorkingSet()[index];   // frozen list while a shortlist vote is held
+            settleVoteHold('jump');
             if (hasSinglePrank()) state.prank = null;
-            state.currentImageIndex = index;
-            state.progressPanelIndex = null;
+            const list = getWorkingSet();
+            const pos = target ? list.findIndex(img => img.id === target.id) : -1;
+            state.currentImageIndex = pos > -1 ? pos : Math.max(0, Math.min(index, list.length - 1));
+            state.progressPath = [];
             render();
         }
 
-        // Grouped progress segment (20+ images): open / close the per-image panel under the bar instead of jumping
-        function toggleProgressPanel(segmentIndex) {
-            state.progressPanelIndex = state.progressPanelIndex === segmentIndex ? null : segmentIndex;
+        // Grouped progress segment (more than one image): open / close the next level down under the bar instead of jumping
+        function toggleProgressRange(level, start, end) {
+            const open = state.progressPath[level];
+            const keep = state.progressPath.slice(0, level);
+            state.progressPath = open && open.start === start && open.end === end ? keep : keep.concat([{ start, end }]);
             render();
         }
 
@@ -7266,7 +7508,7 @@
             } else {
                 state.selectedScore = score;
             }
-            render();
+            render({ morph: true });
         }
 
         function voteImageMulti(imageId) {
@@ -7277,6 +7519,8 @@
 
             // Track the last clicked image
             state.lastClickedImageId = imageId;
+
+            sparkleFromTile(imageId, getScoreColor(state.selectedScore));
 
             // Assign the selected score to this image
             state.votes[imageId] = state.selectedScore;
@@ -7299,6 +7543,7 @@
         }
 
         function setMultiModeFilter(filter) {
+            const anchor = captureSingleAnchor();
             // Toggle filter: if filter is in array, remove it; otherwise add it
             const index = state.multiModeFilter.indexOf(filter);
             if (index > -1) {
@@ -7306,12 +7551,15 @@
             } else {
                 state.multiModeFilter.push(filter);
             }
-            render();
+            restoreSingleAnchor(anchor);
+            render({ morph: true });
         }
 
         function setMultiModeSort(sort) {
+            const anchor = captureSingleAnchor();
             state.multiModeSort = sort;
-            render();
+            restoreSingleAnchor(anchor);
+            render({ morph: true });
         }
 
         function cancelVoting() {
@@ -7678,7 +7926,7 @@
             }
             cancelVoteHold();
             state.prank = null;
-            state.progressPanelIndex = null;
+            state.progressPath = [];
             const newMode = state.votingMode === 'single' ? 'multi' : 'single';
 
             // Once voting_mode is saved the toggle is a session-only override; until then keep the old localStorage behavior
@@ -7708,12 +7956,17 @@
                     state.selectedScore = null;
 
                     // If there was a last clicked image, navigate to it
+                    const list = getWorkingSet();
                     if (state.lastClickedImageId) {
-                        const imageIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
+                        const imageIndex = list.findIndex(img => img.id === state.lastClickedImageId);
                         if (imageIndex !== -1) {
                             state.currentImageIndex = imageIndex;
+                        } else {
+                            const shuffledIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
+                            if (shuffledIndex !== -1) state.currentImageIndex = nearestRemainingIndex(state.shuffledImages, shuffledIndex, list);
                         }
                     }
+                    state.currentImageIndex = Math.max(0, Math.min(state.currentImageIndex, list.length - 1));
 
                     state.isTransitioningVotingMode = false;
                     render();
@@ -7878,15 +8131,34 @@
         }
 
         // ==================== USER FILTER ====================
+        // Single source of truth for the images the Users / Images filters work on. renderMergedResults() only swaps
+        // state.results for the merged list WHILE rendering, so event handlers (which run later) must read the merged
+        // list from state.mergedResults instead - otherwise "all minus one" is built from an empty list.
+        function getFilterSourceResults() {
+            if (state.view === 'mergedResults' && state.mergedResults && state.mergedResults.images) {
+                return state.mergedResults.images.map(img => ({ id: img.id, breakdown: img.voteBreakdown || [] }));
+            }
+            return state.results || [];
+        }
+
+        // Canonical id from a list for an id coming back from an inline handler (number vs string safe)
+        function canonicalFilterId(list, getId, id) {
+            const found = list.find(x => String(getId(x)) === String(id));
+            return found ? getId(found) : id;
+        }
+
         function getContestVotersList() {
-            if (!state.results) return [];
+            const source = getFilterSourceResults();
+            if (source.length === 0) return [];
             const voterMap = {};
-            state.results.forEach(img => {
+            source.forEach(img => {
                 if (!img.breakdown) return;
                 img.breakdown.forEach(vote => {
                     if (!vote.isBlocked && !vote.isBanned && !voterMap[vote.userId]) {
                         voterMap[vote.userId] = { userId: vote.userId, username: vote.username, avatar: vote.avatar };
                     }
+                    // Users whose votes (some of them) are auto-converted from a shortlist get a bookmark in the lists
+                    if (vote.autoConverted && voterMap[vote.userId]) voterMap[vote.userId].autoConverted = true;
                 });
             });
             return Object.values(voterMap).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
@@ -7897,9 +8169,11 @@
         // item (also when mixed across a merger's contests), ⭐ = shortlist auto-converted from classic votes only.
         function getFilterVotersList() {
             const data = isShortlistFormat() ? state.shortlistData : null;
-            if (!data) return getContestVotersList();
+            if (!data) {
+                return getContestVotersList().map(v => v.autoConverted ? { ...v, marker: '🔖', markerTitle: 'Votes auto-converted from a shortlist' } : v);
+            }
             return Object.values(data.voters)
-                .map(v => ({ userId: v.userId, username: v.username, avatar: v.avatar, marker: v.hasReal ? '🔖' : '⭐' }))
+                .map(v => ({ userId: v.userId, username: v.username, avatar: v.avatar, marker: v.hasReal ? '🔖' : '⭐', markerTitle: v.hasReal ? 'Made a shortlist' : 'Auto-converted from classic votes' }))
                 .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
         }
 
@@ -7914,6 +8188,7 @@
             const dropdown = document.querySelector('.user-filter-dropdown');
             const dropdownScrollTop = dropdown ? dropdown.scrollTop : 0;
             const allVoters = getFilterVotersList();
+            userId = canonicalFilterId(allVoters, v => v.userId, userId);
             if (state.userFilterSelectedUsers === null) {
                 // Was "all selected" - now deselect this one
                 state.userFilterSelectedUsers = new Set(allVoters.map(v => v.userId));
@@ -8012,12 +8287,12 @@
                                             <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleUserFilterUser('${voter.userId}')" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
                                             <img referrerpolicy="no-referrer" src="${voter.avatar}" class="w-5 h-5 rounded-full"  onerror="ghostAvatar(this)" />
                                             <span class="text-sm truncate flex-1 text-left">${voter.username}</span>
-                                            ${voter.marker ? `<span class="text-sm flex-shrink-0" title="${voter.marker === '🔖' ? 'Made a shortlist' : 'Auto-converted from classic votes'}">${voter.marker}</span>` : ''}
+                                            ${voter.marker ? `<span class="text-sm flex-shrink-0" title="${voter.markerTitle || ''}">${voter.marker}</span>` : ''}
                                         </label>
                                     `;
                                 }).join('')}
                             </div>
-                            ${showMarkers ? `<div class="border-t border-gray-200 px-2 py-1.5 text-[11px] text-gray-500">Bookmark: made a shortlist - Star: auto-converted from classic votes</div>` : ''}
+                            ${showMarkers ? `<div class="border-t border-gray-200 px-2 py-1.5 text-[11px] text-gray-500">${isShortlistFormat() ? 'Bookmark: made a shortlist - Star: auto-converted from classic votes' : 'Bookmark: votes auto-converted from a shortlist'}</div>` : ''}
                         </div>
                     ` : ''}
                 </div>
@@ -8043,7 +8318,8 @@
         }
 
         function toggleImageFilterImage(imageId) {
-            const allImages = state.results || [];
+            const allImages = getFilterSourceResults();
+            imageId = canonicalFilterId(allImages, img => img.id, imageId);
             if (state.imageFilterSelectedImages === null) {
                 // Was "all visible" - now hide this one
                 state.imageFilterSelectedImages = new Set(allImages.map(img => img.id));
@@ -8054,7 +8330,8 @@
                 } else {
                     state.imageFilterSelectedImages.add(imageId);
                 }
-                // Don't automatically reset to null - user may want explicit control
+                // Everything shown again: the filter is inactive (no partial-results banner, no Reset button)
+                if (allImages.every(img => state.imageFilterSelectedImages.has(img.id))) state.imageFilterSelectedImages = null;
             }
             render();
         }
@@ -8079,7 +8356,7 @@
         }
 
         function renderImageFilterDropdown() {
-            const allImages = state.results || [];
+            const allImages = getFilterSourceResults();
             if (allImages.length === 0) return '';
 
             // Hide image filter in comparison views
@@ -8670,7 +8947,11 @@
                     id: user.id,
                     username: user.username,
                     avatar: user.avatar,
-                    isBanned: user.is_banned || false
+                    isBanned: user.is_banned || false,
+                    // saved preferences (NULL / unrecognised = not selected), for the dashboard's Preferences section
+                    theme: normalizePref(user.app_theme === 'hell' ? 'hot' : user.app_theme, ['light', 'dark', 'hot', 'cold']),
+                    mode: normalizePref(user.voting_mode, ['single', 'multi']),
+                    format: normalizePref(user.voting_format, ['classic', 'shortlist'])
                 }));
 
                 // Fetch admin statistics from database with aggressive cache-busting
@@ -8708,23 +8989,7 @@
                     console.error('Failed to count shortlists:', e);
                 }
 
-                // Users per saved preference; NULL / unrecognised = "Not selected"
-                const tally = (field, keys, normalize = v => v) => {
-                    const counts = { none: 0 };
-                    keys.forEach(k => { counts[k] = 0; });
-                    users.forEach(u => {
-                        const v = normalize(u[field]);
-                        if (keys.includes(v)) counts[v]++; else counts.none++;
-                    });
-                    return counts;
-                };
-                const prefStats = {
-                    theme: tally('app_theme', ['light', 'dark', 'hot', 'cold'], v => v === 'hell' ? 'hot' : v),
-                    mode: tally('voting_mode', ['single', 'multi']),
-                    format: tally('voting_format', ['classic', 'shortlist'])
-                };
-
-                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists, totalShortlistSets, prefStats };
+                state.adminStats = { totalVotes, totalUniqueVoters, totalContests, totalImages, totalShortlists, totalShortlistSets };
 
                 state.adminDashboardLoading = false;
                 document.body.classList.add('modal-open');
@@ -8735,6 +9000,44 @@
                 state.showAdminDashboard = false;
                 showAlert('Failed to load admin dashboard: ' + error.message, '❌');
             }
+        }
+
+        // app_settings.hide_admin_vote_tools: a missing row counts as true. When true the admin edit / block vote controls are hidden.
+        function hideAdminVoteTools() {
+            return state.appSettings.hide_admin_vote_tools !== false;
+        }
+
+        // The row is created by the owner via SQL and the table only allows admin UPDATEs: save by PATCH, never by insert
+        async function toggleHideAdminVoteTools() {
+            const newValue = !hideAdminVoteTools();
+            try {
+                const response = await fetchFromSupabase(`/rest/v1/app_settings?setting_name=eq.hide_admin_vote_tools`, {
+                    method: 'PATCH',
+                    headers: { 'Prefer': 'return=representation' },
+                    body: JSON.stringify({ value: newValue })
+                });
+                if (!response.ok) throw new Error('Failed to update setting');
+                const updated = await response.json();
+                if (!Array.isArray(updated) || updated.length === 0) {
+                    throw new Error('The hide_admin_vote_tools row does not exist yet - create it in the database first');
+                }
+                state.appSettings.hide_admin_vote_tools = newValue;
+                showToast(`✅ Admin vote tools ${newValue ? 'hidden' : 'shown'}`);
+                render();
+            } catch (error) {
+                console.error('Error updating hide_admin_vote_tools:', error);
+                showToast('Failed to update setting: ' + error.message, 'error');
+            }
+        }
+
+        function normalizePref(value, allowed) {
+            return allowed.includes(value) ? value : 'none';
+        }
+
+        // Preferences section: which option's user list is open (collapsed by default)
+        function toggleAdminPref(key) {
+            state.adminPrefOpen[key] = !state.adminPrefOpen[key];
+            render();
         }
 
         function closeAdminDashboard() {
@@ -11212,6 +11515,15 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
                                     </svg>
                                 </button>
+                                ${state.votingMode === 'single' ? `
+                                    <button
+                                        onclick="toggleSingleTools()"
+                                        class="ml-1 w-8 h-8 flex items-center justify-center rounded-lg text-base leading-none focus:outline-none transition ${singleToolsActive() ? 'bg-mauve-500 ring-2 ring-white shadow-md' : state.singleToolsOpen ? 'bg-white/40' : 'bg-white/20 hover:bg-white/30'}"
+                                        title="${singleToolsActive() ? 'Sort and filter tools (a sort or filter is active)' : 'Sort and filter tools'}"
+                                        aria-label="Sort and filter tools"
+                                        aria-expanded="${state.singleToolsOpen ? 'true' : 'false'}"
+                                    >🛠️</button>
+                                ` : ''}
                                 ${shouldShowModeCallout() ? `
                                     <div class="absolute top-full right-0 mt-2 w-60 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-30">
                                         Tip: use this toggle to switch between single and multi image voting.
@@ -11265,6 +11577,7 @@
                         `}
                     </div>
                 </header>
+                ${isVoting ? renderSingleToolsPanel() : ''}
             `;
         }
 
@@ -12369,15 +12682,9 @@
                 try {
                     const scope = getShortlistScopeForItem(modal.itemType, modal.item);
                     const idList = scope.contestIds.join(',');
-                    const [rows, voteRows] = scope.contestIds.length === 0 ? [[], []] : await Promise.all([
-                        fetchAllShortlistsPaginated(`contest_id=in.(${idList})`, 'user_id,image_id,contest_id,users!inner(id,username,avatar,is_banned)'),
-                        fetchAllVotesPaginated(`contest_id=in.(${idList})`, 'user_id,image_id,contest_id,score,is_blocked,users!inner(id,username,avatar,is_banned)')
-                    ]);
-                    const votes = voteRows.map(v => ({
-                        userId: v.user_id, username: v.users?.username, avatar: v.users?.avatar, imageId: v.image_id,
-                        contestId: v.contest_id, score: v.score, isBlocked: !!v.is_blocked, isBanned: !!v.users?.is_banned
-                    }));
-                    modal.pool = buildShortlistData(`info:${modal.itemType}:${modal.item.id}`, scope, rows, votes);
+                    // Only users with real shortlist rows are listed, so no classic votes are needed (no auto-conversion here)
+                    const rows = scope.contestIds.length === 0 ? [] : await fetchAllShortlistsPaginated(`contest_id=in.(${idList})`, 'user_id,image_id,contest_id,users!inner(id,username,avatar,is_banned)');
+                    modal.pool = buildShortlistData(`info:${modal.itemType}:${modal.item.id}`, scope, rows, [], false);
                 } catch (error) {
                     console.error('Error loading shortlist pool:', error);
                     clearLoading();
@@ -12391,26 +12698,23 @@
             render();
         }
 
-        // Shortlist pool members: ✓ = real shortlist, colored circle = converted from their best classic score (4 or 5)
+        // Users who really made a shortlist (✓); converted users are not listed here
         function renderInfoShortlistSection() {
             const pool = state.contestInfoModal.pool;
-            const users = pool ? Object.values(pool.voters).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase())) : [];
+            const users = pool ? Object.values(pool.voters).filter(user => user.hasReal).sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase())) : [];
             return `
                 <div class="p-4 bg-blue-50 rounded-lg">
                     <h3 class="font-semibold text-gray-800 mb-1">Users with a shortlist (${users.length})</h3>
-                    <p class="text-xs text-gray-500 mb-3">✓ = made a shortlist. A colored number = built from their classic score.</p>
+                    <p class="text-xs text-gray-500 mb-3"><span class="font-bold text-lg leading-none" style="color: ${getScoreColor(5)};">✓</span> = made a shortlist.</p>
                     ${users.length > 0 ? `
                         <div class="space-y-2 max-h-64 overflow-y-auto">
                             ${users.map(user => {
-                                const bestScore = user.hasAuto ? Math.max(...user.scoreByImage.values()) : null;
-                                const qualifyingCount = user.hasAuto ? [...user.scoreByImage.values()].filter(score => score >= 4).length : 0;
                                 return `
                                     <div class="flex items-center gap-3 p-2 hover:bg-blue-100 rounded-lg transition cursor-pointer" onclick="viewUserProfile('${user.userId}')">
                                         <img referrerpolicy="no-referrer" src="${user.avatar}" alt="${user.username}" class="w-8 h-8 rounded-full flex-shrink-0" onerror="ghostAvatar(this)" />
                                         <span class="text-sm font-medium text-gray-700 flex-1">${user.username}</span>
                                         <span class="text-xs text-gray-500">${user.images.size} image${user.images.size !== 1 ? 's' : ''}</span>
-                                        ${user.hasReal ? '<span class="text-green-600 font-bold">✓</span>' : ''}
-                                        ${bestScore !== null ? `<span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style="background-color: ${getScoreColor(bestScore)};" title="Built from their classic scores">${bestScore}</span><span class="text-xs font-semibold text-gray-600" title="${qualifyingCount} score${qualifyingCount !== 1 ? 's' : ''} of 4 or 5 made up their shortlist">×${qualifyingCount}</span>` : ''}
+                                        <span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Made a shortlist">✓</span>
                                     </div>
                                 `;
                             }).join('')}
@@ -12870,7 +13174,7 @@
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${isShortlistCard('contest', contest.id) ? `${contest.shortlistCount || 0}📝 ` : ''}${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
+                                                <span class="ml-auto whitespace-nowrap">${renderCardStats(contest.shortlistCount, contest.voterCount, contest.images.length)}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -13049,7 +13353,7 @@
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${isShortlistCard('merger', merger.id) ? `${merger.shortlistCount || 0}📝 ` : ''}${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${renderCardStats(merger.shortlistCount, merger.voterCount, totalImages)}</span>
                             </div>
                         </div>
                     </div>
@@ -13214,7 +13518,7 @@
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${isShortlistCard('extract', extract.id) ? `${extract.shortlistCount || 0}📝 ` : ''}${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${renderCardStats(extract.shortlistCount, extract.voterCount, imageCount)}</span>
                             </div>
                         </div>
                     </div>
@@ -13373,6 +13677,48 @@
             `;
         }
 
+        // Classic score filter (gray = not voted, then 1-5), shared by the multi view header and the single-mode tools panel
+        function renderClassicScoreFilter() {
+            return `<div class="flex-1 min-w-0">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
+                <div class="flex flex-wrap gap-1">
+                    ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
+                        const isSelected = state.multiModeFilter.includes(filter);
+                        const label = filter === 'non-voted' ? '?' : filter;
+                        const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
+                        return `
+                            <button
+                                onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
+                                class="px-2 py-0.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                style="background-color: ${bgColor};"
+                                title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
+                            >${label}</button>
+                        `;
+                    }).join('')}
+                </div>
+                ${state.multiModeFilter.length > 0
+                    ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
+                    : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
+                }
+            </div>`;
+        }
+
+        // Sort select (Default / High - Low / Low - High); `extra` is appended under it (the multi view adds its auto-jump option)
+        function renderVotingSortSelect(extra = '') {
+            return `<div class="flex flex-col items-end shrink-0">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
+                <select
+                    onchange="setMultiModeSort(this.value)"
+                    class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                >
+                    <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default</option>
+                    <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>High → Low</option>
+                    <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
+                </select>
+                ${extra}
+            </div>`;
+        }
+
         function renderMultiViewVoting() {
             const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
@@ -13442,40 +13788,12 @@
                             <!-- Filter and Sort Controls — two-column layout -->
                             <div class="mt-3 flex gap-4 items-start">
                                 <!-- Left: Filter -->
-                                ${isShortlist ? renderShortlistMultiFilter() : `<div class="flex-1 min-w-0">
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
-                                    <div class="flex flex-wrap gap-1">
-                                        ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
-                                            const isSelected = state.multiModeFilter.includes(filter);
-                                            const label = filter === 'non-voted' ? '?' : filter;
-                                            const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
-                                            return `
-                                                <button
-                                                    onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
-                                                    class="px-2 py-0.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
-                                                    style="background-color: ${bgColor};"
-                                                    title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
-                                                >${label}</button>
-                                            `;
-                                        }).join('')}
-                                    </div>
-                                    ${state.multiModeFilter.length > 0
-                                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
-                                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
-                                    }
-                                </div>`}
+                                ${isShortlist ? renderShortlistMultiFilter() : renderClassicScoreFilter()}
                                 <!-- Right: Sort -->
-                                <div class="flex flex-col items-end shrink-0">
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
-                                    <select
-                                        onchange="setMultiModeSort(this.value)"
-                                        class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
-                                    >
-                                        <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default</option>
-                                        <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>High → Low</option>
-                                        <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
-                                    </select>
-                                </div>
+                                ${renderVotingSortSelect(`<label class="flex items-center gap-1.5 mt-2 text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer select-none" title="When on, the page follows the tile you just voted on if it moves">
+                                        <input type="checkbox" ${state.multiAutoJump ? 'checked' : ''} onchange="setMultiAutoJump(this.checked)" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
+                                        Auto-jump to voted image
+                                    </label>`)}
                             </div>
                         </div>
 
@@ -13538,7 +13856,7 @@
                                             ? `prankTileClick(${isShortlist ? 'false' : 'true'})`
                                             : (isShortlist ? `toggleShortlistImage(${image.id})` : `voteImageMulti('${image.id}')`);
                                         return `
-                                        <div class="relative" style="height: ${imageHeight}px;" ${isFake ? '' : `data-tile-id="${image.id}"`}>
+                                        <div class="relative" style="height: ${imageHeight}px;" ${isFake ? 'data-fake-tile="1"' : `data-tile-id="${image.id}"`}>
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
                                                 onclick="${click}"
@@ -13561,9 +13879,10 @@
                                     return filteredImages.map((image, idx) => {
                                         const tile = renderTile(image, idx, false);
                                         // Prank: a mirrored copy right after the tile that was just interacted with
-                                        return state.prank && state.prank.kind === 'multi' && String(state.prank.imageId) === String(image.id)
-                                            ? tile + renderTile(image, idx, true)
-                                            : tile;
+                                        if (!(state.prank && state.prank.kind === 'multi' && String(state.prank.imageId) === String(image.id))) return tile;
+                                        // The fake copies the image it mirrors, including that image's score / tick state
+                                        const mirrored = state.shuffledImages.find(img => String(img.id) === String(state.prank.mirrorId)) || image;
+                                        return tile + renderTile(mirrored, idx, true);
                                     }).join('');
                                 })()}
                             </div>
@@ -13705,54 +14024,103 @@
             return `linear-gradient(to right, ${green} 0%, ${green} ${split}%, ${red} ${split}%, ${red} 100%)`;
         }
 
-        function renderSingleProgressBar(isShortlist, segmentCount, imagesPerSegment) {
-            const imageCount = state.shuffledImages.length;
-            const outline = isShortlist ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));' : '';
-            const segments = Array.from({ length: segmentCount }, (_, segmentIdx) => {
-                const startIdx = segmentIdx * imagesPerSegment;
-                const endIdx = Math.min(startIdx + imagesPerSegment, imageCount);
-                if (startIdx >= imageCount) return '';
-                const segmentImages = state.shuffledImages.slice(startIdx, endIdx);
-                const hasCurrent = state.currentImageIndex >= startIdx && state.currentImageIndex < endIdx;
-                const decided = segmentImages.filter(img => isShortlist ? getShortlistStatus(img.id) !== 'undecided' : state.votes[img.id]).length;
-                const shortlisted = segmentImages.filter(img => getShortlistStatus(img.id) === 'yes').length;
-                const imageRange = startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`;
-                const tooltip = isShortlist
-                    ? `${imageRange} (${shortlisted} shortlisted, ${decided - shortlisted} skipped)`
-                    : `${imageRange} (${decided}/${segmentImages.length} voted)`;
-                // Grouped segments toggle the per-image panel; single-image segments jump straight to the image
-                const action = endIdx - startIdx > 1 ? `toggleProgressPanel(${segmentIdx})` : `jumpToImage(${startIdx})`;
-                return `
-                    <div
-                        onclick="${action}"
-                        class="progress-segment flex-1"
-                        style="background: ${getSegmentBackground(segmentImages, isShortlist, hasCurrent && !isShortlist)}; ${hasCurrent && isShortlist ? outline : ''}"
-                        title="${tooltip}"
-                    ></div>
-                `;
-            }).join('');
+        // Segments of one bar level covering images [start, end) of the working set: at most 20, each `per` images wide
+        function getProgressSegments(start, end) {
+            const length = end - start;
+            const per = Math.ceil(length / Math.min(length, 20));
+            const segments = [];
+            for (let from = start; from < end; from += per) segments.push({ start: from, end: Math.min(from + per, end) });
+            return segments;
+        }
 
-            // Inline panel: one small segment per image of the opened range
-            let panel = '';
-            const openIdx = state.progressPanelIndex;
-            if (openIdx !== null && imagesPerSegment > 1) {
-                const startIdx = openIdx * imagesPerSegment;
-                const endIdx = Math.min(startIdx + imagesPerSegment, imageCount);
-                if (startIdx < imageCount) {
-                    panel = `
-                        <div class="bg-gray-100 px-2 py-1.5 border-b border-gray-200">
-                            <div class="text-xs font-medium text-gray-600 mb-1">${startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`} - tap a segment below to jump to that image</div>
-                            <div class="flex gap-1">
-                                ${state.shuffledImages.slice(startIdx, endIdx).map((img, i) => {
-                                    const idx = startIdx + i;
-                                    const isCurrent = idx === state.currentImageIndex;
-                                    return `<div onclick="jumpToImage(${idx})" class="progress-segment flex-1" style="background: ${getSegmentBackground([img], isShortlist, isCurrent && !isShortlist)}; ${isCurrent ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));' : ''}" title="Image ${idx + 1}"></div>`;
-                                }).join('')}
-                            </div>
-                        </div>`;
-                }
+        function progressRangeLabel(start, end) {
+            return start + 1 === end ? `Image ${start + 1}` : `Images ${start + 1}-${end}`;
+        }
+
+        // One bar level. Segments covering more than one image open / close the next level down; single images jump there.
+        function renderProgressLevel(list, isShortlist, level, start, end, wrapperClass) {
+            const open = state.progressPath[level];
+            const segments = getProgressSegments(start, end).map(seg => {
+                const images = list.slice(seg.start, seg.end);
+                const hasCurrent = state.currentImageIndex >= seg.start && state.currentImageIndex < seg.end;
+                const isOpen = !!open && open.start === seg.start && open.end === seg.end;
+                const decided = images.filter(img => isShortlist ? getShortlistStatus(img.id) !== 'undecided' : state.votes[img.id]).length;
+                const shortlisted = images.filter(img => getShortlistStatus(img.id) === 'yes').length;
+                const range = progressRangeLabel(seg.start, seg.end);
+                const tooltip = isShortlist
+                    ? `${range} (${shortlisted} shortlisted, ${decided - shortlisted} skipped)`
+                    : `${range} (${decided}/${images.length} voted)`;
+                const action = seg.end - seg.start > 1 ? `toggleProgressRange(${level},${seg.start},${seg.end})` : `jumpToImage(${seg.start})`;
+                const outline = isShortlist && hasCurrent ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));'
+                    : isOpen ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));' : '';
+                return `<div onclick="${action}" class="progress-segment flex-1" style="background: ${getSegmentBackground(images, isShortlist, hasCurrent && !isShortlist)}; ${outline}" title="${tooltip}"></div>`;
+            }).join('');
+            return { open, html: `<div class="${wrapperClass}">${segments}</div>` };
+        }
+
+        function renderSingleProgressBar(isShortlist, list) {
+            let range = { start: 0, end: list.length };
+            const top = renderProgressLevel(list, isShortlist, 0, range.start, range.end, 'bg-gray-200 h-3 flex gap-1 p-1');
+            let html = top.html;
+            let open = top.open;
+            // Opened segments, one inline panel per level; stale entries (the working set changed) end the chain
+            for (let level = 0; level < state.progressPath.length && open; level++) {
+                const valid = open.end - open.start > 1 && open.start >= range.start && open.end <= range.end
+                    && getProgressSegments(range.start, range.end).some(seg => seg.start === open.start && seg.end === open.end);
+                if (!valid) break;
+                range = open;
+                const isLeafLevel = !getProgressSegments(range.start, range.end).some(seg => seg.end - seg.start > 1);
+                const next = renderProgressLevel(list, isShortlist, level + 1, range.start, range.end, 'flex gap-1');
+                html += `
+                    <div class="bg-gray-100 px-2 py-1.5 border-b border-gray-200">
+                        <div class="text-xs font-medium text-gray-600 mb-1">${progressRangeLabel(range.start, range.end)} - tap a segment below to ${isLeafLevel ? 'jump to that image' : 'open it'}</div>
+                        ${next.html}
+                    </div>`;
+                open = next.open;
             }
-            return `<div class="bg-gray-200 h-3 flex gap-1 p-1">${segments}</div>${panel}`;
+            return html;
+        }
+
+        // Single-mode sort / filter tools, folded below the app bar (🛠️ next to the voting mode switch).
+        // The filter circles and the sort select are the same pieces the multi view uses; the state is shared.
+        function renderSingleToolsPanel() {
+            if (state.view !== 'vote' || state.votingMode !== 'single' || !state.singleToolsOpen) return '';
+            return `
+                <div class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm" data-tools-panel="1">
+                    <div class="max-w-4xl mx-auto px-3 py-3">
+                        <div class="flex gap-4 items-start">
+                            ${isShortlistVoting() ? renderShortlistMultiFilter() : renderClassicScoreFilter()}
+                            ${renderVotingSortSelect()}
+                        </div>
+                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Tap the gray circle to hide images you have already voted on and focus on the rest.</p>
+                    </div>
+                </div>`;
+        }
+
+        // The filter hides every image. Modelled on the results page's "All Images Hidden" state.
+        function renderSingleEmptyState(isShortlist, votingTitle, total) {
+            const onlyGray = isShortlist
+                ? state.shortlistFilter.length === 1 && state.shortlistFilter[0] === 'undecided'
+                : state.multiModeFilter.length === 1 && state.multiModeFilter[0] === 'non-voted';
+            const allDone = total > 0 && state.shuffledImages.every(img => isShortlist ? getShortlistStatus(img.id) !== 'undecided' : state.votes[img.id]);
+            return `
+                <div class="max-w-4xl mx-auto px-3 py-4">
+                    ${renderAutosaveStatusBar()}
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
+                        <div class="p-3">
+                            <div class="flex justify-between items-center mb-3 gap-2">
+                                <h2 class="text-lg font-bold text-gray-800">${votingTitle}</h2>
+                                <span class="text-gray-600 font-medium text-sm">Showing 0 of ${total}</span>
+                            </div>
+                            <div class="text-center py-10">
+                                <div class="text-6xl mb-4">🔍</div>
+                                <h3 class="text-xl font-bold text-gray-800 mb-2">All Images Hidden</h3>
+                                <p class="text-gray-600">You've hidden all images using the filter. Open the tools (🛠️) and change the filter, or click "Clear filter" to show images again.${onlyGray && allDone ? ' You have already voted on all images.' : ''}</p>
+                                <button onclick="clearSingleFilter()" class="mt-4 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white px-5 py-2 rounded-lg font-semibold hover:opacity-90 transition shadow-md">Clear filter</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
         }
 
         function renderVoting() {
@@ -13762,9 +14130,25 @@
             }
 
             const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
-            const currentImage = state.shuffledImages[state.currentImageIndex];
+            // Single mode works on the filtered, sorted list (see getWorkingSet); the overall totals below stay whole-contest
+            const workingSet = getWorkingSet();
+            const totalCount = state.shuffledImages.length;
+            const isMergerVotingTitle = state.currentMergerId && !state.currentContest;
+            if (workingSet.length === 0) {
+                return renderSingleEmptyState(isShortlist, isShortlist
+                    ? state.shortlistSession.title
+                    : isMergerVotingTitle
+                    ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
+                    : (state.currentContest?.title || 'Voting'), totalCount);
+            }
+            if (state.currentImageIndex > workingSet.length - 1) state.currentImageIndex = workingSet.length - 1;
+            const realImage = workingSet[state.currentImageIndex];
             // The mirrored prank copy must look unvoted: no score / shortlist tag and neutral controls (real state is never touched)
             const onPrankCopy = hasSinglePrank();
+            // The fake shows a mirrored copy of a random image (see startPrank); it never touches that image's state
+            const currentImage = onPrankCopy
+                ? (state.shuffledImages.find(img => String(img.id) === String(state.prank.mirrorId)) || realImage)
+                : realImage;
             const currentVote = onPrankCopy ? undefined : isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
             const shortlistStatus = isShortlist ? (onPrankCopy ? 'undecided' : getShortlistStatus(currentImage.id)) : null;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
@@ -13777,22 +14161,23 @@
                 ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
                 : (state.currentContest?.title || 'Voting');
 
-            // Adaptive progress bar logic - ensure EXACTLY segmentCount dashes
-            const imageCount = state.shuffledImages.length;
-            const segmentCount = Math.min(imageCount, 20);
-            const imagesPerSegment = Math.ceil(imageCount / segmentCount);
+            const isFiltered = workingSet.length < totalCount;
+            const overallDone = isShortlist
+                ? state.shuffledImages.filter(img => getShortlistStatus(img.id) === 'yes').length
+                : state.shuffledImages.filter(img => state.votes[img.id]).length;
 
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     ${renderAutosaveStatusBar()}
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
-                        ${renderSingleProgressBar(isShortlist, segmentCount, imagesPerSegment)}
+                        ${renderSingleProgressBar(isShortlist, workingSet)}
 
                         <div class="p-3">
                             <div class="flex justify-between items-center mb-3 gap-2">
                                 <h2 class="text-lg font-bold text-gray-800">${votingTitle}</h2>
-                                <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
+                                <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${workingSet.length}</span>
                             </div>
+                            ${isFiltered ? `<p class="text-xs text-gray-500 -mt-2 mb-2">Showing ${workingSet.length} of ${totalCount} - ${overallDone}/${totalCount} ${isShortlist ? 'shortlisted' : 'voted'}</p>` : ''}
 
                             <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="height: 55vh; touch-action: pan-y; user-select: none;" data-swipe="${isShortlist ? 'vote' : 'nav'}" data-vote-fade-zone="1">
                                 <img
@@ -13958,14 +14343,18 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
-                                <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
-                                    <div class="flex items-center gap-1.5">
-                                        <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
-                                        ${renderResultsFormatToggle()}
-                                    </div>
+                                ${renderAutoConvertedSwitch() ? `<div class="flex items-center justify-center flex-wrap">${renderAutoConvertedSwitch()}</div>` : ''}
+                                <div class="flex flex-col items-center gap-1">
+                                    <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
+                                            ${renderResultsFormatToggle()}
+                                        </div>
                                 <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
                                     Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
                                 </button>
+                                    </div>
+                                    <p class="text-xs text-gray-500 text-center">Switch between ⭐ Classic (1-5 scores) and 🔖 Shortlist (the images people picked).</p>
                                 </div>
                                 ${renderGlobalFilters()}
                                 ${isUserFilterActive() || isImageFilterActive() ? `
@@ -14115,7 +14504,7 @@
                             <label class="text-xs font-medium text-gray-700">Select User:</label>
                             <select onchange="setResultsView('userVotes', this.value)" class="px-2 py-1 rounded-lg border-2 border-gray-300 focus:border-mauve-400 focus:outline-none text-sm">
                                 ${state.selectedVoterUserId === null ? '<option value="" selected disabled>Select a user...</option>' : ''}
-                                ${state.contestVoters.map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
+                                ${state.contestVoters.map(voter => `<option value="${voter.userId}" ${state.selectedVoterUserId === voter.userId ? 'selected' : ''}>${voter.username}${voter.autoConverted ? ' 🔖' : ''}${voter.userId === (state.user && state.user.id) ? ' (You)' : ''}</option>`).join('')}
                             </select>
                             <button onclick="startComparison()" class="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition">Compare with others</button>
                         </div>
@@ -14243,7 +14632,7 @@
                                             ${item.averageScore}${userFilterAsterisk}
                                         </div>
                                         ${isFilterEditing ? `
-                                            <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                            <div class="absolute top-1 left-1 w-7 h-7 rounded flex items-center justify-center text-lg leading-none font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
                                                 ${isVisible ? '✓' : '✕'}
                                             </div>
                                         ` : ''}
@@ -14370,7 +14759,7 @@
                                                 <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">${img.averageScore}${userFilterAsterisk}</div>
                                             </div>
                                             ${isFilterEditing ? `
-                                                <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                <div class="absolute top-1 left-1 w-7 h-7 rounded flex items-center justify-center text-lg leading-none font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
                                                     ${isVisible ? '✓' : '✕'}
                                                 </div>
                                             ` : ''}
@@ -14718,7 +15107,7 @@
                         return `
                         <div class="bg-white rounded-lg shadow-md p-3 flex flex-col items-center hover:shadow-lg transition-shadow border-2 ${voter.isCurrentUser ? 'border-mauve-400' : 'border-transparent'}">
                             <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-12 h-12 rounded-full mb-2 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');"  onerror="ghostAvatar(this)" />
-                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}</div>
+                            <div class="text-xs font-semibold text-gray-800 truncate w-full text-center mb-1 cursor-pointer hover:text-mauve-600 transition" title="${voter.username}" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${voter.autoConverted ? ' <span title="Votes auto-converted from a shortlist">🔖</span>' : ''}</div>
                             <div class="text-xl font-bold text-white score-text">${voter.averageScore}</div>
                             <div class="text-xs text-gray-500 mb-1">${voter.totalImages} vote${voter.totalImages !== 1 ? 's' : ''}</div>
                             <div class="mt-auto"></div>
@@ -15567,7 +15956,10 @@
                                                         }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBanned ? ' (BANNED)' : ''}
                                                         </span>
-                                                        ${isAdmin ? `
+                                                        ${vote.autoConverted ? (vote.score === SHORTLISTED_AS_SCORE
+                                                            ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Auto-converted: shortlisted">✓</span>`
+                                                            : `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(1)};" title="Auto-converted: not shortlisted">✗</span>`) : ''}
+                                                        ${isAdmin && !vote.autoConverted && !hideAdminVoteTools() ? `
                                                             <button
                                                                 onclick="adminEditVote('${vote.userId}', ${item.id}, ${score})"
                                                                 class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
@@ -15630,19 +16022,39 @@
             const totalUniqueVoters = state.adminStats.totalUniqueVoters;
             const totalShortlists = state.adminStats.totalShortlists ?? 0;
             const totalShortlistSets = state.adminStats.totalShortlistSets ?? 0;
-            const prefStats = state.adminStats.prefStats;
-            const prefGroup = (title, counts, rows) => `
+            // Preferences: one group per setting, each option with its user count; click expands the list of those users
+            const prefGroup = (title, field, rows) => `
                 <div class="bg-white rounded-lg p-3">
-                    <div class="text-xs font-bold text-gray-700 mb-1">${title}</div>
-                    ${rows.map(([key, label]) => `<div class="flex justify-between text-xs text-gray-600"><span>${label}</span><span class="font-semibold">${counts[key] ?? 0}</span></div>`).join('')}
-                    <div class="flex justify-between text-xs text-gray-500 border-t border-gray-200 mt-1 pt-1"><span>Not selected</span><span class="font-semibold">${counts.none ?? 0}</span></div>
+                    <div class="text-sm font-bold text-gray-700 mb-2">${title}</div>
+                    <div class="space-y-1">
+                        ${[...rows, ['none', 'Not selected']].map(([key, label]) => {
+                            const users = state.allUsers.filter(u => u[field] === key);
+                            const openKey = `${field}:${key}`;
+                            const open = !!state.adminPrefOpen[openKey];
+                            return `
+                                <div>
+                                    <button onclick="toggleAdminPref('${openKey}')" class="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-sm text-gray-700 transition" aria-expanded="${open}">
+                                        <span class="flex items-center gap-1.5"><svg class="w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"/></svg>${label}</span>
+                                        <span class="font-semibold">${users.length}</span>
+                                    </button>
+                                    ${open ? `
+                                        <div class="mt-1 ml-2 max-h-48 overflow-y-auto space-y-1 pr-1">
+                                            ${users.length === 0 ? '<p class="text-xs text-gray-500 italic px-2 py-1">No users</p>' : [...users].sort((a, b) => a.username.localeCompare(b.username)).map(u => `
+                                                <div class="flex items-center gap-2 px-2 py-1 bg-gray-50 rounded-lg">
+                                                    <img referrerpolicy="no-referrer" src="${u.avatar}" alt="${u.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer" onclick="event.stopPropagation(); viewUserProfile('${u.id}');" onerror="ghostAvatar(this)" />
+                                                    <span class="text-sm text-gray-700 truncate">${u.username}</span>
+                                                </div>`).join('')}
+                                        </div>` : ''}
+                                </div>`;
+                        }).join('')}
+                    </div>
                 </div>`;
             const totalBannedUsers = state.bannedUsers.length;
             const totalImages = state.adminStats.totalImages ?? state.contests.reduce((sum, contest) => sum + (contest.images?.length || 0), 0);
 
             return `
                 <div class="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onclick="event.target === this && closeAdminDashboard()">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-content" onclick="event.stopPropagation()">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-content" data-preserve-scroll="admin-dashboard" onclick="event.stopPropagation()">
                         <div class="p-6">
                             <div class="flex justify-between items-center mb-4">
                                 <h3 class="text-2xl font-bold text-gray-800">Admin Dashboard</h3>
@@ -15694,13 +16106,15 @@
                                             <div class="text-xs text-gray-600">Total Images</div>
                                         </div>
                                     </div>
-                                    ${prefStats ? `
-                                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                                            ${prefGroup('🎨 App Theme', prefStats.theme, [['light', 'Light'], ['dark', 'Dark'], ['hot', 'Hot'], ['cold', 'Cold']])}
-                                            ${prefGroup('🖼️ Voting Mode', prefStats.mode, [['single', 'Single'], ['multi', 'Multi']])}
-                                            ${prefGroup('🗳️ Voting Format', prefStats.format, [['classic', 'Classic'], ['shortlist', 'Shortlist']])}
-                                        </div>
-                                    ` : ''}
+                                </div>
+
+                                <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
+                                    <h4 class="font-bold text-gray-800 mb-3">Preferences</h4>
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        ${prefGroup('🎨 App Theme', 'theme', [['light', 'Light'], ['dark', 'Dark'], ['hot', 'Hot'], ['cold', 'Cold']])}
+                                        ${prefGroup('🖼️ Voting Mode', 'mode', [['single', 'Single'], ['multi', 'Multi']])}
+                                        ${prefGroup('🗳️ Voting Format', 'format', [['classic', 'Classic'], ['shortlist', 'Shortlist']])}
+                                    </div>
                                 </div>
 
                                 <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
@@ -15804,6 +16218,22 @@
                                     <div
                                         class="toggle-switch ${showPinIcons ? 'active' : ''}"
                                         onclick="toggleAppSetting('show_pin_icons')"
+                                    >
+                                        <div class="toggle-slider"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Hide admin vote tools Toggle -->
+                                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-gray-800">Hide admin edit/block vote tools</h4>
+                                        <p class="text-sm text-gray-600 mt-1">
+                                            Hides the edit-vote and block-vote buttons everywhere. Blocked votes stay excluded from results.
+                                        </p>
+                                    </div>
+                                    <div
+                                        class="toggle-switch ${hideAdminVoteTools() ? 'active' : ''}"
+                                        onclick="toggleHideAdminVoteTools()"
                                     >
                                         <div class="toggle-slider"></div>
                                     </div>
@@ -16294,16 +16724,16 @@
             }));
 
             // Extract all voters from merged results for dropdown
-            const voterSet = new Set();
+            const voterMapMerged = new Map();
             mergedResultsData.forEach(img => {
                 (img.breakdown || []).forEach(vote => {
                     if (!vote.isBlocked && !vote.isBanned) {
-                        voterSet.add(JSON.stringify({ userId: vote.userId, username: vote.username, avatar: vote.avatar }));
+                        if (!voterMapMerged.has(vote.userId)) voterMapMerged.set(vote.userId, { userId: vote.userId, username: vote.username, avatar: vote.avatar });
+                        if (vote.autoConverted) voterMapMerged.get(vote.userId).autoConverted = true;
                     }
                 });
             });
-            const mergedVoters = Array.from(voterSet)
-                .map(v => JSON.parse(v))
+            const mergedVoters = Array.from(voterMapMerged.values())
                 .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
 
             // Temporarily set state to use existing rendering functions
@@ -16409,7 +16839,7 @@
             state.shortlistSession = null;
             state.shortlistSelected = {};
             state.shortlistSkipped = {};
-            state.shortlistFilter = [];
+            resetVotingToolsState();
             state.resultsFormat = 'classic';
             state.resultsFormatKey = null;
             state.shortlistData = null;
@@ -16452,6 +16882,22 @@
         // A card shows its session override if it has one, otherwise the saved voting format (NULL = classic)
         function getCardFormat(itemType, itemId) {
             return state.cardFormats[`${itemType}_${itemId}`] || getSavedVotingFormat();
+        }
+
+        // Stats on a contest / merger / extract card, the same in both formats: 📝 shortlists and 👥 voters are hidden when 0,
+        // the 🖼️ image count always stays. Nothing yet: a small invitation instead of the two zeros.
+        function renderCardStats(shortlistCount, voterCount, imageCount) {
+            const shortlists = Number(shortlistCount) || 0;
+            const voters = Number(voterCount) || 0;
+            const parts = [];
+            if (shortlists === 0 && voters === 0) {
+                parts.push('<span class="font-semibold text-mauve-700 dark:text-mauve-300">Be the first to vote! 💋</span>');
+            } else {
+                if (shortlists > 0) parts.push(`${shortlists}📝`);
+                if (voters > 0) parts.push(`${voters}👥`);
+            }
+            parts.push(`${imageCount}🖼️`);
+            return parts.join(' ');
         }
 
         function isShortlistCard(itemType, itemId) {
@@ -16556,6 +17002,8 @@
         // Same "seen on first render" rule as the format callout; only while voting_mode has never been chosen.
         function shouldShowModeCallout() {
             if (!state.user || state.view !== 'vote' || state.modeCalloutDismissed || state.votingModePref !== null) return false;
+            // Hidden (not marked seen) while the single-mode tools panel is open, so the two never overlap
+            if (state.votingMode === 'single' && state.singleToolsOpen) return false;
             if (state.modeCalloutActive) return true;
             const storageKey = `peony_mode_callout_seen_${state.user.id}`;
             try {
@@ -16841,7 +17289,7 @@
                 state.shortlistSkipped = loadSkippedImages(session, imageIdSet);
                 state.shortlistFilter = [];
                 state.prank = null;
-                state.progressPanelIndex = null;
+                state.progressPath = [];
                 state.shuffledImages = shuffleArray(ctx.images);
                 state.votes = {};
                 state.currentImageIndex = 0;
@@ -16849,6 +17297,7 @@
                 state.results = null;
                 state.selectedScore = null;
                 state.multiModeFilter = [];
+                state.multiModeSort = 'default';
                 state.lastClickedImageId = null;
                 state.autosaveContext = { type: null, id: null };   // no autosave / drafts for shortlists
 
@@ -16980,6 +17429,7 @@
         function toggleShortlistImage(imageId) {
             if (!state.shortlistSession) return;
             const wasSelected = !!state.shortlistSession.selected[imageId];
+            sparkleFromTile(imageId, getScoreColor(wasSelected ? 1 : 5));   // tick = green, untick = red
             setShortlistSkipped(imageId, wasSelected);
             applyShortlistChange(imageId, !wasSelected, true);
             renderAfterMultiInteraction(imageId);
@@ -17150,6 +17600,8 @@
         // Card counts (maintained by a DB trigger) are re-read by exitShortlistVoting, so no render happens mid-voting.
         function invalidateShortlistCaches(session) {
             state.shortlistData = null;              // results pages, info modal
+            state.shortlistRows = null;
+            state.autoConvertCache = null;
             state.leaderboardShortlistStats = null;  // leaderboard
             state.userLeaderboardData = null;
         }
@@ -17262,25 +17714,41 @@
         }
 
         // Multi mode, on every real-image interaction: first remove an existing fake (wherever it is), then roll for a new one
-        // after the tile just interacted with. Re-renders with the tile kept at the same place on screen, so inserting or
-        // removing a fake above the viewport does not make the grid jump.
+        // after the tile just interacted with. The grid is updated IN PLACE (render({ morph: true })): tiles and their images
+        // persist, so a vote with the default order changes no layout and therefore moves no scroll position.
+        // Auto-jump ON: if the tile did move (sort / filter / fake inserted above), the page follows it.
+        // Auto-jump OFF: no scroll adjustment at all (native scroll anchoring is switched off too, see render()).
         function renderAfterMultiInteraction(imageId, roll = true) {
             state.prank = null;
             if (roll && rollPrank()) startPrank('multi', imageId);
+            if (!state.multiAutoJump) {
+                render({ morph: true });
+                return;
+            }
             const tileSelector = `[data-tile-id="${String(imageId).replace(/"/g, '')}"]`;
             const before = document.querySelector(tileSelector);
             const topBefore = before ? before.getBoundingClientRect().top : null;
-            const x = window.scrollX, y = window.scrollY;
-            render();
+            render({ morph: true });
             const after = document.querySelector(tileSelector);
-            const top = (after && topBefore !== null) ? y + (after.getBoundingClientRect().top - topBefore) : y;
-            window.scrollTo({ left: x, top, behavior: 'instant' });
+            if (after && topBefore !== null) {
+                const delta = after.getBoundingClientRect().top - topBefore;
+                if (Math.abs(delta) > 0.5) window.scrollTo({ left: window.scrollX, top: window.scrollY + delta, behavior: 'instant' });
+            }
+        }
+
+        function setMultiAutoJump(on) {
+            state.multiAutoJump = !!on;
+            try { localStorage.setItem('peony_multi_auto_jump', on ? '1' : '0'); } catch (e) { /* preference lasts for this page view */ }
+            render({ morph: true });
         }
 
         function startPrank(kind, imageId) {
             prankSerial++;
             // spawnedAt lets the dismiss listener ignore the very event that created the fake (event.timeStamp <= spawnedAt)
-            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
+            // The fake mirrors a RANDOM image of the whole voting (any image, possibly the current one), not the one just voted
+            const pool = state.shuffledImages;
+            const mirrorId = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)].id : imageId;
+            state.prank = { kind, imageId, mirrorId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
         }
 
         // Any click or tap inside the voting card (image area, vote / Skip / Shortlist buttons, progress bar and panel,
@@ -17321,8 +17789,7 @@
 
         // A vote on the mirrored copy is discarded: it disappears for good and the real flow moves on to the next image.
         function resolveSinglePrank() {
-            state.prank = null;
-            if (state.currentImageIndex < state.shuffledImages.length - 1) state.currentImageIndex++;
+            state.prank = null;   // the screen already sits on the image after the voted one (see handleVote)
             render();
         }
 
@@ -17332,6 +17799,43 @@
             if (state.prank && state.prank.kind === 'multi') { renderAfterMultiInteraction(state.prank.imageId, false); return; }
             state.prank = null;
             render();
+        }
+
+        // ---------- Score sparkles ----------
+        // A small burst (7 particles, 500ms) from the pressed button / tile in the score's color. Pure CSS animation on
+        // absolutely positioned, pointer-events:none elements appended to <body> (outside #app, so renders never touch
+        // them); each burst removes itself on animationend. No render() involved. At most MAX_SPARKLE_BURSTS at once.
+        const MAX_SPARKLE_BURSTS = 6;
+        const SPARKLE_COUNT = 7;
+
+        function emitSparkles(origin, color) {
+            if (!origin || !origin.getBoundingClientRect || prefersReducedMotion()) return;
+            const rect = origin.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) return;
+            const bursts = document.querySelectorAll('.sparkle-burst');
+            for (let i = 0; i <= bursts.length - MAX_SPARKLE_BURSTS; i++) bursts[i].remove();
+            const burst = document.createElement('div');
+            burst.className = 'sparkle-burst';
+            burst.setAttribute('aria-hidden', 'true');
+            burst.style.left = `${rect.left + window.scrollX + rect.width / 2}px`;
+            burst.style.top = `${rect.top + window.scrollY + rect.height / 2}px`;
+            burst.style.setProperty('--sparkle-color', color);
+            const reach = Math.max(18, Math.min(46, Math.min(rect.width, rect.height) * 0.7));
+            for (let i = 0; i < SPARKLE_COUNT; i++) {
+                const angle = (i / SPARKLE_COUNT) * Math.PI * 2 + Math.random() * 0.6;
+                const dist = reach * (0.7 + Math.random() * 0.6);
+                const dot = document.createElement('span');
+                dot.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+                dot.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
+                dot.style.animationDelay = `${Math.round(Math.random() * 60)}ms`;
+                dot.addEventListener('animationend', () => { dot.remove(); if (!burst.firstChild) burst.remove(); }, { once: true });
+                burst.appendChild(dot);
+            }
+            document.body.appendChild(burst);
+        }
+
+        function sparkleFromTile(imageId, color) {
+            emitSparkles(document.querySelector(`[data-tile-id="${String(imageId).replace(/"/g, '')}"]`), color);
         }
 
         // ---------- Vote feedback fade (single mode) ----------
@@ -17404,22 +17908,22 @@
             if (state.voteHold) {
                 clearTimeout(state.voteHold.timer);
                 state.voteHold = null;
+                state.singleFreeze = null;
             }
         }
 
-        function commitShortlistSingle(kind, startOpacity, prank) {
+        function commitShortlistSingle(kind, startOpacity, prank, anchor) {
             clearVoteFade();
-            const hold = { kind, prank, opacity: Math.max(startOpacity || 0, prefersReducedMotion() ? 0.25 : 0.5), timer: null };
+            const hold = { kind, prank, anchor, opacity: Math.max(startOpacity || 0, prefersReducedMotion() ? 0.25 : 0.5), timer: null };
             state.voteHold = hold;
+            state.singleFreeze = anchor.list;
             render();   // progress bar, tags and the held tint on the voted image
             hold.timer = setTimeout(() => {
                 if (state.voteHold !== hold) return;
                 state.voteHold = null;
-                if (hold.prank) {
-                    startPrank('single', hold.imageId);
-                } else if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                    state.currentImageIndex++;
-                }
+                state.singleFreeze = null;
+                goToAdvanceTarget(hold.anchor);
+                if (hold.prank) startPrank('single', hold.imageId);   // a mirrored copy is shown on the image we moved to
                 render();
                 showVoteFade(kind, 0.2);   // only a subtle remainder over the new image
             }, SHORTLIST_HOLD_MS);
@@ -17429,12 +17933,14 @@
         function handleShortlistVote(kind, startOpacity) {
             if (!state.shortlistSession || state.voteHold) return;
             if (hasSinglePrank()) { resolveSinglePrank(); return; }
-            const image = state.shuffledImages[state.currentImageIndex];
+            const anchor = captureAdvance();   // before the vote changes the working set
+            const image = anchor.list[anchor.idx];
             if (!image) return;
             const yes = kind === 'yes';
+            emitSparkles(document.querySelector(`[data-shortlist-btn="${kind}"]`), getScoreColor(yes ? 5 : 1));
             setShortlistSkipped(image.id, !yes);
             if (!!state.shortlistSession.selected[image.id] !== yes) applyShortlistChange(image.id, yes, true);
-            const hold = commitShortlistSingle(kind, startOpacity, rollPrank());
+            const hold = commitShortlistSingle(kind, startOpacity, rollPrank(), anchor);
             hold.imageId = image.id;
         }
 
@@ -17443,13 +17949,15 @@
 
         // Multi mode filter buckets: gray = undecided, green = shortlisted, red = skipped
         function setShortlistFilter(bucket) {
+            const anchor = captureSingleAnchor();
             const index = state.shortlistFilter.indexOf(bucket);
             if (index > -1) {
                 state.shortlistFilter.splice(index, 1);
             } else {
                 state.shortlistFilter.push(bucket);
             }
-            render();
+            restoreSingleAnchor(anchor);
+            render({ morph: true });
         }
 
         // ---------- Swipe gestures (touch and mouse drag) ----------
@@ -17641,11 +18149,13 @@
                 <div class="flex gap-3 mb-3" data-swipe="vote" style="touch-action: pan-y; user-select: none;">
                     <button
                         onclick="handleShortlistNo()"
+                        data-shortlist-btn="no"
                         class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'no' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(1)}; ring-color: ${getScoreColor(1)};"
                     ><span class="hidden sm:inline">← </span>Swipe left to Skip<span class="hidden sm:inline"> ✕</span></button>
                     <button
                         onclick="handleShortlistYes()"
+                        data-shortlist-btn="yes"
                         class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'yes' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(5)}; ring-color: ${getScoreColor(5)};"
                     >Swipe right to Shortlist<span class="hidden sm:inline"> ✓ →</span></button>
@@ -17756,6 +18266,26 @@
             return key !== null && key === state.resultsFormatKey;
         }
 
+        // Source contests of an extract and only the extract's images
+        function getExtractScope(contest) {
+            let contestIds = [];
+            if (contest.extractSourceType === 'contest') {
+                contestIds = contest.extractSourceContestId ? [contest.extractSourceContestId] : [];
+            } else if (contest.extractSourceType === 'merger') {
+                const merger = state.mergers.find(m => m.id === contest.extractSourceMergerId);
+                contestIds = merger ? merger.contestIds : [];
+            }
+            const extractImageIds = new Set(contest.extractImageIds || []);
+            const images = [];
+            contestIds.forEach(contestId => {
+                const source = state.contests.find(c => c.id === contestId);
+                (source?.images || []).forEach(img => {
+                    if (extractImageIds.has(img.id)) images.push({ id: img.id, url: img.url, contestId });
+                });
+            });
+            return { contestIds, images };
+        }
+
         // Contests whose rows are in scope plus the images shown. Merger = union over its contest_ids;
         // extract = source contest(s) filtered to the extract's image_ids.
         function getShortlistScope() {
@@ -17769,41 +18299,184 @@
             }
             const contest = state.currentContest;
             if (!contest) return null;
-            if (contest.isExtract) {
-                let contestIds = [];
-                if (contest.extractSourceType === 'contest') {
-                    contestIds = contest.extractSourceContestId ? [contest.extractSourceContestId] : [];
-                } else if (contest.extractSourceType === 'merger') {
-                    const merger = state.mergers.find(m => m.id === contest.extractSourceMergerId);
-                    contestIds = merger ? merger.contestIds : [];
-                }
-                const extractImageIds = new Set(contest.extractImageIds || []);
-                const images = [];
-                contestIds.forEach(contestId => {
-                    const source = state.contests.find(c => c.id === contestId);
-                    (source?.images || []).forEach(img => {
-                        if (extractImageIds.has(img.id)) images.push({ id: img.id, url: img.url, contestId });
-                    });
-                });
-                return { contestIds, images };
-            }
+            if (contest.isExtract) return getExtractScope(contest);
             return {
                 contestIds: [contest.id],
                 images: (contest.images || []).map(img => ({ id: img.id, url: img.url, contestId: contest.id }))
             };
         }
 
-        // Classic votes already in memory for the open results page (no extra request).
+        // ==================== SHORTLIST-TO-CLASSIC AUTO-CONVERSION ====================
+        // Per image's home contest: a user with real shortlists rows in that contest and NO real classic votes in it gets
+        // SYNTHETIC classic votes for every image of that contest (4 = shortlisted, 2 = not). They are injected into the
+        // same breakdown structure as real votes (flagged autoConverted: true) so every classic tab works unchanged, and
+        // are never written to the database or counted by the leaderboard, profile modal, admin stats or voter_count.
+        const SHORTLISTED_AS_SCORE = 4;
+        const NOT_SHORTLISTED_AS_SCORE = 2;
+
+        // Scope (contests + images) of the classic results being loaded; independent of state.view
+        function getClassicAutoScope(contest) {
+            if (contest.isExtract) return getExtractScope(contest);
+            return {
+                contestIds: [contest.id],
+                images: (contest.images || []).map(img => ({ id: img.id, url: img.url, contestId: contest.id }))
+            };
+        }
+
+        // rows: real shortlists rows (user_id, image_id, contest_id, users{username, avatar, is_banned}); realPairs: Set('userId|contestId')
+        function buildAutoConvertedVotes(rows, realPairs, scope) {
+            const shortlisted = new Set();
+            const users = new Map();   // 'userId|contestId' -> user
+            rows.forEach(row => {
+                const user = row.users;
+                if (!user || user.is_banned) return;
+                shortlisted.add(`${row.user_id}|${row.image_id}`);
+                const key = `${row.user_id}|${row.contest_id}`;
+                if (!users.has(key)) users.set(key, { userId: row.user_id, username: user.username, avatar: user.avatar, contestId: row.contest_id });
+            });
+            const votes = [];
+            users.forEach((user, key) => {
+                if (realPairs.has(key)) return;   // has real classic votes in that contest: never converted
+                scope.images.forEach(img => {
+                    if (img.contestId !== user.contestId) return;
+                    votes.push({
+                        userId: user.userId, username: user.username, avatar: user.avatar, imageId: img.id, contestId: user.contestId,
+                        score: shortlisted.has(`${user.userId}|${img.id}`) ? SHORTLISTED_AS_SCORE : NOT_SHORTLISTED_AS_SCORE
+                    });
+                });
+            });
+            return votes;
+        }
+
+        // Fetches the shortlists of the open item once (cached for the shortlist tabs too) and injects the synthetic votes
+        async function attachAutoConverted({ kind, key, scope, realPairs }) {
+            let rows = [];
+            try {
+                rows = scope.contestIds.length > 0
+                    ? await fetchAllShortlistsPaginated(
+                        `contest_id=in.(${scope.contestIds.join(',')})`,
+                        'user_id,image_id,contest_id,users!inner(id,username,avatar,is_banned)'
+                    )
+                    : [];
+            } catch (error) {
+                console.warn('Shortlists could not be loaded for auto-conversion:', error);
+                rows = [];
+            }
+            state.shortlistRows = { key, rows };
+            const synthetic = buildAutoConvertedVotes(rows, realPairs, scope);
+            state.autoConvertCache = {
+                kind, key, synthetic,
+                userCount: new Set(synthetic.map(v => v.userId)).size,
+                baseVoters: (state.contestVoters || []).map(v => ({ ...v }))
+            };
+            applyAutoConvertedClassic();
+        }
+
+        // Rebuilds the open classic results from the cached synthetic votes, honouring the "Include auto-converted" switch
+        // (no refetch). Real entries are never touched; averages / totals are recomputed from the breakdown.
+        function applyAutoConvertedClassic() {
+            const cache = state.autoConvertCache;
+            if (!cache) return;
+            const include = state.includeAutoConverted;
+            const byImage = new Map();
+            if (include) {
+                cache.synthetic.forEach(v => {
+                    if (!byImage.has(v.imageId)) byImage.set(v.imageId, []);
+                    byImage.get(v.imageId).push(v);
+                });
+            }
+            const rebuild = (img, field) => {
+                const real = (img[field] || []).filter(v => !v.autoConverted);
+                const extra = (byImage.get(img.id) || []).map(v => ({
+                    userId: v.userId, username: v.username, avatar: v.avatar, score: v.score,
+                    isCurrentUser: v.userId === state.user?.id, isBlocked: false, isBanned: false,
+                    autoConverted: true, contestId: v.contestId
+                }));
+                const breakdown = real.concat(extra);
+                const scores = breakdown.filter(v => !v.isBlocked && !v.isBanned).map(v => v.score);
+                return { ...img, [field]: breakdown, averageScore: powerMean(scores, state.scoringFormula), totalVotes: scores.length };
+            };
+            if (cache.kind === 'results' && state.results) {
+                state.results = state.results.map(img => rebuild(img, 'breakdown')).sort(compareWithTieBreaking);
+            } else if (cache.kind === 'merged' && state.mergedResults) {
+                state.mergedResults = { ...state.mergedResults, images: state.mergedResults.images.map(img => rebuild(img, 'voteBreakdown')).sort(compareWithTieBreaking) };
+            } else {
+                return;
+            }
+            // Users lists: the real voters plus the converted ones (marked, shown with a bookmark)
+            const converted = new Map();
+            if (include) cache.synthetic.forEach(v => { if (!converted.has(v.userId)) converted.set(v.userId, { userId: v.userId, username: v.username, avatar: v.avatar }); });
+            const baseIds = new Set(cache.baseVoters.map(v => v.userId));
+            state.contestVoters = cache.baseVoters
+                .map(v => converted.has(v.userId) ? { ...v, autoConverted: true } : { ...v })
+                .concat([...converted.values()].filter(u => !baseIds.has(u.userId)).map(u => ({ ...u, autoConverted: true })))
+                .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+        }
+
+        // How many users the switch affects in the current format
+        function getAutoConvertedUserCount() {
+            if (isShortlistFormat()) return state.shortlistData ? state.shortlistData.autoUserCount || 0 : 0;
+            const cache = state.autoConvertCache;
+            return cache && cache.key === getShortlistScopeKey() ? cache.userCount : 0;
+        }
+
+        function setIncludeAutoConverted(on) {
+            state.includeAutoConverted = !!on;
+            // Lists change with the data: close open breakdowns / comparisons and reset the Users filter
+            state.showBreakdownModal = null;
+            state.breakdownModalView = null;
+            state.showPairsBreakdownModal = null;
+            document.body.classList.remove('modal-open');
+            state.comparisonView = null;
+            state.comparisonDetailUserId = null;
+            state.averageTabCompareAll = false;
+            state.averageTabCompareUserId = null;
+            state.userFilterDropdownOpen = false;
+            state.userFilterSelectedUsers = null;
+            if (isShortlistFormat()) {
+                rebuildShortlistDataFromCache();
+                const view = getShortlistView();
+                if (state.selectedVoterUserId && view && !view.voterMap.has(state.selectedVoterUserId)) state.selectedVoterUserId = null;
+            } else {
+                applyAutoConvertedClassic();
+                if (state.selectedVoterUserId && !state.contestVoters.some(v => v.userId === state.selectedVoterUserId)) state.selectedVoterUserId = null;
+            }
+            render();
+        }
+
+        // Compact "Include auto-converted (+N)" switch for the results page (hidden when nothing could be converted)
+        function renderAutoConvertedSwitch() {
+            const count = getAutoConvertedUserCount();
+            if (count === 0) return '';
+            const on = state.includeAutoConverted;
+            const noun = count === 1 ? 'voter' : 'voters';
+            const label = isShortlistFormat()
+                ? `Include auto-converted: ⭐→🔖 (+${count} classic ${noun})`
+                : `Include auto-converted: 🔖→⭐ (+${count} shortlist ${noun})`;
+            const hint = isShortlistFormat()
+                ? 'Classic voters are counted as shortlisting images they scored 4 or 5.'
+                : 'Shortlist voters are counted as 4 for shortlisted images and 2 for the rest.';
+            return `
+                <button onclick="setIncludeAutoConverted(${!on})" role="switch" aria-checked="${on}" title="${hint}" class="flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-700 text-left max-w-full">
+                    <span class="relative inline-block w-8 h-4 flex-shrink-0 rounded-full transition ${on ? 'bg-mauve-400' : 'bg-gray-300'}">
+                        <span class="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-4' : ''}"></span>
+                    </span>
+                    <span>${label}</span>
+                </button>
+            `;
+        }
+
+        // Classic votes already in memory for the open results page (no extra request). Synthetic votes are never fed back.
         function collectClassicVotesForShortlist(scope) {
             const votes = [];
             if (state.view === 'mergedResults') {
                 (state.mergedResults?.images || []).forEach(img => {
-                    (img.voteBreakdown || []).forEach(v => votes.push({ ...v, imageId: img.id, contestId: img.contestId }));
+                    (img.voteBreakdown || []).filter(v => !v.autoConverted).forEach(v => votes.push({ ...v, imageId: img.id, contestId: img.contestId }));
                 });
             } else {
                 const contestOfImage = new Map(scope.images.map(img => [img.id, img.contestId]));
                 (state.results || []).forEach(img => {
-                    (img.breakdown || []).forEach(v => votes.push({ ...v, imageId: img.id, contestId: contestOfImage.get(img.id) }));
+                    (img.breakdown || []).filter(v => !v.autoConverted).forEach(v => votes.push({ ...v, imageId: img.id, contestId: contestOfImage.get(img.id) }));
                 });
             }
             return votes;
@@ -17839,7 +18512,7 @@
         // part in the image's home contest - they have at least one real shortlists row in that contest, or their classic
         // votes in that contest auto-convert to a non-empty set (real rows override auto-conversion for that contest).
         // participation: Map(contestId -> Set(userId)) is computed here once; nothing recomputes it per tab.
-        function buildShortlistData(key, scope, rows, votes) {
+        function buildShortlistData(key, scope, rows, votes, includeAuto = true) {
             const imageContest = new Map(scope.images.map(img => [img.id, img.contestId]));
             const voters = {};
             const participation = new Map();
@@ -17876,18 +18549,22 @@
                 if (imageContest.has(row.image_id)) voter.images.add(row.image_id);
             });
 
-            deriveAutoConvertedShortlists(votes.filter(v => imageContest.has(v.imageId)), hasRealShortlist).forEach(entry => {
-                const voter = ensureVoter(entry.userId, entry.username, entry.avatar);
-                voter.contests.add(entry.contestId);
-                voter.hasAuto = true;
-                markParticipation(entry.contestId, entry.userId);
-                entry.scores.forEach((score, imageId) => {
-                    voter.scoreByImage.set(imageId, score);
-                    if (score >= 4) voter.images.add(imageId);
+            const derived = deriveAutoConvertedShortlists(votes.filter(v => imageContest.has(v.imageId)), hasRealShortlist);
+            if (includeAuto) {
+                derived.forEach(entry => {
+                    const voter = ensureVoter(entry.userId, entry.username, entry.avatar);
+                    voter.contests.add(entry.contestId);
+                    voter.hasAuto = true;
+                    markParticipation(entry.contestId, entry.userId);
+                    entry.scores.forEach((score, imageId) => {
+                        voter.scoreByImage.set(imageId, score);
+                        if (score >= 4) voter.images.add(imageId);
+                    });
                 });
-            });
+            }
 
-            return { key, images: scope.images, imageContest, voters, participation };
+            // rows / votes stay on the data so the "Include auto-converted" switch can rebuild it without refetching
+            return { key, images: scope.images, imageContest, voters, participation, rows, votes, autoUserCount: new Set([...derived.values()].map(e => e.userId)).size };
         }
 
         async function loadShortlistData(force = false) {
@@ -17898,13 +18575,15 @@
 
             setLoading('Loading shortlists...');
             try {
-                const rows = scope.contestIds.length > 0
+                const cached = !force && state.shortlistRows && state.shortlistRows.key === key ? state.shortlistRows.rows : null;
+                const rows = cached || (scope.contestIds.length > 0
                     ? await fetchAllShortlistsPaginated(
                         `contest_id=in.(${scope.contestIds.join(',')})`,
                         'user_id,image_id,contest_id,users!inner(id,username,avatar,is_banned)'
                     )
-                    : [];
-                state.shortlistData = buildShortlistData(key, scope, rows, collectClassicVotesForShortlist(scope));
+                    : []);
+                state.shortlistRows = { key, rows };
+                state.shortlistData = buildShortlistData(key, scope, rows, collectClassicVotesForShortlist(scope), state.includeAutoConverted);
             } catch (error) {
                 console.error('Error loading shortlist results:', error);
                 state.shortlistData = null;
@@ -17912,6 +18591,14 @@
             } finally {
                 clearLoading();
             }
+        }
+
+        // The switch rebuilds the shortlist data from the cached rows and classic votes (no request)
+        function rebuildShortlistDataFromCache() {
+            const data = state.shortlistData;
+            const scope = getShortlistScope();
+            if (!data || !scope) return;
+            state.shortlistData = buildShortlistData(data.key, scope, data.rows, data.votes, state.includeAutoConverted);
         }
 
         async function setResultsFormat(format) {
@@ -18300,7 +18987,7 @@
                                                 <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
                                             </div>
                                             ${filterEditing ? `
-                                                <div class="absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
+                                                <div class="absolute top-1 left-1 w-7 h-7 rounded flex items-center justify-center text-lg leading-none font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
                                                     ${isVisible ? '✓' : '✕'}
                                                 </div>
                                             ` : ''}
@@ -18678,8 +19365,8 @@
             }
             if (voter.realContests.has(imageContestId)) {
                 return voter.images.has(imageId)
-                    ? `<span class="font-bold flex-shrink-0" style="color: ${getScoreColor(5)};" title="Shortlisted">✓</span>`
-                    : `<span class="font-bold flex-shrink-0" style="color: ${getScoreColor(1)};" title="Not shortlisted">✗</span>`;
+                    ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Shortlisted">✓</span>`
+                    : `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(1)};" title="Not shortlisted">✗</span>`;
             }
             return '';
         }
@@ -18864,7 +19551,73 @@
             `;
         }
 
-        function render() {
+        // ---------- In-place DOM update (used by multi-mode voting so tiles / images persist and the layout never shifts) ----------
+        // Same-tag elements are updated (attributes, text, children) instead of being replaced; tiles are matched by
+        // data-tile-id / data-fake-tile so the mirrored prank tile can appear or disappear without touching its neighbours.
+        function morphKey(node) {
+            if (node.nodeType !== 1) return null;
+            if (node.hasAttribute('data-fake-tile')) return 'fake';
+            const id = node.getAttribute('data-tile-id');
+            return id !== null ? 't' + id : null;
+        }
+
+        function morphAttributes(oldEl, newEl) {
+            Array.from(newEl.attributes).forEach(a => {
+                if (oldEl.getAttribute(a.name) !== a.value) oldEl.setAttribute(a.name, a.value);
+            });
+            Array.from(oldEl.attributes).forEach(a => {
+                if (!newEl.hasAttribute(a.name)) oldEl.removeAttribute(a.name);
+            });
+        }
+
+        function morphNode(oldNode, newNode) {
+            if (oldNode.nodeType !== newNode.nodeType || (oldNode.nodeType === 1 && oldNode.tagName !== newNode.tagName)) {
+                oldNode.replaceWith(newNode);
+                return;
+            }
+            if (oldNode.nodeType !== 1) {
+                if (oldNode.nodeValue !== newNode.nodeValue) oldNode.nodeValue = newNode.nodeValue;
+                return;
+            }
+            morphAttributes(oldNode, newNode);
+            if (oldNode.tagName === 'IMG') return;
+            morphChildren(oldNode, newNode);
+            if (oldNode.tagName === 'INPUT') {
+                if (oldNode.type === 'checkbox' || oldNode.type === 'radio') oldNode.checked = newNode.hasAttribute('checked');
+                else if (oldNode.value !== (newNode.getAttribute('value') || '')) oldNode.value = newNode.getAttribute('value') || '';
+            } else if (oldNode.tagName === 'SELECT') {
+                const selected = Array.from(newNode.options).findIndex(o => o.hasAttribute('selected'));
+                if (selected > -1) oldNode.selectedIndex = selected;
+            }
+        }
+
+        function morphChildren(oldParent, newParent) {
+            const keyed = new Map();
+            Array.from(oldParent.childNodes).forEach(k => { const key = morphKey(k); if (key) keyed.set(key, k); });
+            let index = 0;
+            Array.from(newParent.childNodes).forEach(newKid => {
+                const key = morphKey(newKid);
+                let match = null;
+                if (key) {
+                    match = keyed.get(key) || null;
+                    keyed.delete(key);
+                } else {
+                    const candidate = oldParent.childNodes[index];
+                    if (candidate && !morphKey(candidate) && candidate.nodeType === newKid.nodeType) match = candidate;
+                }
+                const at = oldParent.childNodes[index] || null;
+                if (match) {
+                    if (at !== match) oldParent.insertBefore(match, at);
+                    morphNode(match, newKid);
+                } else {
+                    oldParent.insertBefore(newKid, at);
+                }
+                index++;
+            });
+            while (oldParent.childNodes.length > index) oldParent.removeChild(oldParent.lastChild);
+        }
+
+        function render(opts) {
             const app = document.getElementById('app');
             if (state.view !== 'vote') { cancelVoteHold(); state.prank = null; }   // neither the hold nor the prank outlives the voting screen
             syncPrankListener();
@@ -18907,7 +19660,16 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal() + renderNoticeModal();
+            const html = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal() + renderNoticeModal();
+            if (opts && opts.morph && app.firstChild) {
+                const template = document.createElement('template');
+                template.innerHTML = html;
+                morphChildren(app, template.content);
+            } else {
+                app.innerHTML = html;
+            }
+
+            document.documentElement.classList.toggle('no-scroll-anchor', state.view === 'vote' && state.votingMode === 'multi' && !state.multiAutoJump);
 
             // Restore scroll positions
             savedScrolls.forEach(({ key, top }) => {
@@ -18962,7 +19724,9 @@
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
         window.jumpToImage = jumpToImage;
-        window.toggleProgressPanel = toggleProgressPanel;
+        window.toggleProgressRange = toggleProgressRange;
+        window.toggleSingleTools = toggleSingleTools;
+        window.clearSingleFilter = clearSingleFilter;
         window.prankTileClick = prankTileClick;
         window.cancelVoting = cancelVoting;
         window.submitVotes = submitVotes;
@@ -18992,6 +19756,8 @@
         window.adjustMultiVotingImageScale = adjustMultiVotingImageScale;
         window.setMultiModeFilter = setMultiModeFilter;
         window.setMultiModeSort = setMultiModeSort;
+        window.setMultiAutoJump = setMultiAutoJump;
+        window.setIncludeAutoConverted = setIncludeAutoConverted;
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
@@ -19007,6 +19773,8 @@
         window.showAppSettings = showAppSettings;
         window.closeAppSettings = closeAppSettings;
         window.toggleAppSetting = toggleAppSetting;
+        window.toggleHideAdminVoteTools = toggleHideAdminVoteTools;
+        window.toggleAdminPref = toggleAdminPref;
         window.showActivityLogs = showActivityLogs;
         window.closeActivityLogs = closeActivityLogs;
         window.setActivityStartDate = setActivityStartDate;
