@@ -18530,9 +18530,9 @@
             render();
         }
 
-        // Something inside the folded section differs from its default: the switch is off (while it is shown) or the formula changed
+        // Something inside the folded section differs from its default: the switch is off (while it is shown) or the formula changed (Classic only: the formula is not applied in Shortlist)
         function hasNonDefaultResultsOptions() {
-            return (getAutoConvertedUserCount() > 0 && !state.includeAutoConverted) || state.scoringFormula !== DEFAULT_SCORING_FORMULA;
+            return (getAutoConvertedUserCount() > 0 && !state.includeAutoConverted) || (!isShortlistFormat() && state.scoringFormula !== DEFAULT_SCORING_FORMULA);
         }
 
         function renderResultsOptionsHandle() {
