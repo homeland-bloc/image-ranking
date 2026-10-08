@@ -1136,6 +1136,8 @@
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
 
+        // Shown after scores / counts while the Users filter is active (kept compact so small tiles do not overflow)
+        const USER_FILTER_MARK = '<span title="Filtered by user selection" style="font-size: 0.85em; letter-spacing: -0.08em; white-space: nowrap;">...</span>';
         const DEFAULT_SCORING_FORMULA = 2;   // the app's default scoring formula (Squared)
         const RESULTS_OPTIONS_KEY = 'peony_results_options_open';
 
@@ -3561,7 +3563,7 @@
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
                                 <div class="flex items-center gap-2">
-                                    <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">...</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('divisive')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Divisive Breakdown">📊</button>
                                     <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">⚓</button>
                                 </div>
@@ -14599,7 +14601,7 @@
                 const bMin = grouped[b].min;
                 return bMin - aMin;
             });
-            const userFilterAsterisk = isUserFilterActive() ? '*' : '';
+            const userFilterMark = isUserFilterActive() ? USER_FILTER_MARK : '';
             const imageFilterIds = getFilteredImageIds();
             let allGrouped = null;
             if (imageFilterIds !== null) {
@@ -14657,7 +14659,7 @@
                                     <div class="relative cursor-pointer ${isFilterEditing ? '' : !isVisible ? '' : 'hover:scale-105'} transition-transform rounded-lg overflow-hidden shadow-lg" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${item.id})` : isVisible ? `showBreakdown(${item.id})` : `toggleImageFilterDropdown()`}">
                                         <img src="${item.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
                                         <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">
-                                            ${item.averageScore}${userFilterAsterisk}
+                                            ${item.averageScore}${userFilterMark}
                                         </div>
                                         ${isFilterEditing ? `
                                             <div class="absolute top-1 left-1 w-7 h-7 rounded flex items-center justify-center text-lg leading-none font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
@@ -14738,7 +14740,7 @@
 
             // Images mode with user filter
             const countData = isUserFilterActive() ? generateCountDataFiltered() : generateCountData();
-            const userFilterAsterisk = isUserFilterActive() ? '*' : '';
+            const userFilterMark = isUserFilterActive() ? USER_FILTER_MARK : '';
 
             // Calculate hidden counts per count level for image filter
             let allCountData = null;
@@ -14784,7 +14786,7 @@
                                         <div class="relative cursor-pointer ${isFilterEditing ? '' : 'hover:opacity-90'} transition" style="height: ${imageSize}px; ${!isVisible ? 'opacity: 0.3; filter: grayscale(80%);' : ''}" onclick="${isFilterEditing ? `event.stopPropagation(); toggleImageFilterImage(${img.id})` : `showBreakdown(${img.id})`}">
                                             <div class="relative rounded-lg overflow-hidden shadow-lg bg-gray-100 h-full" style="height: ${imageSize}px; border: 3px solid ${bgColor};">
                                                 <img src="${img.url}" alt="Image" class="h-full w-auto object-cover" style="height: ${imageSize}px;" />
-                                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">${img.averageScore}${userFilterAsterisk}</div>
+                                                <div class="absolute bottom-0 left-0 right-0 text-center py-1 font-bold score-text" style="font-size: ${fontSize}px; color: white;">${img.averageScore}${userFilterMark}</div>
                                             </div>
                                             ${isFilterEditing ? `
                                                 <div class="absolute top-1 left-1 w-7 h-7 rounded flex items-center justify-center text-lg leading-none font-bold ${isVisible ? 'bg-green-500 text-white' : 'bg-red-500 text-white'} shadow">
@@ -15462,7 +15464,7 @@
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
                                 <div class="flex items-center gap-2">
-                                    <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">...</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('image')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Vote Breakdown">👥</button>
                                     <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">⚓</button>
                                 </div>
@@ -15532,7 +15534,7 @@
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
                                 <div class="flex items-center gap-2">
-                                    <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <h3 class="text-xl font-bold text-gray-800">Divisive Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">...</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('image')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Vote Breakdown">👥</button>
                                     <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">⚓</button>
                                 </div>
@@ -15924,7 +15926,7 @@
                         <div class="p-4 flex-shrink-0 bg-white z-10 border-b border-gray-200 rounded-t-2xl">
                             <div class="flex justify-between items-center">
                                 <div class="flex items-center gap-2">
-                                    <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">*</span>' : ''}</h3>
+                                    <h3 class="text-xl font-bold text-gray-800">Vote Breakdown${isFiltered ? ' <span class="text-mauve-500 text-base" title="Filtered by user selection">...</span>' : ''}</h3>
                                     <button onclick="switchBreakdownView('divisive')" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="Switch to Divisive Breakdown">📊</button>
                                     <button onclick="jumpToPairs(${item.id})" class="px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 hover:bg-gray-300 transition" title="View in Pairs tab">⚓</button>
                                 </div>
@@ -15955,9 +15957,9 @@
                                                 ? powerMean(filteredScores, state.scoringFormula)
                                                 : '—';
                                             return `
-                                                <div class="text-2xl font-bold text-gray-400">${filteredAvg}*</div>
-                                                <div class="text-xs text-gray-400">Average Score (filtered)*</div>
-                                                <div class="text-xs text-gray-500 mt-1">${filteredScores.length}* of ${item.totalVotes} votes shown</div>
+                                                <div class="text-2xl font-bold text-gray-400" title="Filtered by user selection">${filteredAvg}...</div>
+                                                <div class="text-xs text-gray-400">Average Score (filtered)...</div>
+                                                <div class="text-xs text-gray-500 mt-1">${filteredScores.length}... of ${item.totalVotes} votes shown</div>
                                             `;
                                         }
                                         return `
@@ -19457,13 +19459,13 @@
             `;
         }
 
-        // ---------- Auto-converted marker (🛸) and explanatory label in the breakdown / pairs modals ----------
-        const AUTO_LABEL_CLASSIC = '🛸 Auto-converted from shortlists: shortlisted images count as 4, all others as 2. ✓ = shortlisted, ✗ = not shortlisted.';
-        const AUTO_LABEL_SHORTLIST = '🛸 Auto-converted from classic votes: scores 4-5 count as shortlisted, scores 1-3 as not shortlisted. The colored circle shows the score they gave.';
+        // ---------- Auto-converted marker (gray *) and explanatory label in the breakdown / pairs modals ----------
+        const AUTO_LABEL_CLASSIC = '* Auto-converted from shortlists: shortlisted images count as 4, all others as 2. ✓ = shortlisted, ✗ = not shortlisted.';
+        const AUTO_LABEL_SHORTLIST = '* Auto-converted from classic votes: scores 4-5 count as shortlisted, scores 1-3 as not shortlisted. The colored circle shows the score they gave.';
 
         // Directly after the username; never shrinks, so the name truncates first
         function renderAutoMarker(label) {
-            return `<span class="ml-1 text-sm leading-none flex-shrink-0" title="${label}">🛸</span>`;
+            return `<span class="ml-1 text-sm leading-none font-bold text-gray-500 flex-shrink-0" title="${label}">*</span>`;
         }
 
         // One small muted line between the top stats and the voter lists; callers only draw it when a converted row is visible
