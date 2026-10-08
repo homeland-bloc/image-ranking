@@ -13819,9 +13819,10 @@
                                     return filteredImages.map((image, idx) => {
                                         const tile = renderTile(image, idx, false);
                                         // Prank: a mirrored copy right after the tile that was just interacted with
-                                        return state.prank && state.prank.kind === 'multi' && String(state.prank.imageId) === String(image.id)
-                                            ? tile + renderTile(image, idx, true)
-                                            : tile;
+                                        if (!(state.prank && state.prank.kind === 'multi' && String(state.prank.imageId) === String(image.id))) return tile;
+                                        // The fake copies the image it mirrors, including that image's score / tick state
+                                        const mirrored = state.shuffledImages.find(img => String(img.id) === String(state.prank.mirrorId)) || image;
+                                        return tile + renderTile(mirrored, idx, true);
                                     }).join('');
                                 })()}
                             </div>
@@ -14081,9 +14082,13 @@
                     : (state.currentContest?.title || 'Voting'), totalCount);
             }
             if (state.currentImageIndex > workingSet.length - 1) state.currentImageIndex = workingSet.length - 1;
-            const currentImage = workingSet[state.currentImageIndex];
+            const realImage = workingSet[state.currentImageIndex];
             // The mirrored prank copy must look unvoted: no score / shortlist tag and neutral controls (real state is never touched)
             const onPrankCopy = hasSinglePrank();
+            // The fake shows a mirrored copy of a random image (see startPrank); it never touches that image's state
+            const currentImage = onPrankCopy
+                ? (state.shuffledImages.find(img => String(img.id) === String(state.prank.mirrorId)) || realImage)
+                : realImage;
             const currentVote = onPrankCopy ? undefined : isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
             const shortlistStatus = isShortlist ? (onPrankCopy ? 'undecided' : getShortlistStatus(currentImage.id)) : null;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
@@ -17637,7 +17642,10 @@
         function startPrank(kind, imageId) {
             prankSerial++;
             // spawnedAt lets the dismiss listener ignore the very event that created the fake (event.timeStamp <= spawnedAt)
-            state.prank = { kind, imageId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
+            // The fake mirrors a RANDOM image of the whole voting (any image, possibly the current one), not the one just voted
+            const pool = state.shuffledImages;
+            const mirrorId = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)].id : imageId;
+            state.prank = { kind, imageId, mirrorId, fakeId: `prank_${prankSerial}`, spawnedAt: performance.now() };
         }
 
         // Any click or tap inside the voting card (image area, vote / Skip / Shortlist buttons, progress bar and panel,
