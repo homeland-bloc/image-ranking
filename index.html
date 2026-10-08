@@ -956,6 +956,38 @@
         }
         body.cold-theme .cold-all-more:hover { background-image: linear-gradient(to right, #d3ebde, #bfe0cf) !important; }
 
+        /* Home folders in Dark and Hot: same hues as the default (red Pinned, green All Votings) but about 30% darker and
+           less saturated, still left-to-right gradients. White on the headers: red 6.9:1 to 9.4:1, green 5.3:1 to 7.7:1.
+           (Hot also carries dark-theme; Light and Cold are untouched.) */
+        body.dark-theme .cold-pinned-header {
+            background-image: linear-gradient(to right, #9a3b3b, #7d2a2c) !important;
+            box-shadow: 0 4px 10px rgba(125, 42, 44, 0.35) !important;
+        }
+        body.dark-theme .cold-all-header {
+            background-image: linear-gradient(to right, #2b7a50, #1e5e3b) !important;
+            box-shadow: 0 4px 10px rgba(30, 94, 59, 0.35) !important;
+        }
+        body.dark-theme .cold-pinned-header, body.dark-theme .cold-pinned-header .text-white,
+        body.dark-theme .cold-all-header, body.dark-theme .cold-all-header .text-white { color: #ffffff !important; }
+        /* Search / create buttons on the green header: dark green fill, white label */
+        body.dark-theme button.cold-all-btn.cold-all-btn {
+            background-color: #123d28 !important;
+            color: #ffffff !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
+        }
+        body.dark-theme button.cold-all-btn.cold-all-btn:hover { background-color: #1a5236 !important; }
+        /* "Load more votings": dark tinted gradient pills with a light label (>= 7:1) */
+        body.dark-theme .cold-pinned-more.cold-pinned-more {
+            background-image: linear-gradient(to right, #3a1a1d, #2e1417) !important;
+            color: #f1b9bc !important;
+        }
+        body.dark-theme .cold-pinned-more.cold-pinned-more:hover { background-image: linear-gradient(to right, #4a2024, #3a1a1d) !important; }
+        body.dark-theme .cold-all-more.cold-all-more {
+            background-image: linear-gradient(to right, #12301f, #0e261a) !important;
+            color: #a9dcc0 !important;
+        }
+        body.dark-theme .cold-all-more.cold-all-more:hover { background-image: linear-gradient(to right, #184029, #12301f) !important; }
+
         /* Ice-tinted cards, panels and borders */
         body.cold-theme .bg-white:not(.rounded-full):not(.bg-white\/20):not(.bg-white\/30) {
             background-color: #f8fbfe !important;
