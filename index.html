@@ -15711,9 +15711,10 @@
             (imgA.breakdown || []).forEach(v => {
                 if (v.isBlocked || v.isBanned) return;
                 if (filterIds !== null && !filterIds.has(v.userId)) return;
-                aVoteMap[v.userId] = { score: v.score, username: v.username, avatar: v.avatar, isCurrentUser: v.isCurrentUser };
+                aVoteMap[v.userId] = { score: v.score, username: v.username, avatar: v.avatar, isCurrentUser: v.isCurrentUser, autoConverted: !!v.autoConverted };
             });
             const bVoteMap = getClassicScoreMap(imgB, filterIds);
+            const bAuto = new Set((imgB.breakdown || []).filter(v => v.autoConverted).map(v => v.userId));
 
             const sharedIds = Object.keys(aVoteMap).filter(id => bVoteMap[id] !== undefined);
 
@@ -15746,7 +15747,9 @@
                     avatar: aVoteMap[id].avatar,
                     isCurrentUser: aVoteMap[id].isCurrentUser,
                     scoreA: aVoteMap[id].score,
-                    scoreB: bVoteMap[id]
+                    scoreB: bVoteMap[id],
+                    autoA: aVoteMap[id].autoConverted,
+                    autoB: bAuto.has(id)
                 };
                 const relation = classifyScorePair(voter.scoreA, voter.scoreB);
                 (relation === 'correlated' ? correlated : relation === 'inverse' ? inverse : indifferent).push(voter);
@@ -15803,7 +15806,12 @@
                                         ${g.voters.map(v => `
                                             <div class="flex items-center gap-2 px-2 py-1.5 ${v.isCurrentUser ? 'bg-blue-50' : 'bg-white'}">
                                                 <img referrerpolicy="no-referrer" src="${v.avatar}" alt="${v.username}" class="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation();viewUserProfile('${v.userId}');"  onerror="ghostAvatar(this)" />
-                                                <span class="text-sm text-gray-700 flex-1 truncate cursor-pointer hover:text-mauve-600" onclick="event.stopPropagation();viewUserProfile('${v.userId}');">${v.username}${v.isCurrentUser ? ' (You)' : ''}</span>
+                                                <span class="flex items-center min-w-0 flex-1">
+                                                    <span class="text-sm text-gray-700 truncate min-w-0 cursor-pointer hover:text-mauve-600" onclick="event.stopPropagation();viewUserProfile('${v.userId}');">${v.username}${v.isCurrentUser ? ' (You)' : ''}</span>${(v.autoA || v.autoB) ? renderAutoMarker(AUTO_LABEL_CLASSIC) : ''}
+                                                </span>
+                                                ${[[v.autoA, v.scoreA], [v.autoB, v.scoreB]].filter(([auto]) => auto).map(([, score]) => score === SHORTLISTED_AS_SCORE
+                                                    ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Auto-converted: shortlisted">✓</span>`
+                                                    : `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(1)};" title="Auto-converted: not shortlisted">✗</span>`).join('')}
                                             </div>
                                         `).join('')}
                                     </div>
@@ -15845,6 +15853,7 @@
                             </div>
                         </div>
                         <div class="overflow-y-auto flex-1 p-4">
+                            ${[...correlated, ...indifferent, ...inverse].some(v => v.autoA || v.autoB) ? renderAutoLabel(AUTO_LABEL_CLASSIC) : ''}
                             ${renderSection(correlated,  'Correlated',  'same side on both images',  C_COLOR)}
                             ${renderSection(indifferent, 'Indifferent', 'one score is neutral (3)', I_COLOR)}
                             ${renderSection(inverse,     'Inverse',     'opposite sides',            V_COLOR)}
@@ -15949,6 +15958,7 @@
                                 </div>
                             </div>
 
+                            ${Object.values(votesByScore).some(list => list.some(v => v.autoConverted)) ? renderAutoLabel(AUTO_LABEL_CLASSIC) : ''}
                             <div class="space-y-3">
                                 ${[5, 4, 3, 2, 1].map(score => `
                                     <div>
@@ -15966,12 +15976,14 @@
                                                         vote.isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
                                                     }">
                                                         <img referrerpolicy="no-referrer" src="${vote.avatar}" alt="${vote.username}" class="w-8 h-8 rounded-full flex-shrink-0 ${vote.isBanned ? 'opacity-50' : ''} cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');"  onerror="ghostAvatar(this)" />
-                                                        <span class="text-sm flex-1 truncate cursor-pointer ${
+                                                        <span class="flex items-center min-w-0 flex-1">
+                                                        <span class="text-sm truncate min-w-0 cursor-pointer ${
                                                             vote.isBanned ? 'line-through text-red-600' :
                                                             vote.isBlocked ? 'line-through text-gray-700' :
                                                             'text-gray-700 hover:text-mauve-600'
                                                         }" onclick="event.stopPropagation(); viewUserProfile('${vote.userId}');">
                                                             ${vote.username}${vote.isCurrentUser ? ' (You)' : ''}${vote.isBanned ? ' (BANNED)' : ''}
+                                                        </span>${vote.autoConverted ? renderAutoMarker(AUTO_LABEL_CLASSIC) : ''}
                                                         </span>
                                                         ${vote.autoConverted ? (vote.score === SHORTLISTED_AS_SCORE
                                                             ? `<span class="font-bold text-lg leading-none flex-shrink-0" style="color: ${getScoreColor(5)};" title="Auto-converted: shortlisted">✓</span>`
@@ -19407,6 +19419,20 @@
             `;
         }
 
+        // ---------- Auto-converted marker (🛸) and explanatory label in the breakdown / pairs modals ----------
+        const AUTO_LABEL_CLASSIC = '🛸 Auto-converted from shortlists: shortlisted images count as 4, all others as 2. ✓ = shortlisted, ✗ = not shortlisted.';
+        const AUTO_LABEL_SHORTLIST = '🛸 Auto-converted from classic votes: scores 4-5 count as shortlisted, scores 1-3 as not shortlisted. The colored circle shows the score they gave.';
+
+        // Directly after the username; never shrinks, so the name truncates first
+        function renderAutoMarker(label) {
+            return `<span class="ml-1 text-sm leading-none flex-shrink-0" title="${label}">🛸</span>`;
+        }
+
+        // One small muted line between the top stats and the voter lists; callers only draw it when a converted row is visible
+        function renderAutoLabel(label) {
+            return `<p class="text-xs text-gray-500 mb-3 leading-snug">${label}</p>`;
+        }
+
         // Marker for one user on one image in the shortlist breakdown modals: a classic-converted user shows their actual
         // score in a colored circle (with the image's score); a real shortlister shows a green check when the image is
         // in their set and a red cross when it is not. Nothing is drawn for a converted user who never scored the image.
@@ -19445,7 +19471,9 @@
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-7 h-7 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
-                        <span class="text-sm flex-1 min-w-0 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
+                        <span class="flex items-center min-w-0 flex-1">
+                            <span class="text-sm truncate min-w-0 cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>${(voter.scoreByImage.has(imageAId) || voter.scoreByImage.has(imageBId)) ? renderAutoMarker(AUTO_LABEL_SHORTLIST) : ''}
+                        </span>
                         ${renderShortlistMarker(voter, imageAId, contestA, 'w-5 h-5 text-[10px]')}${renderShortlistMarker(voter, imageBId, contestB, 'w-5 h-5 text-[10px]')}
                     </div>
                 `;
@@ -19481,6 +19509,7 @@
                             </div>
                         </div>
                         <div class="overflow-y-auto overflow-x-hidden flex-1 p-4">
+                            ${pool.some(v => v.scoreByImage.has(imageAId) || v.scoreByImage.has(imageBId)) ? renderAutoLabel(AUTO_LABEL_SHORTLIST) : ''}
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div class="flex flex-col gap-4 min-w-0">
                                     ${renderSection('Both', getScoreColor(5), columns.both)}
@@ -19515,10 +19544,13 @@
             const renderVoter = (voter, isShortlisted) => {
                 const isCurrentUser = state.user && voter.userId === state.user.id;
                 const marker = renderShortlistMarker(voter, imageId, view.imageContest.get(imageId));
+                const isAuto = voter.scoreByImage.has(imageId);
                 return `
                     <div class="flex items-center gap-2 p-2 rounded-lg ${isCurrentUser ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}">
                         <img referrerpolicy="no-referrer" src="${voter.avatar}" alt="${voter.username}" class="w-8 h-8 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-mauve-400 transition" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');" onerror="ghostAvatar(this)" />
-                        <span class="text-sm flex-1 truncate cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>
+                        <span class="flex items-center min-w-0 flex-1">
+                            <span class="text-sm truncate min-w-0 cursor-pointer text-gray-700 hover:text-mauve-600" onclick="event.stopPropagation(); viewUserProfile('${voter.userId}');">${voter.username}${isCurrentUser ? ' (You)' : ''}</span>${isAuto ? renderAutoMarker(AUTO_LABEL_SHORTLIST) : ''}
+                        </span>
                         ${marker}
                     </div>
                 `;
@@ -19563,6 +19595,7 @@
                                 </div>
                             </div>
 
+                            ${[...shortlisters, ...notShortlisted].some(v => v.scoreByImage.has(imageId)) ? renderAutoLabel(AUTO_LABEL_SHORTLIST) : ''}
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 ${renderColumn('Shortlisted', yesColor, shortlisters, true)}
                                 ${renderColumn('Not Shortlisted', noColor, notShortlisted, false)}
