@@ -13096,7 +13096,7 @@
                                             </div>
                                             <div class="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
                                                 <span class="truncate">by <span class="cursor-pointer hover:text-mauve-600 transition" onclick="event.stopPropagation(); viewUserProfile('${contest.createdBy}');">${contest.creatorName}</span></span>
-                                                <span class="ml-auto whitespace-nowrap">${isShortlistCard('contest', contest.id) ? `${contest.shortlistCount || 0}📝 ` : ''}${contest.voterCount || 0}👥 ${contest.images.length}🖼️</span>
+                                                <span class="ml-auto whitespace-nowrap">${renderCardStats(contest.shortlistCount, contest.voterCount, contest.images.length)}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -13275,7 +13275,7 @@
                             </div>
                             <div class="text-xs text-blue-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-blue-900 transition" onclick="event.stopPropagation(); viewUserProfile('${merger.createdBy}');">${merger.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${isShortlistCard('merger', merger.id) ? `${merger.shortlistCount || 0}📝 ` : ''}${merger.voterCount || 0}👥 ${totalImages}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${renderCardStats(merger.shortlistCount, merger.voterCount, totalImages)}</span>
                             </div>
                         </div>
                     </div>
@@ -13440,7 +13440,7 @@
                             </div>
                             <div class="text-xs text-yellow-700 flex items-center gap-2 flex-wrap">
                                 <span class="truncate">by <span class="cursor-pointer hover:text-yellow-900 transition" onclick="event.stopPropagation(); viewUserProfile('${extract.createdBy}');">${extract.creatorName}</span></span>
-                                <span class="ml-auto whitespace-nowrap">${isShortlistCard('extract', extract.id) ? `${extract.shortlistCount || 0}📝 ` : ''}${extract.voterCount || 0}👥 ${imageCount}🖼️</span>
+                                <span class="ml-auto whitespace-nowrap">${renderCardStats(extract.shortlistCount, extract.voterCount, imageCount)}</span>
                             </div>
                         </div>
                     </div>
@@ -16758,6 +16758,22 @@
         // A card shows its session override if it has one, otherwise the saved voting format (NULL = classic)
         function getCardFormat(itemType, itemId) {
             return state.cardFormats[`${itemType}_${itemId}`] || getSavedVotingFormat();
+        }
+
+        // Stats on a contest / merger / extract card, the same in both formats: 📝 shortlists and 👥 voters are hidden when 0,
+        // the 🖼️ image count always stays. Nothing yet: a small invitation instead of the two zeros.
+        function renderCardStats(shortlistCount, voterCount, imageCount) {
+            const shortlists = Number(shortlistCount) || 0;
+            const voters = Number(voterCount) || 0;
+            const parts = [];
+            if (shortlists === 0 && voters === 0) {
+                parts.push('<span class="font-semibold text-mauve-700 dark:text-mauve-300">Be the first to vote!</span>');
+            } else {
+                if (shortlists > 0) parts.push(`${shortlists}📝`);
+                if (voters > 0) parts.push(`${voters}👥`);
+            }
+            parts.push(`${imageCount}🖼️`);
+            return parts.join(' ');
         }
 
         function isShortlistCard(itemType, itemId) {
