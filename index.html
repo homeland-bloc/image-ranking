@@ -1005,6 +1005,9 @@
         body.hot-theme .bg-white:not(.rounded-full) {
             background-color: #1a0000 !important;
         }
+
+        /* Multi-mode voting with "Auto-jump" OFF: no browser scroll anchoring either */
+        html.no-scroll-anchor, html.no-scroll-anchor body { overflow-anchor: none; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1196,6 +1199,7 @@
             multiVotingImageScale: 100,  // Image scale for multi-mode voting (20-200%)
             multiModeFilter: [],  // Filter for multi-mode voting: array of scores (1-5) or 'non-voted'
             multiModeSort: 'default',  // Sort for multi-mode voting: 'default', 'highest', 'lowest'
+            multiAutoJump: loadMultiAutoJump(),  // multi mode: the page follows the just-voted tile (default ON, persisted in localStorage)
             showUnifiedCreateModal: false,  // Show unified creation modal
             extractImageScale: 100,  // Image scale for extract image selection pages (100-400%)
             pinnedItems: [],  // Array of pinned items from database
@@ -1264,7 +1268,9 @@
             shortlistFilter: [],       // multi-mode filter buckets: 'undecided' | 'shortlisted' | 'skipped'
             voteHold: null,            // { kind, prank, imageId, opacity, timer } while the single-mode tint is held before advancing
             prank: null,               // { kind: 'single' | 'multi', imageId, fakeId } - purely visual mirrored copy (ItsADifferentConcept)
-            progressPanelIndex: null,  // single mode, 20+ images: index of the grouped progress segment whose per-image panel is open
+            progressPath: [],          // single mode progress bar: opened segment ranges per level, [{ start, end }, ...] (indexes into the working set)
+            singleToolsOpen: false,    // single mode: the sort / filter tools panel below the app bar is unfolded
+            singleFreeze: null,        // single mode: the working set frozen while a vote settles, so the voted image stays on screen
             resultsFormat: 'classic',  // 'classic' | 'shortlist' — results page voting-format switch
             resultsFormatKey: null,    // scope key the shortlist switch was chosen for (so it resets on other pages)
             shortlistData: null,       // cached shortlist results data (real rows + auto-converted votes) for the open results page
@@ -1275,6 +1281,10 @@
             spotlightDismissed: false  // ...and has been dismissed
         };
 
+        function loadMultiAutoJump() {
+            try { return localStorage.getItem('peony_multi_auto_jump') !== '0'; } catch (e) { return true; }
+        }
+
         function shuffleArray(array) {
             const newArray = [...array];
             for (let i = newArray.length - 1; i > 0; i--) {
@@ -1282,6 +1292,13 @@
                 [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
             }
             return newArray;
+        }
+
+        // Draft resume order: the images still unvoted first (shuffled), then the already voted ones (shuffled)
+        function orderUnvotedFirst(images, votes) {
+            const unvoted = images.filter(img => !votes[img.id]);
+            const voted = images.filter(img => votes[img.id]);
+            return [...shuffleArray(unvoted), ...shuffleArray(voted)];
         }
 
         function formatVoterCount(voterCount, voterCountMin, voterCountMax) {
@@ -5446,6 +5463,7 @@
                     Object.entries(autosaves).forEach(([imgId, score]) => {
                         state.votes[parseInt(imgId)] = score;
                     });
+                    state.shuffledImages = orderUnvotedFirst(state.shuffledImages, state.votes);
                 } else {
                     // If the user clicked "Start Voting" but autosaves exist, prompt them
                     if (hasAutosaveDraft(autosaveKey)) {
@@ -6445,6 +6463,7 @@
                 Object.entries(autosaves).forEach(([imgId, score]) => {
                     state.votes[parseInt(imgId)] = score;
                 });
+                state.shuffledImages = orderUnvotedFirst(state.shuffledImages, state.votes);
             }
 
             // Saved voting mode preference (DB value, else the old localStorage choice), default 'single'
@@ -7205,12 +7224,137 @@
 
         // ==================== END EXTRACT SYSTEM FUNCTIONS ====================
 
+        // ==================== SINGLE-MODE WORKING SET ====================
+        // Single mode shows the filtered, sorted list (the same Sort / Filter state as multi mode); currentImageIndex is an
+        // index INTO that list. Default order = this session's shuffled order. While a vote settles the list is frozen
+        // (state.singleFreeze) so the voted image stays on screen; afterwards it is rebuilt live and the screen moves to
+        // the image that was next BEFORE the vote (or the nearest remaining one).
+        function isShortlistVoting() {
+            return state.votingFormat === 'shortlist' && !!state.shortlistSession;
+        }
+
+        function singleFilterActive() {
+            return isShortlistVoting() ? state.shortlistFilter.length > 0 : state.multiModeFilter.length > 0;
+        }
+
+        // Anything but the default order with no filter: highlights the tools button
+        function singleToolsActive() {
+            return singleFilterActive() || state.multiModeSort !== 'default';
+        }
+
+        function singleMatchesFilter(img) {
+            if (isShortlistVoting()) {
+                if (state.shortlistFilter.length === 0) return true;
+                const bucketOf = { yes: 'shortlisted', no: 'skipped', undecided: 'undecided' };
+                return state.shortlistFilter.includes(bucketOf[getShortlistStatus(img.id)]);
+            }
+            if (state.multiModeFilter.length === 0) return true;
+            const vote = state.votes[img.id];
+            return vote ? state.multiModeFilter.includes(vote) : state.multiModeFilter.includes('non-voted');
+        }
+
+        // Own score for the Highest / Lowest sort; null = not voted / undecided (always last). Shortlist: shortlisted > skipped.
+        function singleSortScore(img) {
+            if (isShortlistVoting()) {
+                const status = getShortlistStatus(img.id);
+                return status === 'yes' ? 2 : status === 'no' ? 1 : null;
+            }
+            return state.votes[img.id] || null;
+        }
+
+        function getWorkingSet() {
+            if (state.singleFreeze) return state.singleFreeze;
+            let list = state.shuffledImages;
+            if (singleFilterActive()) list = list.filter(singleMatchesFilter);
+            if (state.multiModeSort === 'highest' || state.multiModeSort === 'lowest') {
+                const dir = state.multiModeSort === 'highest' ? -1 : 1;
+                list = list.map((img, i) => ({ img, i, score: singleSortScore(img) }))
+                    .sort((a, b) => ((a.score === null) - (b.score === null)) || (a.score === null ? 0 : dir * (a.score - b.score)) || (a.i - b.i))
+                    .map(x => x.img);
+            }
+            return list;
+        }
+
+        // Index in newList of the image nearest to oldList[oldIdx]: increasing distance, forward first on a tie
+        function nearestRemainingIndex(oldList, oldIdx, newList) {
+            if (newList.length === 0) return 0;
+            const pos = new Map(newList.map((img, i) => [img.id, i]));
+            for (let d = 1; d < oldList.length; d++) {
+                for (const j of [oldIdx + d, oldIdx - d]) {
+                    const img = oldList[j];
+                    if (img && pos.has(img.id)) return pos.get(img.id);
+                }
+            }
+            const own = oldList[oldIdx];
+            return own && pos.has(own.id) ? pos.get(own.id) : 0;
+        }
+
+        // Taken BEFORE a vote is applied: the working set, the position in it and the id of the image that comes next
+        function captureAdvance() {
+            const list = getWorkingSet();
+            const idx = Math.max(0, Math.min(state.currentImageIndex, list.length - 1));
+            const next = list[idx + 1];
+            return { list, idx, nextId: next ? next.id : null };
+        }
+
+        // After the vote settled: rebuild the working set and move to the remembered next image, else stay on the voted
+        // image (last image), else the nearest remaining one
+        function goToAdvanceTarget(anchor) {
+            const list = getWorkingSet();
+            const wanted = anchor.nextId !== null ? anchor.nextId : (anchor.list[anchor.idx] ? anchor.list[anchor.idx].id : null);
+            const pos = wanted === null ? -1 : list.findIndex(img => img.id === wanted);
+            state.currentImageIndex = pos > -1 ? pos : nearestRemainingIndex(anchor.list, anchor.idx, list);
+        }
+
+        // Filter / sort changes keep the current image when it is still in the set, else move to the nearest remaining one
+        function captureSingleAnchor() {
+            if (state.view !== 'vote' || state.votingMode !== 'single') return null;
+            const list = getWorkingSet();
+            const idx = Math.max(0, Math.min(state.currentImageIndex, list.length - 1));
+            return { list, idx, id: list[idx] ? list[idx].id : null };
+        }
+
+        function restoreSingleAnchor(anchor) {
+            if (!anchor) return;
+            const list = getWorkingSet();
+            const pos = anchor.id === null ? -1 : list.findIndex(img => img.id === anchor.id);
+            state.currentImageIndex = pos > -1 ? pos : (anchor.id === null ? 0 : nearestRemainingIndex(anchor.list, anchor.idx, list));
+            state.progressPath = [];
+            state.prank = null;
+        }
+
+        function resetVotingToolsState() {
+            state.multiModeFilter = [];
+            state.shortlistFilter = [];
+            state.multiModeSort = 'default';
+            state.progressPath = [];
+            state.singleToolsOpen = false;
+            state.singleFreeze = null;
+        }
+
+        function toggleSingleTools() {
+            state.singleToolsOpen = !state.singleToolsOpen;
+            render();
+        }
+
+        function clearSingleFilter() {
+            const anchor = captureSingleAnchor();
+            state.multiModeFilter = [];
+            state.shortlistFilter = [];
+            restoreSingleAnchor(anchor);
+            render();
+        }
+
         function handleVote(score) {
             if (state.isAnimating) return;
             if (hasSinglePrank()) { resolveSinglePrank(); return; }   // a vote on the mirrored copy is discarded
 
+            const anchor = captureAdvance();
+            const currentImage = anchor.list[anchor.idx];
+            if (!currentImage) return;
+
             state.isAnimating = true;
-            const currentImage = state.shuffledImages[state.currentImageIndex];
+            state.singleFreeze = anchor.list;
             state.votes[currentImage.id] = score;
             state.lastClickedImageId = currentImage.id;
             state.showTickAnimation = true;
@@ -7222,22 +7366,42 @@
             setTimeout(() => {
                 state.showTickAnimation = false;
                 state.isAnimating = false;
-                if (rollPrank()) {
-                    startPrank('single', currentImage.id);   // show a mirrored copy instead of advancing
-                } else if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                    state.currentImageIndex++;
-                }
+                state.singleFreeze = null;
+                goToAdvanceTarget(anchor);
+                if (rollPrank()) startPrank('single', currentImage.id);   // a mirrored copy is shown on the image we moved to
                 render();
             }, 500);
         }
 
+        // A shortlist vote is held for SHORTLIST_HOLD_MS before the screen moves on. Navigating during the hold finishes
+        // it first. Returns true when the finish already moved to the next image (so Next must not move once more).
+        function settleVoteHold(direction) {
+            const hold = state.voteHold;
+            if (!hold) return false;
+            cancelVoteHold();   // clears the hold and unfreezes the working set
+            const anchor = hold.anchor;
+            if (!anchor) return false;
+            if (direction === 'next') { goToAdvanceTarget(anchor); return true; }
+            // Prev / jump: park on the voted image (or the nearest remaining one) and move on from there
+            const list = getWorkingSet();
+            const own = anchor.list[anchor.idx];
+            const pos = own ? list.findIndex(img => img.id === own.id) : -1;
+            state.currentImageIndex = pos > -1 ? pos : nearestRemainingIndex(anchor.list, anchor.idx, list);
+            return false;
+        }
+
         function navigateImage(direction) {
-            cancelVoteHold();
-            if (hasSinglePrank()) state.prank = null;   // any navigation removes the mirrored copy for good
+            if (state.isAnimating) return;   // the classic vote is still settling (500ms)
+            const advanced = settleVoteHold(direction);
+            if (hasSinglePrank()) {
+                // any navigation removes the mirrored copy for good; the screen already sits on the image after the voted one
+                state.prank = null;
+                if (direction === 'next') { render(); return; }
+            }
+            if (advanced) { render(); return; }
+            const list = getWorkingSet();
             if (direction === 'next') {
-                if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                    state.currentImageIndex++;
-                }
+                if (state.currentImageIndex < list.length - 1) state.currentImageIndex++;
             } else if (direction === 'prev' && state.currentImageIndex > 0) {
                 state.currentImageIndex--;
             }
@@ -7246,16 +7410,21 @@
 
         function jumpToImage(index) {
             if (state.isAnimating) return;
-            cancelVoteHold();
+            const target = getWorkingSet()[index];   // frozen list while a shortlist vote is held
+            settleVoteHold('jump');
             if (hasSinglePrank()) state.prank = null;
-            state.currentImageIndex = index;
-            state.progressPanelIndex = null;
+            const list = getWorkingSet();
+            const pos = target ? list.findIndex(img => img.id === target.id) : -1;
+            state.currentImageIndex = pos > -1 ? pos : Math.max(0, Math.min(index, list.length - 1));
+            state.progressPath = [];
             render();
         }
 
-        // Grouped progress segment (20+ images): open / close the per-image panel under the bar instead of jumping
-        function toggleProgressPanel(segmentIndex) {
-            state.progressPanelIndex = state.progressPanelIndex === segmentIndex ? null : segmentIndex;
+        // Grouped progress segment (more than one image): open / close the next level down under the bar instead of jumping
+        function toggleProgressRange(level, start, end) {
+            const open = state.progressPath[level];
+            const keep = state.progressPath.slice(0, level);
+            state.progressPath = open && open.start === start && open.end === end ? keep : keep.concat([{ start, end }]);
             render();
         }
 
@@ -7266,7 +7435,7 @@
             } else {
                 state.selectedScore = score;
             }
-            render();
+            render({ morph: true });
         }
 
         function voteImageMulti(imageId) {
@@ -7299,6 +7468,7 @@
         }
 
         function setMultiModeFilter(filter) {
+            const anchor = captureSingleAnchor();
             // Toggle filter: if filter is in array, remove it; otherwise add it
             const index = state.multiModeFilter.indexOf(filter);
             if (index > -1) {
@@ -7306,12 +7476,15 @@
             } else {
                 state.multiModeFilter.push(filter);
             }
-            render();
+            restoreSingleAnchor(anchor);
+            render({ morph: true });
         }
 
         function setMultiModeSort(sort) {
+            const anchor = captureSingleAnchor();
             state.multiModeSort = sort;
-            render();
+            restoreSingleAnchor(anchor);
+            render({ morph: true });
         }
 
         function cancelVoting() {
@@ -7678,7 +7851,7 @@
             }
             cancelVoteHold();
             state.prank = null;
-            state.progressPanelIndex = null;
+            state.progressPath = [];
             const newMode = state.votingMode === 'single' ? 'multi' : 'single';
 
             // Once voting_mode is saved the toggle is a session-only override; until then keep the old localStorage behavior
@@ -7708,12 +7881,17 @@
                     state.selectedScore = null;
 
                     // If there was a last clicked image, navigate to it
+                    const list = getWorkingSet();
                     if (state.lastClickedImageId) {
-                        const imageIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
+                        const imageIndex = list.findIndex(img => img.id === state.lastClickedImageId);
                         if (imageIndex !== -1) {
                             state.currentImageIndex = imageIndex;
+                        } else {
+                            const shuffledIndex = state.shuffledImages.findIndex(img => img.id === state.lastClickedImageId);
+                            if (shuffledIndex !== -1) state.currentImageIndex = nearestRemainingIndex(state.shuffledImages, shuffledIndex, list);
                         }
                     }
+                    state.currentImageIndex = Math.max(0, Math.min(state.currentImageIndex, list.length - 1));
 
                     state.isTransitioningVotingMode = false;
                     render();
@@ -11231,6 +11409,15 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
                                     </svg>
                                 </button>
+                                ${state.votingMode === 'single' ? `
+                                    <button
+                                        onclick="toggleSingleTools()"
+                                        class="ml-1 w-8 h-8 flex items-center justify-center rounded-lg text-base leading-none focus:outline-none transition ${singleToolsActive() ? 'bg-mauve-500 ring-2 ring-white shadow-md' : state.singleToolsOpen ? 'bg-white/40' : 'bg-white/20 hover:bg-white/30'}"
+                                        title="${singleToolsActive() ? 'Sort and filter tools (a sort or filter is active)' : 'Sort and filter tools'}"
+                                        aria-label="Sort and filter tools"
+                                        aria-expanded="${state.singleToolsOpen ? 'true' : 'false'}"
+                                    >🛠️</button>
+                                ` : ''}
                                 ${shouldShowModeCallout() ? `
                                     <div class="absolute top-full right-0 mt-2 w-60 bg-mauve-600 text-white text-xs rounded-lg shadow-lg px-3 py-2 pr-6 z-30">
                                         Tip: use this toggle to switch between single and multi image voting.
@@ -11284,6 +11471,7 @@
                         `}
                     </div>
                 </header>
+                ${isVoting ? renderSingleToolsPanel() : ''}
             `;
         }
 
@@ -13392,6 +13580,48 @@
             `;
         }
 
+        // Classic score filter (gray = not voted, then 1-5), shared by the multi view header and the single-mode tools panel
+        function renderClassicScoreFilter() {
+            return `<div class="flex-1 min-w-0">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
+                <div class="flex flex-wrap gap-1">
+                    ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
+                        const isSelected = state.multiModeFilter.includes(filter);
+                        const label = filter === 'non-voted' ? '?' : filter;
+                        const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
+                        return `
+                            <button
+                                onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
+                                class="px-2 py-0.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
+                                style="background-color: ${bgColor};"
+                                title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
+                            >${label}</button>
+                        `;
+                    }).join('')}
+                </div>
+                ${state.multiModeFilter.length > 0
+                    ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
+                    : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
+                }
+            </div>`;
+        }
+
+        // Sort select (Default / High - Low / Low - High); `extra` is appended under it (the multi view adds its auto-jump option)
+        function renderVotingSortSelect(extra = '') {
+            return `<div class="flex flex-col items-end shrink-0">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
+                <select
+                    onchange="setMultiModeSort(this.value)"
+                    class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
+                >
+                    <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default</option>
+                    <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>High → Low</option>
+                    <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
+                </select>
+                ${extra}
+            </div>`;
+        }
+
         function renderMultiViewVoting() {
             const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
             const allVoted = state.shuffledImages.every(img => state.votes[img.id]);
@@ -13461,40 +13691,12 @@
                             <!-- Filter and Sort Controls — two-column layout -->
                             <div class="mt-3 flex gap-4 items-start">
                                 <!-- Left: Filter -->
-                                ${isShortlist ? renderShortlistMultiFilter() : `<div class="flex-1 min-w-0">
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Filter:</span>
-                                    <div class="flex flex-wrap gap-1">
-                                        ${['non-voted', 1, 2, 3, 4, 5].map(filter => {
-                                            const isSelected = state.multiModeFilter.includes(filter);
-                                            const label = filter === 'non-voted' ? '?' : filter;
-                                            const bgColor = filter === 'non-voted' ? '#9ca3af' : getScoreColor(filter);
-                                            return `
-                                                <button
-                                                    onclick="setMultiModeFilter(${typeof filter === 'string' ? `'${filter}'` : filter})"
-                                                    class="px-2 py-0.5 rounded-lg text-white text-sm font-semibold transition ${isSelected ? 'ring-2 ring-offset-1 ring-gray-800 scale-105' : 'opacity-60 hover:opacity-100'}"
-                                                    style="background-color: ${bgColor};"
-                                                    title="Show ${filter === 'non-voted' ? 'non-voted' : 'score ' + filter} images"
-                                                >${label}</button>
-                                            `;
-                                        }).join('')}
-                                    </div>
-                                    ${state.multiModeFilter.length > 0
-                                        ? `<p class="text-xs text-blue-600 dark:text-blue-400 mt-1">Showing: ${state.multiModeFilter.map(f => f === 'non-voted' ? 'unvoted' : 'score ' + f).join(', ')}. Click again to remove.</p>`
-                                        : `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to show only images with that score.</p>`
-                                    }
-                                </div>`}
+                                ${isShortlist ? renderShortlistMultiFilter() : renderClassicScoreFilter()}
                                 <!-- Right: Sort -->
-                                <div class="flex flex-col items-end shrink-0">
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Sort:</span>
-                                    <select
-                                        onchange="setMultiModeSort(this.value)"
-                                        class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:border-blue-400 focus:outline-none"
-                                    >
-                                        <option value="default" ${state.multiModeSort === 'default' ? 'selected' : ''}>Default</option>
-                                        <option value="highest" ${state.multiModeSort === 'highest' ? 'selected' : ''}>High → Low</option>
-                                        <option value="lowest" ${state.multiModeSort === 'lowest' ? 'selected' : ''}>Low → High</option>
-                                    </select>
-                                </div>
+                                ${renderVotingSortSelect(`<label class="flex items-center gap-1.5 mt-2 text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer select-none" title="When on, the page follows the tile you just voted on if it moves">
+                                        <input type="checkbox" ${state.multiAutoJump ? 'checked' : ''} onchange="setMultiAutoJump(this.checked)" class="rounded border-gray-300 text-mauve-400 focus:ring-mauve-400" />
+                                        Auto-jump to voted image
+                                    </label>`)}
                             </div>
                         </div>
 
@@ -13557,7 +13759,7 @@
                                             ? `prankTileClick(${isShortlist ? 'false' : 'true'})`
                                             : (isShortlist ? `toggleShortlistImage(${image.id})` : `voteImageMulti('${image.id}')`);
                                         return `
-                                        <div class="relative" style="height: ${imageHeight}px;" ${isFake ? '' : `data-tile-id="${image.id}"`}>
+                                        <div class="relative" style="height: ${imageHeight}px;" ${isFake ? 'data-fake-tile="1"' : `data-tile-id="${image.id}"`}>
                                             <div
                                                 class="relative cursor-pointer rounded-lg overflow-hidden border-4 bg-gray-100 h-full ${isHoverable ? 'hover:border-blue-400' : ''}"
                                                 onclick="${click}"
@@ -13724,54 +13926,103 @@
             return `linear-gradient(to right, ${green} 0%, ${green} ${split}%, ${red} ${split}%, ${red} 100%)`;
         }
 
-        function renderSingleProgressBar(isShortlist, segmentCount, imagesPerSegment) {
-            const imageCount = state.shuffledImages.length;
-            const outline = isShortlist ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));' : '';
-            const segments = Array.from({ length: segmentCount }, (_, segmentIdx) => {
-                const startIdx = segmentIdx * imagesPerSegment;
-                const endIdx = Math.min(startIdx + imagesPerSegment, imageCount);
-                if (startIdx >= imageCount) return '';
-                const segmentImages = state.shuffledImages.slice(startIdx, endIdx);
-                const hasCurrent = state.currentImageIndex >= startIdx && state.currentImageIndex < endIdx;
-                const decided = segmentImages.filter(img => isShortlist ? getShortlistStatus(img.id) !== 'undecided' : state.votes[img.id]).length;
-                const shortlisted = segmentImages.filter(img => getShortlistStatus(img.id) === 'yes').length;
-                const imageRange = startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`;
-                const tooltip = isShortlist
-                    ? `${imageRange} (${shortlisted} shortlisted, ${decided - shortlisted} skipped)`
-                    : `${imageRange} (${decided}/${segmentImages.length} voted)`;
-                // Grouped segments toggle the per-image panel; single-image segments jump straight to the image
-                const action = endIdx - startIdx > 1 ? `toggleProgressPanel(${segmentIdx})` : `jumpToImage(${startIdx})`;
-                return `
-                    <div
-                        onclick="${action}"
-                        class="progress-segment flex-1"
-                        style="background: ${getSegmentBackground(segmentImages, isShortlist, hasCurrent && !isShortlist)}; ${hasCurrent && isShortlist ? outline : ''}"
-                        title="${tooltip}"
-                    ></div>
-                `;
-            }).join('');
+        // Segments of one bar level covering images [start, end) of the working set: at most 20, each `per` images wide
+        function getProgressSegments(start, end) {
+            const length = end - start;
+            const per = Math.ceil(length / Math.min(length, 20));
+            const segments = [];
+            for (let from = start; from < end; from += per) segments.push({ start: from, end: Math.min(from + per, end) });
+            return segments;
+        }
 
-            // Inline panel: one small segment per image of the opened range
-            let panel = '';
-            const openIdx = state.progressPanelIndex;
-            if (openIdx !== null && imagesPerSegment > 1) {
-                const startIdx = openIdx * imagesPerSegment;
-                const endIdx = Math.min(startIdx + imagesPerSegment, imageCount);
-                if (startIdx < imageCount) {
-                    panel = `
-                        <div class="bg-gray-100 px-2 py-1.5 border-b border-gray-200">
-                            <div class="text-xs font-medium text-gray-600 mb-1">${startIdx + 1 === endIdx ? `Image ${startIdx + 1}` : `Images ${startIdx + 1}-${endIdx}`} - tap a segment below to jump to that image</div>
-                            <div class="flex gap-1">
-                                ${state.shuffledImages.slice(startIdx, endIdx).map((img, i) => {
-                                    const idx = startIdx + i;
-                                    const isCurrent = idx === state.currentImageIndex;
-                                    return `<div onclick="jumpToImage(${idx})" class="progress-segment flex-1" style="background: ${getSegmentBackground([img], isShortlist, isCurrent && !isShortlist)}; ${isCurrent ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));' : ''}" title="Image ${idx + 1}"></div>`;
-                                }).join('')}
-                            </div>
-                        </div>`;
-                }
+        function progressRangeLabel(start, end) {
+            return start + 1 === end ? `Image ${start + 1}` : `Images ${start + 1}-${end}`;
+        }
+
+        // One bar level. Segments covering more than one image open / close the next level down; single images jump there.
+        function renderProgressLevel(list, isShortlist, level, start, end, wrapperClass) {
+            const open = state.progressPath[level];
+            const segments = getProgressSegments(start, end).map(seg => {
+                const images = list.slice(seg.start, seg.end);
+                const hasCurrent = state.currentImageIndex >= seg.start && state.currentImageIndex < seg.end;
+                const isOpen = !!open && open.start === seg.start && open.end === seg.end;
+                const decided = images.filter(img => isShortlist ? getShortlistStatus(img.id) !== 'undecided' : state.votes[img.id]).length;
+                const shortlisted = images.filter(img => getShortlistStatus(img.id) === 'yes').length;
+                const range = progressRangeLabel(seg.start, seg.end);
+                const tooltip = isShortlist
+                    ? `${range} (${shortlisted} shortlisted, ${decided - shortlisted} skipped)`
+                    : `${range} (${decided}/${images.length} voted)`;
+                const action = seg.end - seg.start > 1 ? `toggleProgressRange(${level},${seg.start},${seg.end})` : `jumpToImage(${seg.start})`;
+                const outline = isShortlist && hasCurrent ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));'
+                    : isOpen ? 'box-shadow: 0 0 0 2px rgb(var(--mauve-500));' : '';
+                return `<div onclick="${action}" class="progress-segment flex-1" style="background: ${getSegmentBackground(images, isShortlist, hasCurrent && !isShortlist)}; ${outline}" title="${tooltip}"></div>`;
+            }).join('');
+            return { open, html: `<div class="${wrapperClass}">${segments}</div>` };
+        }
+
+        function renderSingleProgressBar(isShortlist, list) {
+            let range = { start: 0, end: list.length };
+            const top = renderProgressLevel(list, isShortlist, 0, range.start, range.end, 'bg-gray-200 h-3 flex gap-1 p-1');
+            let html = top.html;
+            let open = top.open;
+            // Opened segments, one inline panel per level; stale entries (the working set changed) end the chain
+            for (let level = 0; level < state.progressPath.length && open; level++) {
+                const valid = open.end - open.start > 1 && open.start >= range.start && open.end <= range.end
+                    && getProgressSegments(range.start, range.end).some(seg => seg.start === open.start && seg.end === open.end);
+                if (!valid) break;
+                range = open;
+                const isLeafLevel = !getProgressSegments(range.start, range.end).some(seg => seg.end - seg.start > 1);
+                const next = renderProgressLevel(list, isShortlist, level + 1, range.start, range.end, 'flex gap-1');
+                html += `
+                    <div class="bg-gray-100 px-2 py-1.5 border-b border-gray-200">
+                        <div class="text-xs font-medium text-gray-600 mb-1">${progressRangeLabel(range.start, range.end)} - tap a segment below to ${isLeafLevel ? 'jump to that image' : 'open it'}</div>
+                        ${next.html}
+                    </div>`;
+                open = next.open;
             }
-            return `<div class="bg-gray-200 h-3 flex gap-1 p-1">${segments}</div>${panel}`;
+            return html;
+        }
+
+        // Single-mode sort / filter tools, folded below the app bar (🛠️ next to the voting mode switch).
+        // The filter circles and the sort select are the same pieces the multi view uses; the state is shared.
+        function renderSingleToolsPanel() {
+            if (state.view !== 'vote' || state.votingMode !== 'single' || !state.singleToolsOpen) return '';
+            return `
+                <div class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm" data-tools-panel="1">
+                    <div class="max-w-4xl mx-auto px-3 py-3">
+                        <div class="flex gap-4 items-start">
+                            ${isShortlistVoting() ? renderShortlistMultiFilter() : renderClassicScoreFilter()}
+                            ${renderVotingSortSelect()}
+                        </div>
+                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Tap the gray circle to hide images you have already voted on and focus on the rest.</p>
+                    </div>
+                </div>`;
+        }
+
+        // The filter hides every image. Modelled on the results page's "All Images Hidden" state.
+        function renderSingleEmptyState(isShortlist, votingTitle, total) {
+            const onlyGray = isShortlist
+                ? state.shortlistFilter.length === 1 && state.shortlistFilter[0] === 'undecided'
+                : state.multiModeFilter.length === 1 && state.multiModeFilter[0] === 'non-voted';
+            const allDone = total > 0 && state.shuffledImages.every(img => isShortlist ? getShortlistStatus(img.id) !== 'undecided' : state.votes[img.id]);
+            return `
+                <div class="max-w-4xl mx-auto px-3 py-4">
+                    ${renderAutosaveStatusBar()}
+                    <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
+                        <div class="p-3">
+                            <div class="flex justify-between items-center mb-3 gap-2">
+                                <h2 class="text-lg font-bold text-gray-800">${votingTitle}</h2>
+                                <span class="text-gray-600 font-medium text-sm">Showing 0 of ${total}</span>
+                            </div>
+                            <div class="text-center py-10">
+                                <div class="text-6xl mb-4">🔍</div>
+                                <h3 class="text-xl font-bold text-gray-800 mb-2">All Images Hidden</h3>
+                                <p class="text-gray-600">You've hidden all images using the filter. Open the tools (🛠️) and change the filter, or click "Clear filter" to show images again.${onlyGray && allDone ? ' You have already voted on all images.' : ''}</p>
+                                <button onclick="clearSingleFilter()" class="mt-4 bg-gradient-to-r from-mauve-400 to-mauve-600 text-white px-5 py-2 rounded-lg font-semibold hover:opacity-90 transition shadow-md">Clear filter</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
         }
 
         function renderVoting() {
@@ -13781,7 +14032,19 @@
             }
 
             const isShortlist = state.votingFormat === 'shortlist' && !!state.shortlistSession;
-            const currentImage = state.shuffledImages[state.currentImageIndex];
+            // Single mode works on the filtered, sorted list (see getWorkingSet); the overall totals below stay whole-contest
+            const workingSet = getWorkingSet();
+            const totalCount = state.shuffledImages.length;
+            const isMergerVotingTitle = state.currentMergerId && !state.currentContest;
+            if (workingSet.length === 0) {
+                return renderSingleEmptyState(isShortlist, isShortlist
+                    ? state.shortlistSession.title
+                    : isMergerVotingTitle
+                    ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
+                    : (state.currentContest?.title || 'Voting'), totalCount);
+            }
+            if (state.currentImageIndex > workingSet.length - 1) state.currentImageIndex = workingSet.length - 1;
+            const currentImage = workingSet[state.currentImageIndex];
             // The mirrored prank copy must look unvoted: no score / shortlist tag and neutral controls (real state is never touched)
             const onPrankCopy = hasSinglePrank();
             const currentVote = onPrankCopy ? undefined : isShortlist ? (state.shortlistSelected[currentImage.id] ? 5 : 0) : state.votes[currentImage.id];
@@ -13796,22 +14059,23 @@
                 ? (state.mergers.find(m => m.id === state.currentMergerId)?.name || 'Merger Voting')
                 : (state.currentContest?.title || 'Voting');
 
-            // Adaptive progress bar logic - ensure EXACTLY segmentCount dashes
-            const imageCount = state.shuffledImages.length;
-            const segmentCount = Math.min(imageCount, 20);
-            const imagesPerSegment = Math.ceil(imageCount / segmentCount);
+            const isFiltered = workingSet.length < totalCount;
+            const overallDone = isShortlist
+                ? state.shuffledImages.filter(img => getShortlistStatus(img.id) === 'yes').length
+                : state.shuffledImages.filter(img => state.votes[img.id]).length;
 
             return `
                 <div class="max-w-4xl mx-auto px-3 py-4">
                     ${renderAutosaveStatusBar()}
                     <div class="bg-white rounded-xl shadow-xl overflow-hidden fade-in" data-vote-card="1">
-                        ${renderSingleProgressBar(isShortlist, segmentCount, imagesPerSegment)}
+                        ${renderSingleProgressBar(isShortlist, workingSet)}
 
                         <div class="p-3">
                             <div class="flex justify-between items-center mb-3 gap-2">
                                 <h2 class="text-lg font-bold text-gray-800">${votingTitle}</h2>
-                                <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${state.shuffledImages.length}</span>
+                                <span class="text-gray-600 font-medium text-sm">${state.currentImageIndex + 1}/${workingSet.length}</span>
                             </div>
+                            ${isFiltered ? `<p class="text-xs text-gray-500 -mt-2 mb-2">Showing ${workingSet.length} of ${totalCount} - ${overallDone}/${totalCount} ${isShortlist ? 'shortlisted' : 'voted'}</p>` : ''}
 
                             <div class="relative mb-3 bg-gray-100 overflow-hidden flex items-center justify-center" style="height: 55vh; touch-action: pan-y; user-select: none;" data-swipe="${isShortlist ? 'vote' : 'nav'}" data-vote-fade-zone="1">
                                 <img
@@ -16428,7 +16692,7 @@
             state.shortlistSession = null;
             state.shortlistSelected = {};
             state.shortlistSkipped = {};
-            state.shortlistFilter = [];
+            resetVotingToolsState();
             state.resultsFormat = 'classic';
             state.resultsFormatKey = null;
             state.shortlistData = null;
@@ -16860,7 +17124,7 @@
                 state.shortlistSkipped = loadSkippedImages(session, imageIdSet);
                 state.shortlistFilter = [];
                 state.prank = null;
-                state.progressPanelIndex = null;
+                state.progressPath = [];
                 state.shuffledImages = shuffleArray(ctx.images);
                 state.votes = {};
                 state.currentImageIndex = 0;
@@ -16868,6 +17132,7 @@
                 state.results = null;
                 state.selectedScore = null;
                 state.multiModeFilter = [];
+                state.multiModeSort = 'default';
                 state.lastClickedImageId = null;
                 state.autosaveContext = { type: null, id: null };   // no autosave / drafts for shortlists
 
@@ -17281,19 +17546,32 @@
         }
 
         // Multi mode, on every real-image interaction: first remove an existing fake (wherever it is), then roll for a new one
-        // after the tile just interacted with. Re-renders with the tile kept at the same place on screen, so inserting or
-        // removing a fake above the viewport does not make the grid jump.
+        // after the tile just interacted with. The grid is updated IN PLACE (render({ morph: true })): tiles and their images
+        // persist, so a vote with the default order changes no layout and therefore moves no scroll position.
+        // Auto-jump ON: if the tile did move (sort / filter / fake inserted above), the page follows it.
+        // Auto-jump OFF: no scroll adjustment at all (native scroll anchoring is switched off too, see render()).
         function renderAfterMultiInteraction(imageId, roll = true) {
             state.prank = null;
             if (roll && rollPrank()) startPrank('multi', imageId);
+            if (!state.multiAutoJump) {
+                render({ morph: true });
+                return;
+            }
             const tileSelector = `[data-tile-id="${String(imageId).replace(/"/g, '')}"]`;
             const before = document.querySelector(tileSelector);
             const topBefore = before ? before.getBoundingClientRect().top : null;
-            const x = window.scrollX, y = window.scrollY;
-            render();
+            render({ morph: true });
             const after = document.querySelector(tileSelector);
-            const top = (after && topBefore !== null) ? y + (after.getBoundingClientRect().top - topBefore) : y;
-            window.scrollTo({ left: x, top, behavior: 'instant' });
+            if (after && topBefore !== null) {
+                const delta = after.getBoundingClientRect().top - topBefore;
+                if (Math.abs(delta) > 0.5) window.scrollTo({ left: window.scrollX, top: window.scrollY + delta, behavior: 'instant' });
+            }
+        }
+
+        function setMultiAutoJump(on) {
+            state.multiAutoJump = !!on;
+            try { localStorage.setItem('peony_multi_auto_jump', on ? '1' : '0'); } catch (e) { /* preference lasts for this page view */ }
+            render({ morph: true });
         }
 
         function startPrank(kind, imageId) {
@@ -17340,8 +17618,7 @@
 
         // A vote on the mirrored copy is discarded: it disappears for good and the real flow moves on to the next image.
         function resolveSinglePrank() {
-            state.prank = null;
-            if (state.currentImageIndex < state.shuffledImages.length - 1) state.currentImageIndex++;
+            state.prank = null;   // the screen already sits on the image after the voted one (see handleVote)
             render();
         }
 
@@ -17423,22 +17700,22 @@
             if (state.voteHold) {
                 clearTimeout(state.voteHold.timer);
                 state.voteHold = null;
+                state.singleFreeze = null;
             }
         }
 
-        function commitShortlistSingle(kind, startOpacity, prank) {
+        function commitShortlistSingle(kind, startOpacity, prank, anchor) {
             clearVoteFade();
-            const hold = { kind, prank, opacity: Math.max(startOpacity || 0, prefersReducedMotion() ? 0.25 : 0.5), timer: null };
+            const hold = { kind, prank, anchor, opacity: Math.max(startOpacity || 0, prefersReducedMotion() ? 0.25 : 0.5), timer: null };
             state.voteHold = hold;
+            state.singleFreeze = anchor.list;
             render();   // progress bar, tags and the held tint on the voted image
             hold.timer = setTimeout(() => {
                 if (state.voteHold !== hold) return;
                 state.voteHold = null;
-                if (hold.prank) {
-                    startPrank('single', hold.imageId);
-                } else if (state.currentImageIndex < state.shuffledImages.length - 1) {
-                    state.currentImageIndex++;
-                }
+                state.singleFreeze = null;
+                goToAdvanceTarget(hold.anchor);
+                if (hold.prank) startPrank('single', hold.imageId);   // a mirrored copy is shown on the image we moved to
                 render();
                 showVoteFade(kind, 0.2);   // only a subtle remainder over the new image
             }, SHORTLIST_HOLD_MS);
@@ -17448,12 +17725,13 @@
         function handleShortlistVote(kind, startOpacity) {
             if (!state.shortlistSession || state.voteHold) return;
             if (hasSinglePrank()) { resolveSinglePrank(); return; }
-            const image = state.shuffledImages[state.currentImageIndex];
+            const anchor = captureAdvance();   // before the vote changes the working set
+            const image = anchor.list[anchor.idx];
             if (!image) return;
             const yes = kind === 'yes';
             setShortlistSkipped(image.id, !yes);
             if (!!state.shortlistSession.selected[image.id] !== yes) applyShortlistChange(image.id, yes, true);
-            const hold = commitShortlistSingle(kind, startOpacity, rollPrank());
+            const hold = commitShortlistSingle(kind, startOpacity, rollPrank(), anchor);
             hold.imageId = image.id;
         }
 
@@ -17462,13 +17740,15 @@
 
         // Multi mode filter buckets: gray = undecided, green = shortlisted, red = skipped
         function setShortlistFilter(bucket) {
+            const anchor = captureSingleAnchor();
             const index = state.shortlistFilter.indexOf(bucket);
             if (index > -1) {
                 state.shortlistFilter.splice(index, 1);
             } else {
                 state.shortlistFilter.push(bucket);
             }
-            render();
+            restoreSingleAnchor(anchor);
+            render({ morph: true });
         }
 
         // ---------- Swipe gestures (touch and mouse drag) ----------
@@ -18883,7 +19163,73 @@
             `;
         }
 
-        function render() {
+        // ---------- In-place DOM update (used by multi-mode voting so tiles / images persist and the layout never shifts) ----------
+        // Same-tag elements are updated (attributes, text, children) instead of being replaced; tiles are matched by
+        // data-tile-id / data-fake-tile so the mirrored prank tile can appear or disappear without touching its neighbours.
+        function morphKey(node) {
+            if (node.nodeType !== 1) return null;
+            if (node.hasAttribute('data-fake-tile')) return 'fake';
+            const id = node.getAttribute('data-tile-id');
+            return id !== null ? 't' + id : null;
+        }
+
+        function morphAttributes(oldEl, newEl) {
+            Array.from(newEl.attributes).forEach(a => {
+                if (oldEl.getAttribute(a.name) !== a.value) oldEl.setAttribute(a.name, a.value);
+            });
+            Array.from(oldEl.attributes).forEach(a => {
+                if (!newEl.hasAttribute(a.name)) oldEl.removeAttribute(a.name);
+            });
+        }
+
+        function morphNode(oldNode, newNode) {
+            if (oldNode.nodeType !== newNode.nodeType || (oldNode.nodeType === 1 && oldNode.tagName !== newNode.tagName)) {
+                oldNode.replaceWith(newNode);
+                return;
+            }
+            if (oldNode.nodeType !== 1) {
+                if (oldNode.nodeValue !== newNode.nodeValue) oldNode.nodeValue = newNode.nodeValue;
+                return;
+            }
+            morphAttributes(oldNode, newNode);
+            if (oldNode.tagName === 'IMG') return;
+            morphChildren(oldNode, newNode);
+            if (oldNode.tagName === 'INPUT') {
+                if (oldNode.type === 'checkbox' || oldNode.type === 'radio') oldNode.checked = newNode.hasAttribute('checked');
+                else if (oldNode.value !== (newNode.getAttribute('value') || '')) oldNode.value = newNode.getAttribute('value') || '';
+            } else if (oldNode.tagName === 'SELECT') {
+                const selected = Array.from(newNode.options).findIndex(o => o.hasAttribute('selected'));
+                if (selected > -1) oldNode.selectedIndex = selected;
+            }
+        }
+
+        function morphChildren(oldParent, newParent) {
+            const keyed = new Map();
+            Array.from(oldParent.childNodes).forEach(k => { const key = morphKey(k); if (key) keyed.set(key, k); });
+            let index = 0;
+            Array.from(newParent.childNodes).forEach(newKid => {
+                const key = morphKey(newKid);
+                let match = null;
+                if (key) {
+                    match = keyed.get(key) || null;
+                    keyed.delete(key);
+                } else {
+                    const candidate = oldParent.childNodes[index];
+                    if (candidate && !morphKey(candidate) && candidate.nodeType === newKid.nodeType) match = candidate;
+                }
+                const at = oldParent.childNodes[index] || null;
+                if (match) {
+                    if (at !== match) oldParent.insertBefore(match, at);
+                    morphNode(match, newKid);
+                } else {
+                    oldParent.insertBefore(newKid, at);
+                }
+                index++;
+            });
+            while (oldParent.childNodes.length > index) oldParent.removeChild(oldParent.lastChild);
+        }
+
+        function render(opts) {
             const app = document.getElementById('app');
             if (state.view !== 'vote') { cancelVoteHold(); state.prank = null; }   // neither the hold nor the prank outlives the voting screen
             syncPrankListener();
@@ -18926,7 +19272,16 @@
                     content = renderHome();
             }
 
-            app.innerHTML = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal() + renderNoticeModal();
+            const html = renderHeader() + content + renderModal() + renderContestInfoModal() + renderCreateMergerModal() + renderEditMergerModal() + renderUserProfileModal() + renderUploadProgressModal() + renderUnifiedCreateModal() + (state.showAdminDashboard ? renderAdminDashboard() : '') + (state.showAppSettingsModal ? renderAppSettingsModal() : '') + (state.showActivityLogsModal ? renderActivityLogsModal() : '') + (state.showManageFoldersModal ? renderManageFoldersModal() : '') + renderRenameModal() + renderUserLeaderboard() + renderToast() + renderLoadingOverlay() + renderMultiModeLoadingModal() + renderTransitionModal() + renderLogoutConfirmModal() + renderScoringFormulaModal() + renderNoticeModal();
+            if (opts && opts.morph && app.firstChild) {
+                const template = document.createElement('template');
+                template.innerHTML = html;
+                morphChildren(app, template.content);
+            } else {
+                app.innerHTML = html;
+            }
+
+            document.documentElement.classList.toggle('no-scroll-anchor', state.view === 'vote' && state.votingMode === 'multi' && !state.multiAutoJump);
 
             // Restore scroll positions
             savedScrolls.forEach(({ key, top }) => {
@@ -18981,7 +19336,9 @@
         window.handleVote = handleVote;
         window.navigateImage = navigateImage;
         window.jumpToImage = jumpToImage;
-        window.toggleProgressPanel = toggleProgressPanel;
+        window.toggleProgressRange = toggleProgressRange;
+        window.toggleSingleTools = toggleSingleTools;
+        window.clearSingleFilter = clearSingleFilter;
         window.prankTileClick = prankTileClick;
         window.cancelVoting = cancelVoting;
         window.submitVotes = submitVotes;
@@ -19011,6 +19368,7 @@
         window.adjustMultiVotingImageScale = adjustMultiVotingImageScale;
         window.setMultiModeFilter = setMultiModeFilter;
         window.setMultiModeSort = setMultiModeSort;
+        window.setMultiAutoJump = setMultiAutoJump;
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
