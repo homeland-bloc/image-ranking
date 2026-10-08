@@ -1006,6 +1006,21 @@
             background-color: #1a0000 !important;
         }
 
+        /* Score sparkles: a short burst from the pressed button / tile (see emitSparkles) */
+        .sparkle-burst { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 9990; }
+        .sparkle-burst > span {
+            position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%;
+            background: var(--sparkle-color); box-shadow: 0 0 6px 1px var(--sparkle-color);
+            pointer-events: none; opacity: 0;
+            animation: sparkle-fly 500ms ease-out forwards;
+        }
+        .sparkle-burst > span:nth-child(odd) { border-radius: 1px; transform: rotate(45deg); }
+        @keyframes sparkle-fly {
+            0% { opacity: 1; transform: translate(0, 0) scale(1); }
+            100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.2); }
+        }
+        @media (prefers-reduced-motion: reduce) { .sparkle-burst { display: none; } }
+
         /* Multi-mode voting with "Auto-jump" OFF: no browser scroll anchoring either */
         html.no-scroll-anchor, html.no-scroll-anchor body { overflow-anchor: none; }
     </style>
@@ -7377,6 +7392,7 @@
             const currentImage = anchor.list[anchor.idx];
             if (!currentImage) return;
 
+            emitSparkles(document.querySelector(`[data-score="${score}"]`), getScoreColor(score));
             state.isAnimating = true;
             state.singleFreeze = anchor.list;
             state.votes[currentImage.id] = score;
@@ -7470,6 +7486,8 @@
 
             // Track the last clicked image
             state.lastClickedImageId = imageId;
+
+            sparkleFromTile(imageId, getScoreColor(state.selectedScore));
 
             // Assign the selected score to this image
             state.votes[imageId] = state.selectedScore;
@@ -17303,6 +17321,7 @@
         function toggleShortlistImage(imageId) {
             if (!state.shortlistSession) return;
             const wasSelected = !!state.shortlistSession.selected[imageId];
+            sparkleFromTile(imageId, getScoreColor(wasSelected ? 1 : 5));   // tick = green, untick = red
             setShortlistSkipped(imageId, wasSelected);
             applyShortlistChange(imageId, !wasSelected, true);
             renderAfterMultiInteraction(imageId);
@@ -17671,6 +17690,43 @@
             render();
         }
 
+        // ---------- Score sparkles ----------
+        // A small burst (7 particles, 500ms) from the pressed button / tile in the score's color. Pure CSS animation on
+        // absolutely positioned, pointer-events:none elements appended to <body> (outside #app, so renders never touch
+        // them); each burst removes itself on animationend. No render() involved. At most MAX_SPARKLE_BURSTS at once.
+        const MAX_SPARKLE_BURSTS = 6;
+        const SPARKLE_COUNT = 7;
+
+        function emitSparkles(origin, color) {
+            if (!origin || !origin.getBoundingClientRect || prefersReducedMotion()) return;
+            const rect = origin.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) return;
+            const bursts = document.querySelectorAll('.sparkle-burst');
+            for (let i = 0; i <= bursts.length - MAX_SPARKLE_BURSTS; i++) bursts[i].remove();
+            const burst = document.createElement('div');
+            burst.className = 'sparkle-burst';
+            burst.setAttribute('aria-hidden', 'true');
+            burst.style.left = `${rect.left + window.scrollX + rect.width / 2}px`;
+            burst.style.top = `${rect.top + window.scrollY + rect.height / 2}px`;
+            burst.style.setProperty('--sparkle-color', color);
+            const reach = Math.max(18, Math.min(46, Math.min(rect.width, rect.height) * 0.7));
+            for (let i = 0; i < SPARKLE_COUNT; i++) {
+                const angle = (i / SPARKLE_COUNT) * Math.PI * 2 + Math.random() * 0.6;
+                const dist = reach * (0.7 + Math.random() * 0.6);
+                const dot = document.createElement('span');
+                dot.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+                dot.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
+                dot.style.animationDelay = `${Math.round(Math.random() * 60)}ms`;
+                dot.addEventListener('animationend', () => { dot.remove(); if (!burst.firstChild) burst.remove(); }, { once: true });
+                burst.appendChild(dot);
+            }
+            document.body.appendChild(burst);
+        }
+
+        function sparkleFromTile(imageId, color) {
+            emitSparkles(document.querySelector(`[data-tile-id="${String(imageId).replace(/"/g, '')}"]`), color);
+        }
+
         // ---------- Vote feedback fade (single mode) ----------
         // While dragging, ONE overlay element's opacity is set straight from JS (no render per touchmove). When the vote
         // is committed the render replaces the screen, so the fade-out runs on a short-lived fixed overlay that is
@@ -17770,6 +17826,7 @@
             const image = anchor.list[anchor.idx];
             if (!image) return;
             const yes = kind === 'yes';
+            emitSparkles(document.querySelector(`[data-shortlist-btn="${kind}"]`), getScoreColor(yes ? 5 : 1));
             setShortlistSkipped(image.id, !yes);
             if (!!state.shortlistSession.selected[image.id] !== yes) applyShortlistChange(image.id, yes, true);
             const hold = commitShortlistSingle(kind, startOpacity, rollPrank(), anchor);
@@ -17981,11 +18038,13 @@
                 <div class="flex gap-3 mb-3" data-swipe="vote" style="touch-action: pan-y; user-select: none;">
                     <button
                         onclick="handleShortlistNo()"
+                        data-shortlist-btn="no"
                         class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'no' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(1)}; ring-color: ${getScoreColor(1)};"
                     ><span class="hidden sm:inline">← </span>Swipe left to Skip<span class="hidden sm:inline"> ✕</span></button>
                     <button
                         onclick="handleShortlistYes()"
+                        data-shortlist-btn="yes"
                         class="flex-1 py-3 px-1 sm:px-2 rounded-xl font-bold text-white text-xs min-[440px]:text-sm sm:text-base min-[360px]:whitespace-nowrap shadow-lg hover:scale-[1.02] transition-transform ${status === 'yes' ? 'ring-4 ring-offset-2' : ''}"
                         style="background-color: ${getScoreColor(5)}; ring-color: ${getScoreColor(5)};"
                     >Swipe right to Shortlist<span class="hidden sm:inline"> ✓ →</span></button>
