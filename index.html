@@ -7878,10 +7878,27 @@
         }
 
         // ==================== USER FILTER ====================
+        // Single source of truth for the images the Users / Images filters work on. renderMergedResults() only swaps
+        // state.results for the merged list WHILE rendering, so event handlers (which run later) must read the merged
+        // list from state.mergedResults instead - otherwise "all minus one" is built from an empty list.
+        function getFilterSourceResults() {
+            if (state.view === 'mergedResults' && state.mergedResults && state.mergedResults.images) {
+                return state.mergedResults.images.map(img => ({ id: img.id, breakdown: img.voteBreakdown || [] }));
+            }
+            return state.results || [];
+        }
+
+        // Canonical id from a list for an id coming back from an inline handler (number vs string safe)
+        function canonicalFilterId(list, getId, id) {
+            const found = list.find(x => String(getId(x)) === String(id));
+            return found ? getId(found) : id;
+        }
+
         function getContestVotersList() {
-            if (!state.results) return [];
+            const source = getFilterSourceResults();
+            if (source.length === 0) return [];
             const voterMap = {};
-            state.results.forEach(img => {
+            source.forEach(img => {
                 if (!img.breakdown) return;
                 img.breakdown.forEach(vote => {
                     if (!vote.isBlocked && !vote.isBanned && !voterMap[vote.userId]) {
@@ -7914,6 +7931,7 @@
             const dropdown = document.querySelector('.user-filter-dropdown');
             const dropdownScrollTop = dropdown ? dropdown.scrollTop : 0;
             const allVoters = getFilterVotersList();
+            userId = canonicalFilterId(allVoters, v => v.userId, userId);
             if (state.userFilterSelectedUsers === null) {
                 // Was "all selected" - now deselect this one
                 state.userFilterSelectedUsers = new Set(allVoters.map(v => v.userId));
@@ -8043,7 +8061,8 @@
         }
 
         function toggleImageFilterImage(imageId) {
-            const allImages = state.results || [];
+            const allImages = getFilterSourceResults();
+            imageId = canonicalFilterId(allImages, img => img.id, imageId);
             if (state.imageFilterSelectedImages === null) {
                 // Was "all visible" - now hide this one
                 state.imageFilterSelectedImages = new Set(allImages.map(img => img.id));
@@ -8079,7 +8098,7 @@
         }
 
         function renderImageFilterDropdown() {
-            const allImages = state.results || [];
+            const allImages = getFilterSourceResults();
             if (allImages.length === 0) return '';
 
             // Hide image filter in comparison views
