@@ -1136,6 +1136,9 @@
         // Admin Discord ID - Replace with your actual Discord user ID after first login
         const ADMIN_DISCORD_ID = '719271552247529571';
 
+        const DEFAULT_SCORING_FORMULA = 2;   // the app's default scoring formula (Squared)
+        const RESULTS_OPTIONS_KEY = 'peony_results_options_open';
+
         let state = {
             isLoggedIn: false,
             user: null,
@@ -1160,7 +1163,8 @@
             newContest: { title: '', images: [] },
             showMyVotes: false,  // Deprecated, use resultsView
             resultsView: 'average',  // 'average', 'divisive', 'count', 'userVotes', or 'byVoter'
-            scoringFormula: 2,       // Power mean exponent: 1=Linear, 2=Squared (default), 3=Cubed
+            resultsOptionsOpen: loadResultsOptionsOpen(),  // results page: the foldable Options section (switch + scoring formula) is open
+            scoringFormula: DEFAULT_SCORING_FORMULA,       // Power mean exponent: 1=Linear, 2=Squared (default), 3=Cubed
             showScoringFormulaModal: false,
             scoringFormulaSampleImage: null,  // Random sample image for formula demo
             voterSortBy: 'scoreDesc',  // 'scoreDesc', 'scoreAsc', 'nameAsc', 'nameDesc', 'mostScore', 'leastScore' for byVoter view
@@ -14360,18 +14364,25 @@
                             ` : ''}
 
                             <div class="mt-3 flex flex-col items-center justify-center gap-2">
-                                ${renderAutoConvertedSwitch() ? `<div class="flex items-center justify-center flex-wrap">${renderAutoConvertedSwitch()}</div>` : ''}
+                                ${renderResultsOptionsHandle()}
+                                ${state.resultsOptionsOpen ? `
+                                    <div class="flex flex-col items-center justify-center gap-2 w-full">
+                                        ${renderAutoConvertedSwitch() ? `<div class="flex items-center justify-center flex-wrap">${renderAutoConvertedSwitch()}</div>` : ''}
+                                        <div class="flex items-center justify-center flex-wrap">
+                                <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
+                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
+                                </button>
+                                        </div>
+                                    </div>
+                                ` : ''}
                                 <div class="flex flex-col items-center gap-1">
                                     <div class="flex items-center justify-center gap-x-4 gap-y-2 flex-wrap">
                                         <div class="flex items-center gap-1.5">
                                             <span class="text-xs font-semibold text-gray-700 whitespace-nowrap">Voting Format:</span>
                                             ${renderResultsFormatToggle()}
                                         </div>
-                                <button ${isShortlistFmt ? 'disabled title="Not available in Shortlist format"' : 'onclick="openScoringFormulaModal()"'} class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-200 text-gray-700 ${isShortlistFmt ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-300'} flex items-center gap-1.5">
-                                    Scoring Formula: ${{1:'📏',2:'🧱',3:'🧊'}[state.scoringFormula]}
-                                </button>
                                     </div>
-                                    <p class="text-xs text-gray-500 text-center">Switch between ⭐ Classic (1-5 scores) and 🔖 Shortlist (the images people picked).</p>
+                                    <p class="text-xs text-gray-500 text-center">Switch between ⭐ Classic (1-5 scores) and 🔖 Shortlist (Yes/No).</p>
                                 </div>
                                 ${renderGlobalFilters()}
                                 ${isUserFilterActive() || isImageFilterActive() ? `
@@ -18508,6 +18519,33 @@
             render();
         }
 
+        // ---------- Foldable results options (auto-converted switch + scoring formula) ----------
+        function loadResultsOptionsOpen() {
+            try { return localStorage.getItem(RESULTS_OPTIONS_KEY) === '1'; } catch (e) { return false; }
+        }
+
+        function toggleResultsOptions() {
+            state.resultsOptionsOpen = !state.resultsOptionsOpen;
+            try { localStorage.setItem(RESULTS_OPTIONS_KEY, state.resultsOptionsOpen ? '1' : '0'); } catch (e) { /* lasts for this page view */ }
+            render();
+        }
+
+        // Something inside the folded section differs from its default: the switch is off (while it is shown) or the formula changed
+        function hasNonDefaultResultsOptions() {
+            return (getAutoConvertedUserCount() > 0 && !state.includeAutoConverted) || state.scoringFormula !== DEFAULT_SCORING_FORMULA;
+        }
+
+        function renderResultsOptionsHandle() {
+            const open = state.resultsOptionsOpen;
+            const active = hasNonDefaultResultsOptions();
+            return `
+                <button onclick="toggleResultsOptions()" aria-expanded="${open}" title="${active ? 'Options (a non-default option is set)' : 'Options'}"
+                    class="px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${active ? 'bg-mauve-700 text-white ring-2 ring-mauve-300 shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}">
+                    Options <span class="inline-block transition-transform ${open ? 'rotate-180' : ''}">▾</span>
+                </button>
+            `;
+        }
+
         // Compact "Include auto-converted (+N)" switch for the results page (hidden when nothing could be converted)
         function renderAutoConvertedSwitch() {
             const count = getAutoConvertedUserCount();
@@ -19846,6 +19884,7 @@
         window.setMultiModeSort = setMultiModeSort;
         window.setMultiAutoJump = setMultiAutoJump;
         window.setIncludeAutoConverted = setIncludeAutoConverted;
+        window.toggleResultsOptions = toggleResultsOptions;
         window.deleteContest = deleteContest;
         window.handleDeleteContestConfirmation = handleDeleteContestConfirmation;
         window.confirmDeleteContest = confirmDeleteContest;
